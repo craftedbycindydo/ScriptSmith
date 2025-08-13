@@ -36,6 +36,34 @@ A modern web-based IDE platform built with React, TypeScript, FastAPI, and suppo
 - **Redis**: Fast caching and session management
 - **Docker Support**: Complete containerized development environment
 
+## 🏛️ System Architecture
+
+![ScriptSmith Architecture](./mermaid-flow.svg)
+
+The diagram above shows the complete system architecture from frontend to backend, including:
+
+### **Frontend Layer (React + TypeScript)**
+- **Main IDE Components**: Monaco code editor, output console, language selector
+- **Collaboration Features**: Real-time code sharing with WebSocket integration
+- **Authentication System**: Complete login, signup, and password reset flows
+- **Admin Dashboard**: Three comprehensive tabs for system management
+- **State Management**: Zustand stores for code and authentication state
+
+### **Backend Layer (FastAPI + Python)**
+- **API Routers**: Modular routers for authentication, code execution, collaboration, admin, and assignments
+- **Core Services**: Docker code execution, JWT authentication, assignment processing, WebSocket management
+- **Security Features**: Argon2 password hashing, rate limiting, input validation, CORS protection
+
+### **Admin Features**
+- **System Overview**: Real-time monitoring of user stats, code execution metrics, error rates, and popular languages
+- **Assignment Management**: ZIP file upload, automated grading, plagiarism detection with similarity scoring
+- **User Management**: Complete user administration with activation/deactivation and search capabilities
+
+### **Infrastructure**
+- **Database Layer**: PostgreSQL for persistent data, Redis for caching and real-time sessions
+- **Code Execution**: Secure Docker containers for Python, JavaScript, Java, C++, Go, and Rust
+- **External Integration**: File system management for assignment processing and storage
+
 ## 🛠️ Tech Stack
 
 ### Frontend
