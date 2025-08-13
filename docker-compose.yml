@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: online_ide_postgres
+    env_file:
+      - ./docker/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: online_ide_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: online_ide_backend
+    ports:
+      - "8082:8082"
+    env_file:
+      - ./docker/backend.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket
+      - /tmp:/tmp  # Mount tmp directory for code execution
+    user: "root"  # Run as root to access Docker socket
+    restart: unless-stopped
+
+  # React Frontend (for production build)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NODE_ENV=production
+    container_name: online_ide_frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./docker/frontend.env
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Custom Code Execution Images - Built automatically for kids
+  code-execution-python:
+    build:
+      context: ./docker-images/python
+      dockerfile: Dockerfile
+    image: code-execution-python:latest
+    container_name: code_execution_python_builder
+    command: ["echo", "Python image built with numpy, pandas, matplotlib, etc."]
+    
+  code-execution-javascript:
+    build:
+      context: ./docker-images/javascript
+      dockerfile: Dockerfile
+    image: code-execution-javascript:latest
+    container_name: code_execution_javascript_builder
+    command: ["echo", "JavaScript image built with lodash, axios, moment, etc."]
+    
+  code-execution-java:
+    build:
+      context: ./docker-images/java
+      dockerfile: Dockerfile
+    image: code-execution-java:latest
+    container_name: code_execution_java_builder
+    command: ["echo", "Java image built with gson, commons-lang3, junit, etc."]
+    
+  # TODO: Enable after fixing Dockerfiles
+  # code-execution-cpp:
+  #   build:
+  #     context: ./docker-images/cpp
+  #     dockerfile: Dockerfile
+  #   image: code-execution-cpp:latest
+  #   container_name: code_execution_cpp_builder
+  #   command: ["echo", "C++ image built with Boost, Eigen3, GoogleTest, etc."]
+    
+  # code-execution-go:
+  #   build:
+  #     context: ./docker-images/go
+  #     dockerfile: Dockerfile
+  #   image: code-execution-go:latest
+  #   container_name: code_execution_go_builder
+  #   command: ["echo", "Go image built with gin, mux, logrus, etc."]
+    
+  # code-execution-rust:
+  #   build:
+  #     context: ./docker-images/rust
+  #     dockerfile: Dockerfile
+  #   image: code-execution-rust:latest
+  #   container_name: code_execution_rust_builder
+  #   command: ["echo", "Rust image built with serde, tokio, clap, etc."]
+
+volumes:
+  postgres_data:
+  redis_data:

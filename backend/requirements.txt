@@ -1,0 +1,25 @@
+fastapi==0.116.1
+uvicorn==0.35.0
+sqlalchemy==2.0.43
+psycopg2-binary==2.9.10
+redis==6.4.0
+python-multipart==0.0.20
+pydantic-settings==2.10.1
+alembic==1.16.4
+python-dotenv==1.1.1
+
+# Security & Authentication
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.3.0
+argon2-cffi==25.1.0
+email-validator==2.2.0
+
+# Docker execution
+docker==7.1.0
+
+# WebSocket & Real-time collaboration
+python-socketio==5.12.1
+
+# File operations
+aiofiles==24.1.0
