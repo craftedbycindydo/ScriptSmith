@@ -3,14 +3,17 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { apiService } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import AssignmentUpload from './AssignmentUpload';
 import AssignmentReports from './AssignmentReports';
+import TemplateManager from './TemplateManager';
 import { 
   Users, 
   Activity, 
@@ -26,7 +29,8 @@ import {
   ChevronRight,
   Shield,
   FileText,
-  Upload
+  ChevronDown,
+  Menu
 } from 'lucide-react';
 
 interface AdminStats {
@@ -90,8 +94,29 @@ export default function AdminDashboard() {
   const [totalActivities, setTotalActivities] = useState(0);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   
+  // Tab state
+  const [activeTab, setActiveTab] = useState('overview');
+  
+
+  
   const pageSize = 20;
-  const isAdmin = user?.email === 'k@p.com';
+  // Use backend API to verify admin status instead of hardcoded email
+  const [isAdmin, setIsAdmin] = useState(false);
+  
+  useEffect(() => {
+    if (user) {
+      // Check admin status via backend API
+      const checkAdminStatus = async () => {
+        try {
+          await apiService.getAdminStats();
+          setIsAdmin(true);
+        } catch (error) {
+          setIsAdmin(false);
+        }
+      };
+      checkAdminStatus();
+    }
+  }, [user]);
 
   // Load admin stats
   const loadStats = async () => {
@@ -144,6 +169,8 @@ export default function AdminDashboard() {
       setError(err.response?.data?.detail || err.message || `Failed to ${activate ? 'activate' : 'deactivate'} user`);
     }
   };
+
+
 
   // Load all data
   const loadAllData = async () => {
@@ -300,7 +327,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-background p-4 lg:p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="w-full space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="min-w-0">
@@ -316,25 +343,69 @@ export default function AdminDashboard() {
           </Button>
         </div>
 
-        {/* Main Content with Tabs */}
-        <Tabs defaultValue="overview" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="overview" className="text-xs sm:text-sm">
-              <span className="hidden sm:inline">System </span>Overview
-            </TabsTrigger>
-            <TabsTrigger value="assignments" className="text-xs sm:text-sm">
-              <span className="hidden sm:inline">Assignment </span>
-              <span className="hidden md:inline">Management</span>
-              <span className="md:hidden">Assign.</span>
-            </TabsTrigger>
-            <TabsTrigger value="users" className="text-xs sm:text-sm">
-              <span className="hidden sm:inline">User </span>
-              <span className="hidden md:inline">Management</span>
-              <span className="md:hidden">Users</span>
-            </TabsTrigger>
-          </TabsList>
+        {/* Main Content with Responsive Tabs/Dropdown */}
+        <div className="w-full">
+          {/* Mobile Dropdown */}
+          <div className="block md:hidden mb-6">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-between">
+                  <span className="flex items-center">
+                    <Menu className="w-4 h-4 mr-2" />
+                    {activeTab === 'overview' && 'System Overview'}
+                    {activeTab === 'templates' && 'Templates'}
+                    {activeTab === 'assignments' && 'Assignments'}
+                    {activeTab === 'users' && 'Users'}
+                  </span>
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-full">
+                <DropdownMenuItem onClick={() => setActiveTab('overview')}>
+                  <Activity className="w-4 h-4 mr-2" />
+                  System Overview
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('templates')}>
+                  <FileText className="w-4 h-4 mr-2" />
+                  Template Management
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('assignments')}>
+                  <Code className="w-4 h-4 mr-2" />
+                  Assignment Management
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('users')}>
+                  <Users className="w-4 h-4 mr-2" />
+                  User Management
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Desktop Tabs */}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="hidden md:grid w-full grid-cols-4">
+              <TabsTrigger value="overview" className="text-sm">
+                <Activity className="w-4 h-4 mr-2" />
+                System Overview
+              </TabsTrigger>
+              <TabsTrigger value="templates" className="text-sm">
+                <FileText className="w-4 h-4 mr-2" />
+                Templates
+              </TabsTrigger>
+              <TabsTrigger value="assignments" className="text-sm">
+                <Code className="w-4 h-4 mr-2" />
+                Assignments
+              </TabsTrigger>
+              <TabsTrigger value="users" className="text-sm">
+                <Users className="w-4 h-4 mr-2" />
+                Users
+              </TabsTrigger>
+            </TabsList>
           
-          <TabsContent value="overview" className="space-y-6 mt-6">
+            {/* Tab Content */}
+            <div className="mt-6">
+              {activeTab === 'overview' && (
+                <div className="space-y-6">
 
         {/* Stats Cards */}
         {stats && (
@@ -668,11 +739,13 @@ export default function AdminDashboard() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        </div>
-          </TabsContent>
-          
-          <TabsContent value="assignments" className="space-y-6 mt-6">
+                </div>
+              </div>
+                </div>
+              )}
+              
+              {activeTab === 'assignments' && (
+                <div className="space-y-6">
             {/* Assignment Upload Section */}
             <Card>
               <CardHeader>
@@ -695,9 +768,17 @@ export default function AdminDashboard() {
             
             {/* Assignment Reports */}
             <AssignmentReports />
-          </TabsContent>
-          
-          <TabsContent value="users" className="space-y-6 mt-6">
+                </div>
+              )}
+              
+              {activeTab === 'templates' && (
+                <div className="space-y-6">
+                  <TemplateManager />
+                </div>
+              )}
+              
+              {activeTab === 'users' && (
+                <div className="space-y-6">
             {/* Users Section */}
             <Card>
               <CardHeader>
@@ -816,8 +897,11 @@ export default function AdminDashboard() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
+                </div>
+              )}
+            </div>
+          </Tabs>
+        </div>
       </div>
     </div>
   );

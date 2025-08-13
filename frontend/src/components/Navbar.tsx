@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuthStore } from '@/store/authStore';
 import { useTheme } from '@/contexts/ThemeContext';
+import { apiService } from '@/services/api';
 import { 
   Code2, 
   Settings, 
@@ -32,7 +33,23 @@ export default function Navbar() {
   const { theme, setTheme } = useTheme();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const isAdmin = user?.email === 'k@p.com';
+  // Use backend API to verify admin status instead of hardcoded email
+  const [isAdmin, setIsAdmin] = useState(false);
+  
+  useEffect(() => {
+    if (user) {
+      // Check admin status via backend API
+      const checkAdminStatus = async () => {
+        try {
+          await apiService.getAdminStats();
+          setIsAdmin(true);
+        } catch (error) {
+          setIsAdmin(false);
+        }
+      };
+      checkAdminStatus();
+    }
+  }, [user]);
 
   const navigationItems = [
     { name: 'IDE', path: '/', icon: Code2 },
@@ -72,7 +89,7 @@ export default function Navbar() {
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b bg-background">
-      <div className="container mx-auto px-4">
+      <div className="w-full px-4 sm:px-6">
         <div className="flex h-14 items-center">
           {/* Logo */}
           <div className="flex items-center space-x-2">
@@ -81,7 +98,7 @@ export default function Navbar() {
               className="hidden font-bold sm:inline-block cursor-pointer hover:text-primary transition-colors"
               onClick={() => handleNavigation('/')}
             >
-              Online IDE
+              Script Smith
             </span>
           </div>
 

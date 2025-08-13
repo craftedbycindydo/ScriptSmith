@@ -91,6 +91,48 @@ export interface User {
   created_at: string;
 }
 
+// Template interfaces
+export interface Template {
+  id: number;
+  name: string;
+  description?: string;
+  language: string;
+  code_content: string;
+  created_by: number;
+  creator_username: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateListItem {
+  id: number;
+  name: string;
+  description?: string;
+  language: string;
+  created_by: number;
+  creator_username: string;
+  created_at: string;
+}
+
+export interface TemplateCreate {
+  name: string;
+  description?: string;
+  language: string;
+  code_content: string;
+}
+
+export interface TemplateUpdate {
+  name?: string;
+  description?: string;
+  code_content?: string;
+}
+
+export interface TemplateStats {
+  total_templates: number;
+  recent_templates: number;
+  templates_by_language: Array<{ language: string; count: number }>;
+}
+
 export interface AuthToken {
   access_token: string;
   refresh_token: string;
@@ -297,6 +339,65 @@ export const apiService = {
 
   async activateUser(userId: number): Promise<void> {
     await api.post(`/admin/users/${userId}/activate`);
+  },
+
+  // Template endpoints
+  async getTemplates(language?: string): Promise<TemplateListItem[]> {
+    const params = language ? `?language=${encodeURIComponent(language)}` : '';
+    const response = await api.get(`/templates${params}`);
+    return response.data;
+  },
+
+  async getTemplate(templateId: number): Promise<Template> {
+    const response = await api.get(`/templates/${templateId}`);
+    return response.data;
+  },
+
+  // Admin template endpoints
+  async createTemplate(template: TemplateCreate): Promise<Template> {
+    const response = await api.post('/admin/templates', template);
+    return response.data;
+  },
+
+  async getAllTemplatesAdmin(skip: number = 0, limit: number = 100): Promise<TemplateListItem[]> {
+    const response = await api.get(`/admin/templates?skip=${skip}&limit=${limit}`);
+    return response.data;
+  },
+
+  async getTemplateAdmin(templateId: number): Promise<Template> {
+    const response = await api.get(`/admin/templates/${templateId}`);
+    return response.data;
+  },
+
+  async updateTemplate(templateId: number, template: TemplateUpdate): Promise<Template> {
+    const response = await api.put(`/admin/templates/${templateId}`, template);
+    return response.data;
+  },
+
+  async deleteTemplate(templateId: number): Promise<void> {
+    await api.delete(`/admin/templates/${templateId}`);
+  },
+
+  async getTemplateStats(): Promise<TemplateStats> {
+    const response = await api.get('/admin/templates/stats');
+    return response.data;
+  },
+
+  // Note: Direct file upload endpoint available but not used in current flow
+  // Templates are now created through the regular create endpoint after file content is loaded in UI
+  async uploadTemplateFile(file: File, name?: string, description?: string, language?: string): Promise<Template> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (name) formData.append('name', name);
+    if (description) formData.append('description', description);
+    if (language) formData.append('language', language);
+
+    const response = await api.post('/admin/templates/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
   },
 
   // Assignment endpoints

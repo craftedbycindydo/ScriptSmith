@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import CodeEditor from './CodeEditor';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
+import ResizablePanels from './ResizablePanels';
 
 import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
@@ -34,10 +36,50 @@ export default function IDE() {
   const [shareLink, setShareLink] = useState<string>('');
   const [creating, setCreating] = useState(false);
 
+  // Template state
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
   // Load languages on component mount
   useEffect(() => {
     loadLanguages();
   }, [loadLanguages]);
+
+  // Load templates when language changes (for authenticated users only)
+  useEffect(() => {
+    if (isAuthenticated && language) {
+      loadTemplatesForLanguage(language);
+    }
+  }, [language, isAuthenticated]);
+
+  // Load templates for current language
+  const loadTemplatesForLanguage = async (lang: string) => {
+    setLoadingTemplates(true);
+    try {
+      const templateList = await apiService.getTemplates(lang);
+      setTemplates(Array.isArray(templateList) ? templateList : []);
+    } catch (error) {
+      console.error('Failed to load templates:', error);
+      setTemplates([]);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  // Handle template selection
+  const handleTemplateSelect = async (templateId: string) => {
+    if (templateId === '' || !templateId || templateId === 'no-templates') return;
+    
+    try {
+      const template = await apiService.getTemplate(parseInt(templateId));
+      if (template && template.code_content) {
+        setCode(template.code_content);
+      }
+    } catch (error) {
+      console.error('Failed to load template:', error);
+      // Could show a toast notification here if desired
+    }
+  };
 
   const handleRunCode = async () => {
     await executeCode();
@@ -105,26 +147,58 @@ export default function IDE() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background">
       {/* Toolbar */}
-      <div className="border-b bg-card">
-        <div className="p-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4">
-            {/* Language selector */}
-            <div className="w-full sm:w-auto">
-              <LanguageSelector
-                selectedLanguage={language}
-                languages={languages}
-                onLanguageChange={setLanguage}
-              />
+      <div className="border-b bg-card flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-4">
+            {/* Language and Template selectors */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3 w-full sm:w-auto">
+              {/* Language selector */}
+              <div className="w-full sm:w-auto">
+                <LanguageSelector
+                  selectedLanguage={language}
+                  languages={languages}
+                  onLanguageChange={setLanguage}
+                />
+              </div>
+              
+              {/* Template selector - only for authenticated users */}
+              {isAuthenticated && (
+                <div className="w-full sm:w-auto sm:min-w-[200px]">
+                  <Select onValueChange={handleTemplateSelect} value="">
+                    <SelectTrigger size="sm" disabled={loadingTemplates}>
+                      <SelectValue placeholder={loadingTemplates ? "Loading..." : "Load Template"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!templates || templates.length === 0 ? (
+                        <SelectItem value="no-templates" disabled>
+                          No templates available
+                        </SelectItem>
+                      ) : (
+                        templates.map((template) => template && template.id ? (
+                          <SelectItem key={template.id} value={template.id.toString()}>
+                            {template.name || 'Untitled Template'}
+                            {template.description && (
+                              <span className="text-muted-foreground text-xs ml-1">
+                                - {template.description}
+                              </span>
+                            )}
+                          </SelectItem>
+                        ) : null)
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             
             {/* Action buttons */}
-            <div className="flex items-center space-x-2 flex-wrap">
+            <div className="flex items-center space-x-2 flex-wrap gap-1 sm:gap-0">
               <Button
                 onClick={handleRunCode}
                 disabled={isLoading}
-                className="btn-success"
+                className="btn-success flex-1 sm:flex-none"
                 size="sm"
               >
                 <Play className="w-4 h-4 mr-1 lg:mr-2" />
@@ -139,8 +213,9 @@ export default function IDE() {
                   size="sm" 
                   onClick={handleCreateShare}
                   disabled={creating}
+                  className="flex-1 sm:flex-none"
                 >
-                  <Share2 className="w-4 h-4 mr-2" />
+                  <Share2 className="w-4 h-4 mr-1 sm:mr-2" />
                   <span className="hidden sm:inline">{creating ? 'Creating...' : 'Share'}</span>
                   <span className="sm:hidden">Share</span>
                 </Button>
@@ -150,46 +225,58 @@ export default function IDE() {
                 <Save className="w-4 h-4 mr-2" />
                 Save
               </Button>
-              <Button variant="outline" onClick={handleDownload} size="sm" className="hidden md:flex">
+              <Button variant="outline" onClick={handleDownload} size="sm" className="hidden lg:flex">
                 <Download className="w-4 h-4 mr-2" />
                 Download
               </Button>
+              
+              {/* Mobile dropdown for extra actions */}
+              <div className="block md:hidden">
+                <Button variant="outline" size="sm" className="px-2">
+                  ⋯
+                </Button>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Code Editor */}
-        <div className="flex-1 p-4 min-h-0 lg:min-h-full">
-          <Card className="h-full">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Code Editor</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 h-full pb-6">
-              <div className="h-full min-h-[300px] lg:min-h-0">
+      {/* Main Content - Full Width Resizable Panels */}
+      <div className="flex-1 overflow-hidden p-2 md:p-4 bg-muted/5">
+        <ResizablePanels
+          defaultLeftWidth={65}
+          minLeftWidth={40}
+          minRightWidth={25}
+          leftPanel={
+            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:mr-2">
+              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                <h3 className="text-sm font-medium">Code Editor</h3>
+              </div>
+              <div className="flex-1 overflow-hidden rounded-b-lg">
                 <CodeEditor
                   language={language}
                   value={code}
                   onChange={(value) => setCode(value || '')}
                 />
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Output Panel */}
-        <div className="w-full lg:w-96 xl:w-[420px] p-4 lg:pl-0 flex-shrink-0">
-          <div className="h-full max-h-[400px] lg:max-h-full">
-            <OutputConsole
-              output={output}
-              error={error}
-              isLoading={isLoading}
-              executionTime={executionTime}
-            />
-          </div>
-        </div>
+            </div>
+          }
+          rightPanel={
+            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:ml-2">
+              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                <h3 className="text-sm font-medium">Output</h3>
+              </div>
+              <div className="flex-1 overflow-hidden rounded-b-lg">
+                <OutputConsole
+                  output={output}
+                  error={error}
+                  isLoading={isLoading}
+                  executionTime={executionTime}
+                />
+              </div>
+            </div>
+          }
+        />
       </div>
 
       {/* Share Dialog */}

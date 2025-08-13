@@ -20,9 +20,6 @@ import {
   RefreshCw,
   Trash2,
   Search,
-  Filter,
-  Download,
-  TrendingUp,
   XCircle
 } from 'lucide-react';
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
 import { useTheme } from '@/contexts/ThemeContext';
+import { apiService } from '@/services/api';
 import { 
   Settings as SettingsIcon, 
   History, 
@@ -27,7 +28,23 @@ export default function Settings() {
   const { theme, setTheme } = useTheme();
   const [notifications, setNotifications] = useState(true);
 
-  const isAdmin = user?.email === 'k@p.com';
+  // Use backend API to verify admin status instead of hardcoded email
+  const [isAdmin, setIsAdmin] = useState(false);
+  
+  useEffect(() => {
+    if (user) {
+      // Check admin status via backend API
+      const checkAdminStatus = async () => {
+        try {
+          await apiService.getAdminStats();
+          setIsAdmin(true);
+        } catch (error) {
+          setIsAdmin(false);
+        }
+      };
+      checkAdminStatus();
+    }
+  }, [user]);
 
   const handleLoadCode = (historyCode: string, historyLanguage: string) => {
     setCode(historyCode);
@@ -44,13 +61,11 @@ export default function Settings() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <p className="text-muted-foreground mb-4">Please sign in to access settings</p>
-              <Button onClick={() => navigate('/login')}>Sign In</Button>
-            </div>
+      <div className="h-full flex flex-col bg-background">
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <p className="text-muted-foreground mb-4">Please sign in to access settings</p>
+            <Button onClick={() => navigate('/login')}>Sign In</Button>
           </div>
         </div>
       </div>
@@ -58,15 +73,20 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="h-full flex flex-col bg-background">
+      <div className="flex-1 overflow-hidden">
         {/* Page Header */}
-        <div className="flex items-center mb-6">
-          <div className="flex items-center space-x-2">
-            <SettingsIcon className="w-6 h-6" />
-            <h1 className="text-2xl font-bold">Settings</h1>
+        <div className="border-b bg-card flex-shrink-0">
+          <div className="px-4 py-3">
+            <div className="flex items-center space-x-2">
+              <SettingsIcon className="w-6 h-6" />
+              <h1 className="text-2xl font-bold">Settings</h1>
+            </div>
           </div>
         </div>
+
+        {/* Main Content */}
+        <div className="flex-1 overflow-auto p-4 md:p-6">
 
       <Tabs defaultValue="history" className="space-y-6">
         <TabsList className="grid w-full grid-cols-4">
@@ -267,6 +287,7 @@ export default function Settings() {
           </TabsContent>
         )}
       </Tabs>
+        </div>
       </div>
     </div>
   );
