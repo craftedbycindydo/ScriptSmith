@@ -1,5 +1,4 @@
-# Railway-optimized Dockerfile for Backend
-# This Dockerfile is specifically optimized for Railway.app deployment
+# FastAPI Backend for Railway.app deployment
 FROM python:3.11-slim
 
 # Set working directory
@@ -27,12 +26,8 @@ COPY . .
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Railway automatically sets PORT environment variable
-EXPOSE $PORT
+# Expose port 8000 (Railway will map this to $PORT)
+EXPOSE 8000
 
-# Health check for Railway
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:$PORT/api/health || exit 1
-
-# Railway will override this with the PORT variable
-CMD python -m uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT
+# Railway will set the PORT environment variable at runtime
+CMD python -m uvicorn app.main:socket_app --host 0.0.0.0 --port ${PORT:-8000}
