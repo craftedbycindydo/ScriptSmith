@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     debug: bool
     secret_key: str
     
-    # Server settings - ALL REQUIRED FROM ENVIRONMENT
-    port: int
-    host: str
+    # Server settings - Railway provides PORT, use defaults for others
+    port: int = 8000
+    host: str = "0.0.0.0"
     
     # Database settings - REQUIRED FROM ENVIRONMENT
     database_url: str

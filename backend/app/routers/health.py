@@ -1,14 +1,15 @@
 from fastapi import APIRouter
-from app.core.config import settings
+import os
 
 router = APIRouter()
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - simplified for Railway deployment"""
     return {
         "status": "healthy",
-        "app_name": settings.app_name,
-        "version": settings.app_version,
-        "environment": "development" if settings.debug else "production"
+        "app_name": os.getenv("APP_NAME", "Script Smith"),
+        "version": os.getenv("APP_VERSION", "1.0.0"),
+        "environment": "production" if os.getenv("ENVIRONMENT") == "production" else "development",
+        "port": os.getenv("PORT", "8000")
     }

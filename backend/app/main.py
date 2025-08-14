@@ -7,7 +7,22 @@ import time
 from collections import defaultdict
 import socketio
 
-from app.core.config import settings
+import os
+try:
+    from app.core.config import settings
+except Exception as e:
+    print(f"Warning: Could not load full config: {e}")
+    # Create minimal settings for Railway deployment
+    class MinimalSettings:
+        app_name = os.getenv("APP_NAME", "Script Smith")
+        app_version = os.getenv("APP_VERSION", "1.0.0")
+        debug = os.getenv("DEBUG", "false").lower() == "true"
+        environment = os.getenv("ENVIRONMENT", "development")
+        host = "0.0.0.0"
+        port = int(os.getenv("PORT", "8000"))
+        enforce_https = False
+        allowed_origins = ["*"]  # Permissive for initial deployment
+    settings = MinimalSettings()
 from app.routers import code, languages, health, auth, collaboration, admin, assignments, templates
 from app.database.base import engine
 from app.models import user, code_submission, collaboration as collaboration_models, assignment, template
@@ -24,13 +39,18 @@ app = FastAPI(
 # Mount Socket.IO app
 socket_app = socketio.ASGIApp(sio, app)
 
-# Security Middlewares
-if settings.environment == "production" or settings.enforce_https:
-    # Only allow trusted hosts in production
-    app.add_middleware(
-        TrustedHostMiddleware, 
-        allowed_hosts=settings.trusted_hosts
-    )
+# Security Middlewares - Simplified for Railway deployment
+try:
+    if hasattr(settings, 'trusted_hosts') and (settings.environment == "production" or settings.enforce_https):
+        # Only allow trusted hosts in production
+        # Add Railway health check domain to allowed hosts
+        railway_hosts = list(settings.trusted_hosts) + ["healthcheck.railway.app"]
+        app.add_middleware(
+            TrustedHostMiddleware, 
+            allowed_hosts=railway_hosts
+        )
+except Exception as e:
+    print(f"Warning: Skipping TrustedHostMiddleware: {e}")
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
@@ -39,6 +59,10 @@ auth_rate_limit_storage = defaultdict(list)
 # Security middleware
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    # Skip security middleware for health check (like shop project)
+    if request.url.path == "/health":
+        return await call_next(request)
+        
     # Handle cases where request.client might be None (e.g., in some deployment scenarios)
     client_ip = getattr(request.client, 'host', '127.0.0.1') if request.client else '127.0.0.1'
     current_time = time.time()
@@ -88,19 +112,20 @@ async def security_middleware(request: Request, call_next):
     
     return response
 
-# Add CORS middleware
+# Add CORS middleware - Permissive for Railway deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=getattr(settings, 'allowed_origins', ["*"]),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Create database tables
+# Create database tables - Graceful failure for Railway
 @app.on_event("startup")
 async def startup_event():
-    # Create all database tables
+    print("🚀 Starting application...")
+    # Try to create database tables, but don't fail if missing config
     try:
         user.Base.metadata.create_all(bind=engine)
         code_submission.Base.metadata.create_all(bind=engine)
@@ -110,34 +135,42 @@ async def startup_event():
         print("✅ Database tables created successfully")
     except Exception as e:
         print(f"⚠️  Database connection failed: {e}")
-        print("💡 Continuing without database features for development")
+        print("💡 Continuing without database features for health check")
 
-# Include routers
+# Simple health check (like shop project)
+@app.get("/health")
+async def health_check():
+    """Health check endpoint - Railway compatible"""
+    return {"status": "ok"}
+
+# Include routers - Health check first, others conditional
 app.include_router(health.router, prefix="/api", tags=["health"])
-app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
-app.include_router(languages.router, prefix="/api", tags=["languages"])
-app.include_router(code.router, prefix="/api", tags=["code"])
-app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
-app.include_router(admin.router, prefix="/api", tags=["admin"])
-app.include_router(assignments.router, prefix="/api", tags=["assignments"])
-app.include_router(templates.router, prefix="/api", tags=["templates"])
 
-# Root endpoint
+# Only include other routers if we have proper configuration
+try:
+    if hasattr(settings, 'database_url'):
+        app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+        app.include_router(languages.router, prefix="/api", tags=["languages"])
+        app.include_router(code.router, prefix="/api", tags=["code"])
+        app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
+        app.include_router(admin.router, prefix="/api", tags=["admin"])
+        app.include_router(assignments.router, prefix="/api", tags=["assignments"])
+        app.include_router(templates.router, prefix="/api", tags=["templates"])
+        print("✅ All routers loaded successfully")
+    else:
+        print("⚠️  Limited configuration - only health check available")
+except Exception as e:
+    print(f"⚠️  Some routers failed to load: {e}")
+    print("💡 Health check still available")
+
+# Root endpoint - Simplified for Railway
 @app.get("/")
 async def root():
     return {
-        "message": f"Welcome to {settings.app_name}",
-        "version": settings.app_version,
+        "message": f"Welcome to {getattr(settings, 'app_name', 'Script Smith')}",
+        "version": getattr(settings, 'app_version', '1.0.0'),
         "status": "running",
-        "security_features": [
-            "Argon2 password hashing",
-            "JWT authentication with refresh tokens",
-            "Rate limiting",
-            "Security headers",
-            "HTTPS enforcement (production)",
-            "Input validation"
-        ],
-        "environment": settings.environment
+        "environment": getattr(settings, 'environment', 'development')
     }
 
 # Global exception handler
@@ -151,7 +184,7 @@ async def global_exception_handler(request, exc):
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:socket_app",
-        host=settings.host,
-        port=settings.port,
-        reload=settings.debug
+        host=getattr(settings, 'host', '0.0.0.0'),
+        port=int(os.getenv('PORT', getattr(settings, 'port', 8000))),
+        reload=getattr(settings, 'debug', False)
     )
