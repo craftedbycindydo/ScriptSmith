@@ -1,14 +1,27 @@
+[variables]
+PYTHONPATH = "/app"
+PYTHONUNBUFFERED = "1"
+PIP_NO_CACHE_DIR = "1"
+PIP_DISABLE_PIP_VERSION_CHECK = "1"
+
 [phases.setup]
-nixPkgs = ["python310", "gcc", "g++"]
+dependsOn = []
+cmds = [
+    "apt-get update && apt-get install -y build-essential",
+]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+dependsOn = ["setup"]
+cmds = [
+    "pip install --upgrade pip",
+    "pip install -r requirements.txt",
+]
 
 [phases.build]
-cmds = ["echo 'Backend build complete'"]
+dependsOn = ["install"]
+cmds = [
+    "python -c 'import app.main; print(\"FastAPI app imports successfully\")'",
+]
 
 [start]
-cmd = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
-
-[variables]
-PORT = "8082"
+cmd = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4"

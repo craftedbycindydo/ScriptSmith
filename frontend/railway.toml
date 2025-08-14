@@ -2,5 +2,25 @@
 builder = "dockerfile"
 
 [deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+restartPolicyMaxRetries = 5
+
+[env]
+PORT = "3000"
+NODE_ENV = "production"
+
+[scaling]
+minReplicas = 1
+maxReplicas = 5
+autoscaling = true
+
+[networking]
+# Enable private networking for internal service communication
+privateDomainEnabled = true
+
+[resources]
+# Optimized for frontend serving static assets
+memory = "1Gi"
+cpu = "1000m"

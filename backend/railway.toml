@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
@@ -10,7 +10,19 @@ restartPolicyMaxRetries = 10
 
 [env]
 PORT = "8082"
+PYTHONPATH = "/app"
+PYTHONUNBUFFERED = "1"
 
 [scaling]
 minReplicas = 1
 maxReplicas = 10
+autoscaling = true
+
+[networking]
+# Enable private networking for internal service communication
+privateDomainEnabled = true
+
+[resources]
+# Optimized for 120-150 concurrent users
+memory = "2Gi"
+cpu = "2000m"

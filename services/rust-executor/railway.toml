@@ -3,4 +3,23 @@ builder = "dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[env]
+PORT = "8080"
+
+[scaling]
+minReplicas = 1
+maxReplicas = 5
+autoscaling = true
+
+[networking]
+# Enable private networking for internal service communication
+privateDomainEnabled = true
+
+[resources]
+# Optimized for code execution microservice
+memory = "1Gi"
+cpu = "1000m"
