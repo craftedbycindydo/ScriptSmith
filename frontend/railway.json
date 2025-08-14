@@ -8,5 +8,12 @@
     "startCommand": "npx serve -s dist",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
+  },
+  "environments": {
+    "production": {
+      "variables": {
+        "NIXPACKS_NODE_VERSION": "24"
+      }
+    }
   }
 }
