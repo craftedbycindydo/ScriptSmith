@@ -183,7 +183,7 @@ func (g *GoExecutor) runGoCode(tempDir, inputData string) CodeExecutionResponse 
 	defer cancel()
 
 	// Create go.mod file
-	goModContent := "module main\n\ngo 1.21\n"
+	goModContent := "module main\n\ngo 1.23\n"
 	goModFile := filepath.Join(tempDir, "go.mod")
 	err := os.WriteFile(goModFile, []byte(goModContent), 0644)
 	if err != nil {
@@ -285,7 +285,7 @@ func (g *GoExecutor) ValidateSyntax(code string) CodeValidationResponse {
 	}
 
 	// Create go.mod file
-	goModContent := "module main\n\ngo 1.21\n"
+	goModContent := "module main\n\ngo 1.23\n"
 	goModFile := filepath.Join(tempDir, "go.mod")
 	err = os.WriteFile(goModFile, []byte(goModContent), 0644)
 	if err != nil {
@@ -413,7 +413,7 @@ func infoHandler(executor *GoExecutor) http.HandlerFunc {
 		info := map[string]interface{}{
 			"service":             "go-executor",
 			"language":            "go",
-			"version":             "1.21",
+			"version":             "1.23",
 			"maxExecutionTime":    executor.MaxExecutionTime,
 			"maxMemoryMB":         executor.MaxMemoryMB,
 			"maxCodeSizeKB":       executor.MaxCodeSizeKB,
