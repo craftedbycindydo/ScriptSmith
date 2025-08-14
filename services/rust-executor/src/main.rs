@@ -473,7 +473,7 @@ async fn info(executor: RustExecutor) -> Result<impl warp::Reply, warp::Rejectio
     let mut info = HashMap::new();
     info.insert("service", serde_json::Value::String("rust-executor".to_string()));
     info.insert("language", serde_json::Value::String("rust".to_string()));
-    info.insert("version", serde_json::Value::String("1.75".to_string()));
+    info.insert("version", serde_json::Value::String("1.82".to_string()));
     info.insert("maxExecutionTime", serde_json::Value::Number(executor.max_execution_time.into()));
     info.insert("maxMemoryMB", serde_json::Value::Number(executor.max_memory_mb.into()));
     info.insert("maxCodeSizeKB", serde_json::Value::Number(executor.max_code_size_kb.into()));
