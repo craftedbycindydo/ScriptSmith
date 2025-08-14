@@ -126,7 +126,7 @@ export const useCollaboration = ({
     } catch (error) {
       setError(`Failed to initialize collaborative editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [monacoEditor, monaco, sessionId, participantId]);
+  }, [monacoEditor, monaco]);
 
   // Initialize Y.js document
   const initializeYjsDoc = useCallback(() => {
@@ -143,7 +143,7 @@ export const useCollaboration = ({
         initializeMonacoBinding();
       }, 100);
     }
-  }, [monacoEditor, monaco, isConnected, isInitialized, initializeMonacoBinding]);
+  }, [monacoEditor, monaco, isConnected, isInitialized]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
