@@ -1,5 +1,5 @@
 # Simple Rust service for Railway.app (2025)
-FROM rust:1.70-alpine AS builder
+FROM rust:1.75-alpine AS builder
 
 # Install musl-dev for static linking
 RUN apk add --no-cache musl-dev
