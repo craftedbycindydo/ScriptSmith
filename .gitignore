@@ -81,3 +81,51 @@ backend/extracted/
 # Results and reports
 backend/results/
 backend/reports/
+
+# Programming language build artifacts
+# Rust
+target/
+**/target/
+Cargo.lock
+*.rlib
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+go.sum
+
+# C/C++
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+
+# Node.js additional
+package-lock.json
+yarn.lock
+node_modules/
+**/node_modules/
+
+# Python additional
+*.egg-info/
+.pytest_cache/
+.coverage
+.tox/
+.venv/
+venv/
+**/venv/
