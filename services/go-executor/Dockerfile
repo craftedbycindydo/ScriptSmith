@@ -16,8 +16,8 @@ COPY . .
 # Build the application
 RUN go build -o main .
 
-# Final stage
-FROM alpine:latest
+# Final stage - needs Go toolchain for runtime compilation  
+FROM golang:1.23-alpine
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
