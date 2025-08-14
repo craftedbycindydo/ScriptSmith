@@ -1,0 +1,20 @@
+{
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile",
+    "buildArgs": {
+      "VITE_API_BASE_URL": "${VITE_API_BASE_URL}",
+      "VITE_APP_NAME": "${VITE_APP_NAME}",
+      "VITE_ENVIRONMENT": "${VITE_ENVIRONMENT}"
+    }
+  },
+  "deploy": {
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "resources": {
+      "memory": "1GB"
+    },
+    "numReplicas": 1,
+    "sleepApplication": false
+  }
+}
