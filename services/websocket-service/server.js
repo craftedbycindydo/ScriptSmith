@@ -11,6 +11,10 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 8007;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8082';
 const CORS_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:5173'];
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const SOCKET_PING_TIMEOUT = parseInt(process.env.SOCKET_PING_TIMEOUT || '60000');
+const SOCKET_PING_INTERVAL = parseInt(process.env.SOCKET_PING_INTERVAL || '25000');
+const SESSION_CLEANUP_INTERVAL = parseInt(process.env.SESSION_CLEANUP_INTERVAL || '3600000');
 
 // Configure CORS for Express
 app.use(cors({
@@ -20,14 +24,17 @@ app.use(cors({
 
 app.use(express.json());
 
-// Configure Socket.IO with CORS
+// Configure Socket.IO with CORS and production optimizations
 const io = socketIo(server, {
   cors: {
     origin: CORS_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true
   },
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  pingTimeout: SOCKET_PING_TIMEOUT,
+  pingInterval: SOCKET_PING_INTERVAL,
+  allowEIO3: true
 });
 
 // SERVER-MANAGED SESSION PERSISTENCE
@@ -53,7 +60,7 @@ setInterval(() => {
       sessionLastActivity.delete(sessionId);
     }
   }
-}, 60 * 60 * 1000); // Check every hour
+}, SESSION_CLEANUP_INTERVAL); // Check interval configurable via env
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -375,6 +382,9 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📊 Health check endpoint: /health`);
   console.log(`🔗 Backend URL: ${BACKEND_URL}`);
   console.log(`🌐 CORS Origins: ${CORS_ORIGINS.join(', ')}`);
+  console.log(`⚙️  Environment: ${NODE_ENV}`);
+  console.log(`🏓 Socket.IO Ping: ${SOCKET_PING_INTERVAL}ms / Timeout: ${SOCKET_PING_TIMEOUT}ms`);
+  console.log(`🧹 Session cleanup interval: ${SESSION_CLEANUP_INTERVAL}ms`);
 });
 
 // Graceful shutdown

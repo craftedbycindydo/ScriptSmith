@@ -4,15 +4,17 @@
     "builder": "RAILPACK"
   },
   "deploy": {
+    "numReplicas": 1,
+    "startCommand": "npm start",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
     "healthcheckPath": "/health",
     "healthcheckTimeout": 10,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 5,
-    "resources": {
-      "memory": "1GB"
-    },
-    "numReplicas": 1,
+    "healthcheckEnabled": true,
     "sleepApplication": false,
-    "healthcheckEnabled": true
+    "resources": {
+      "memory": "1GB",
+      "cpu": "1000m"
+    }
   }
 }

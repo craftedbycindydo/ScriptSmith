@@ -163,38 +163,29 @@ async def health_check():
 # Include routers - Health check first, others conditional
 app.include_router(health.router, prefix="/api", tags=["health"])
 
-# Load routers individually to identify issues
-routers_to_load = [
-    ("languages", "app.routers.languages"),
-    ("code", "app.routers.code"), 
-    ("auth", "app.routers.auth"),
-    ("collaboration", "app.routers.collaboration"),
-    ("admin", "app.routers.admin"),
-    ("assignments", "app.routers.assignments"),
-    ("templates", "app.routers.templates")
-]
-
-print("🔧 Loading API routers...")
-for router_name, module_path in routers_to_load:
+# Load other routers lazily during startup
+async def load_routers():
     try:
-        import importlib
-        router_module = importlib.import_module(module_path)
+        from app.routers import code, languages, auth, collaboration, admin, assignments, templates
         
-        if router_name == "auth":
-            app.include_router(router_module.router, prefix="/api/auth", tags=["authentication"])
-        else:
-            app.include_router(router_module.router, prefix="/api", tags=[router_name])
-        print(f"✅ {router_name} router loaded")
-    except Exception as router_error:
-        print(f"❌ Failed to load {router_name} router: {router_error}")
-        import traceback
-        traceback.print_exc()
+        app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+        app.include_router(languages.router, prefix="/api", tags=["languages"])
+        app.include_router(code.router, prefix="/api", tags=["code"])
+        app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
+        app.include_router(admin.router, prefix="/api", tags=["admin"])
+        app.include_router(assignments.router, prefix="/api", tags=["assignments"])
+        app.include_router(templates.router, prefix="/api", tags=["templates"])
+        print("✅ All routers loaded successfully")
+        print("🔗 WebSocket service running separately on dedicated microservice")
+        
+    except Exception as e:
+        print(f"⚠️  Some routers failed to load: {e}")
+        print("💡 Health check still available")
 
-print("🔄 Router loading complete")
-
+# Load routers after startup
 @app.on_event("startup")
-async def startup_info():
-    print("🔗 WebSocket service running separately on dedicated microservice")
+async def load_full_app():
+    await load_routers()
 
 # Root endpoint - Simplified for Railway
 @app.get("/")
