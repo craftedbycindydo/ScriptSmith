@@ -33,11 +33,14 @@ RUN npm run build
 # Production stage with nginx
 FROM nginx:alpine
 
+# Install envsubst for PORT variable substitution
+RUN apk add --no-cache gettext
+
 # Copy built app to nginx
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy Railway-optimized nginx configuration
-COPY nginx.railway.conf /etc/nginx/conf.d/default.conf
+# Copy Railway-optimized nginx configuration as template
+COPY nginx.railway.conf /etc/nginx/conf.d/default.conf.template
 
 # Create nginx user
 RUN addgroup -g 1000 -S appuser && \
@@ -46,9 +49,5 @@ RUN addgroup -g 1000 -S appuser && \
 # Railway automatically sets PORT environment variable
 EXPOSE $PORT
 
-# Health check for Railway
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:$PORT/ || exit 1
-
-# Start nginx with envsubst to handle PORT variable
-CMD envsubst '$PORT' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
+# Start nginx with proper PORT substitution
+CMD envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
