@@ -15,9 +15,9 @@ COPY src ./src
 # Build the application
 RUN cargo build --release
 
-# Final stage
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
+# Final stage - needs Rust toolchain for runtime compilation
+FROM rust:1.82-alpine
+RUN apk --no-cache add ca-certificates musl-dev
 WORKDIR /root/
 
 # Copy the binary from builder stage
