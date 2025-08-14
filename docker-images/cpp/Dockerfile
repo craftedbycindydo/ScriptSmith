@@ -2,28 +2,20 @@
 FROM gcc:12
 
 # Install essential development tools and libraries
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     cmake \
     make \
     gdb \
-    valgrind \
     pkg-config \
-    libboost-all-dev \
-    libeigen3-dev \
-    libgtest-dev \
-    libgmock-dev \
+    libssl-dev \
+    && apt-get install -y --no-install-recommends \
+    libboost-dev \
+    libboost-system-dev \
+    libboost-filesystem-dev \
     libjsoncpp-dev \
     libcurl4-openssl-dev \
-    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Build and install Google Test
-WORKDIR /usr/src/gtest
-RUN cmake CMakeLists.txt && \
-    make && \
-    cp lib/*.a /usr/lib/ && \
-    mkdir -p /usr/local/lib && \
-    cp lib/*.a /usr/local/lib/
 
 # Set up a basic CMake template
 WORKDIR /app
@@ -34,21 +26,13 @@ project(CodeExecution)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find packages
-find_package(Boost REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(JSONCPP jsoncpp)
-
-# Include directories
-include_directories(${Boost_INCLUDE_DIRS})
-include_directories(/usr/include/eigen3)
+# Find basic packages
+find_package(PkgConfig QUIET)
 
 # Add executable
 add_executable(main main.cpp)
 
-# Link libraries
-target_link_libraries(main ${Boost_LIBRARIES})
-target_link_libraries(main ${JSONCPP_LIBRARIES})
+# Link standard libraries
 target_link_libraries(main pthread)
 EOF
 
@@ -63,10 +47,14 @@ RUN cat > main.cpp << 'EOF'
 #include <set>
 #include <queue>
 #include <stack>
-#include <boost/algorithm/string.hpp>
 
 int main() {
-    std::cout << "C++ environment ready with STL and Boost!" << std::endl;
+    std::cout << "C++ environment ready with STL!" << std::endl;
+    
+    // Example STL usage
+    std::vector<int> numbers = {1, 2, 3, 4, 5};
+    std::cout << "Vector size: " << numbers.size() << std::endl;
+    
     return 0;
 }
 EOF

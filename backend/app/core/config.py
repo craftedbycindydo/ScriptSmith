@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     # Supported languages - REQUIRED FROM ENVIRONMENT
     supported_languages: Union[str, List[str]]
     
+    # Microservice Executor URLs - REQUIRED FROM ENVIRONMENT
+    python_executor_url: str
+    javascript_executor_url: str
+    java_executor_url: str
+    cpp_executor_url: str
+    go_executor_url: str
+    rust_executor_url: str
+    
     # JWT Authentication settings - ALL REQUIRED FROM ENVIRONMENT
     algorithm: str
     access_token_expire_minutes: int
@@ -59,7 +67,14 @@ class Settings(BaseSettings):
     email_from: str
     
     # Admin settings - REQUIRED FROM ENVIRONMENT
-    admin_email: str
+    admin_emails: Union[str, List[str]]
+    
+    @field_validator('admin_emails')
+    @classmethod
+    def parse_admin_emails(cls, v):
+        if isinstance(v, str):
+            return [email.strip() for email in v.split(",") if email.strip()]
+        return v
     
     # Security settings - ALL REQUIRED FROM ENVIRONMENT
     min_password_length: int

@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["go_1_21"]
+
+[phases.build]
+cmds = ["go build -o main ."]
+
+[start]
+cmd = "./main"
+
+[variables]
+PORT = "8005"

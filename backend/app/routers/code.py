@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 import time
 
 from app.core.config import settings
 from app.database.base import get_db
-from app.services.code_execution import code_execution_service
+from app.services.microservice_executor import microservice_executor
 from app.routers.auth import get_current_user, get_current_user_optional
 from typing import Union
 from app.models.code_submission import CodeSubmission
@@ -80,8 +80,8 @@ async def execute_code(
     start_time = time.time()
     
     try:
-        # Execute code in Docker container
-        result = await code_execution_service.execute_code(
+        # Execute code using microservice
+        result = await microservice_executor.execute_code(
             code=request.code,
             language=request.language,
             input_data=request.input_data or ""
@@ -132,8 +132,8 @@ async def validate_code(request: CodeValidationRequest):
         )
     
     try:
-        # Use real syntax validation service
-        validation_result = await code_execution_service.validate_code_syntax(
+        # Use microservice syntax validation
+        validation_result = await microservice_executor.validate_code_syntax(
             request.code, 
             request.language
         )
@@ -200,3 +200,35 @@ async def get_code_history(
         page=page,
         page_size=page_size
     )
+
+
+@router.get("/microservices/health")
+async def check_microservices_health():
+    """Check health status of all language execution microservices"""
+    try:
+        health_status = await microservice_executor.health_check()
+        return health_status
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to check microservices health: {str(e)}"
+        )
+
+
+@router.get("/microservices/info/{language}")
+async def get_microservice_info(language: str):
+    """Get information about a specific language microservice"""
+    if language not in settings.supported_languages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Language '{language}' is not supported"
+        )
+    
+    try:
+        service_info = await microservice_executor.get_service_info(language)
+        return service_info
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get service info: {str(e)}"
+        )

@@ -1,4 +1,4 @@
-# Online IDE Platform
+# Script Smith
 
 A modern web-based IDE platform built with React, TypeScript, FastAPI, and supporting multiple programming languages with real-time code execution.
 

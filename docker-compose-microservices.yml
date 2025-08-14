@@ -1,0 +1,130 @@
+# Docker Compose for Local Development
+# Alternative to Railway.app for local testing of microservices
+
+version: '3.8'
+
+services:
+  python-executor:
+    build: 
+      context: ./services/python-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nodejs-executor:
+    build:
+      context: ./services/nodejs-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  java-executor:
+    build:
+      context: ./services/java-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - PORT=8003
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cpp-executor:
+    build:
+      context: ./services/cpp-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - PORT=8004
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  go-executor:
+    build:
+      context: ./services/go-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - PORT=8005
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rust-executor:
+    build:
+      context: ./services/rust-executor
+      dockerfile: Dockerfile
+    ports:
+      - "8006:8006"
+    environment:
+      - PORT=8006
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main backend (update environment variables)
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Database and Redis (use your existing config)
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      
+      # Microservice URLs for local development
+      - PYTHON_EXECUTOR_URL=http://python-executor:8001
+      - JAVASCRIPT_EXECUTOR_URL=http://nodejs-executor:8002
+      - JAVA_EXECUTOR_URL=http://java-executor:8003
+      - CPP_EXECUTOR_URL=http://cpp-executor:8004
+      - GO_EXECUTOR_URL=http://go-executor:8005
+      - RUST_EXECUTOR_URL=http://rust-executor:8006
+      
+      # Your other environment variables
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - SUPPORTED_LANGUAGES=python,javascript,typescript,java,cpp,go,rust
+    depends_on:
+      - python-executor
+      - nodejs-executor
+      - java-executor
+      - cpp-executor
+      - go-executor
+      - rust-executor
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge

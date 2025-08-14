@@ -1,0 +1,19 @@
+{
+  "name": "nodejs-executor",
+  "version": "1.0.0",
+  "description": "JavaScript/TypeScript code execution microservice for Railway.app",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "node main.js"
+  },
+  "keywords": ["javascript", "typescript", "code-execution", "microservice"],
+  "author": "Code Submission Platform",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -8,11 +8,15 @@ from datetime import datetime, timedelta
 from app.core.config import settings
 from app.database.base import get_db
 from app.routers.auth import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.code_submission import CodeSubmission
 from app.models.collaboration import CollaborationSession, CollaborationParticipant
+from app.services.admin_service import AdminService
 
 router = APIRouter()
+
+# Initialize admin service
+admin_service = AdminService(settings)
 
 class UserActivityItem(BaseModel):
     id: int
@@ -51,12 +55,8 @@ class UserDetailsResponse(BaseModel):
 async def get_admin_user(
     current_user: User = Depends(get_current_user)
 ):
-    """Verify that the current user is an admin"""
-    if current_user.email != settings.admin_email:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required"
-        )
+    """Verify that the current user has admin access using secure RBAC"""
+    admin_service.verify_admin_access(current_user)
     return current_user
 
 @router.get("/admin/stats", response_model=AdminStatsResponse)
@@ -381,13 +381,76 @@ async def deactivate_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    if user.email == settings.admin_email:
+    if admin_service.has_admin_access(user):
         raise HTTPException(status_code=400, detail="Cannot deactivate admin user")
     
     user.is_active = False
     db.commit()
     
     return {"message": f"User {user.username} has been deactivated"}
+
+
+@router.post("/admin/users/{user_id}/promote")
+async def promote_user_to_admin(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Promote a user to admin role"""
+    user = admin_service.promote_to_admin(db, user_id, admin_user)
+    return {
+        "message": f"User {user.username} has been promoted to admin",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role.value,
+            "is_admin": user.is_admin
+        }
+    }
+
+
+@router.post("/admin/users/{user_id}/demote")
+async def demote_user_from_admin(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Demote a user from admin role"""
+    user = admin_service.demote_from_admin(db, user_id, admin_user)
+    return {
+        "message": f"User {user.username} has been demoted from admin",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role.value,
+            "is_admin": user.is_admin
+        }
+    }
+
+
+@router.get("/admin/users/admins")
+async def get_admin_users(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get all users with admin privileges"""
+    admins = admin_service.get_admin_users(db)
+    return {
+        "admins": [
+            {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role.value,
+                "is_admin": user.is_admin,
+                "is_superuser": user.is_superuser,
+                "is_initial_admin": admin_service.is_initial_admin_email(user.email)
+            }
+            for user in admins
+        ]
+    }
 
 @router.post("/admin/users/{user_id}/activate")
 async def activate_user(

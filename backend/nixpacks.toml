@@ -1,0 +1,14 @@
+[phases.setup]
+nixPkgs = ["python310", "gcc", "g++"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["echo 'Backend build complete'"]
+
+[start]
+cmd = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+[variables]
+PORT = "8082"

@@ -15,8 +15,8 @@ bcrypt==4.3.0
 argon2-cffi==25.1.0
 email-validator==2.2.0
 
-# Docker execution
-docker==7.1.0
+# HTTP client for microservices (replaces Docker)
+aiohttp==3.9.1
 
 # WebSocket & Real-time collaboration
 python-socketio==5.12.1

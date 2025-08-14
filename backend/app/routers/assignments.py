@@ -59,16 +59,18 @@ class AssignmentReportResponse(BaseModel):
     students: List[dict]
 
 
+# Import admin service
+from app.services.admin_service import AdminService
+
+# Initialize admin service  
+admin_service = AdminService(settings)
+
 # Admin authentication dependency
 async def get_admin_user(
     current_user: User = Depends(get_current_user)
 ):
-    """Verify that the current user is an admin"""
-    if current_user.email != settings.admin_email:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required"
-        )
+    """Verify that the current user has admin access using secure RBAC"""
+    admin_service.verify_admin_access(current_user)
     return current_user
 
 

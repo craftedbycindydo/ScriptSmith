@@ -8,9 +8,9 @@ from collections import defaultdict
 import socketio
 
 from app.core.config import settings
-from app.routers import code, languages, health, auth, collaboration, admin, assignments
+from app.routers import code, languages, health, auth, collaboration, admin, assignments, templates
 from app.database.base import engine
-from app.models import user, code_submission, collaboration as collaboration_models, assignment
+from app.models import user, code_submission, collaboration as collaboration_models, assignment, template
 from app.services.websocket_manager import sio
 
 # Create FastAPI instance
@@ -106,6 +106,7 @@ async def startup_event():
         code_submission.Base.metadata.create_all(bind=engine)
         collaboration_models.Base.metadata.create_all(bind=engine)
         assignment.Base.metadata.create_all(bind=engine)
+        template.Base.metadata.create_all(bind=engine)
         print("✅ Database tables created successfully")
     except Exception as e:
         print(f"⚠️  Database connection failed: {e}")
@@ -119,6 +120,7 @@ app.include_router(code.router, prefix="/api", tags=["code"])
 app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
 app.include_router(admin.router, prefix="/api", tags=["admin"])
 app.include_router(assignments.router, prefix="/api", tags=["assignments"])
+app.include_router(templates.router, prefix="/api", tags=["templates"])
 
 # Root endpoint
 @app.get("/")
