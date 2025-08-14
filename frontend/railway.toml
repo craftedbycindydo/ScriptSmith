@@ -1,15 +1,8 @@
 [build]
-builder = "docker"
+builder = "dockerfile"
 
 [deploy]
-healthcheckPath = "/health"
+healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[env]
-PORT = "3000"
-
-[scaling]
-minReplicas = 1
-maxReplicas = 5
