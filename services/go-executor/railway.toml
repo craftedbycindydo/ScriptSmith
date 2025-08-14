@@ -8,7 +8,6 @@ restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
 
 [env]
-PORT = "8080"
 GOMAXPROCS = "1"
 
 [scaling]

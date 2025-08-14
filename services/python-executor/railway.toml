@@ -7,9 +7,6 @@ healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
 
-[env]
-PORT = "8080"
-
 [scaling]
 minReplicas = 1
 maxReplicas = 5
