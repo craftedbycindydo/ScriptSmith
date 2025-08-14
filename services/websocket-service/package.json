@@ -19,6 +19,9 @@
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
+  "engines": {
+    "node": "20.x"
+  },
   "keywords": ["websocket", "socket.io", "collaboration", "real-time"],
   "author": "Code Submission Platform",
   "license": "MIT"

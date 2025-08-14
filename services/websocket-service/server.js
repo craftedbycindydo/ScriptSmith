@@ -8,7 +8,7 @@ const app = express();
 const server = http.createServer(app);
 
 // Environment configuration
-const PORT = process.env.WEBSOCKET_PORT || 8007;
+const PORT = process.env.PORT || 8007;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8082';
 const CORS_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:5173'];
 
@@ -370,9 +370,11 @@ async function handleDisconnection(socketId, sessionId, participantId) {
 }
 
 // Start the server
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 WebSocket Service running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`📊 Health check endpoint: /health`);
+  console.log(`🔗 Backend URL: ${BACKEND_URL}`);
+  console.log(`🌐 CORS Origins: ${CORS_ORIGINS.join(', ')}`);
 });
 
 // Graceful shutdown
