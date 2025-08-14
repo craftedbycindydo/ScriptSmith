@@ -1,11 +1,19 @@
 [phases.setup]
-nixPkgs = ["python310", "gcc"]
+nixPkgs = ["python310", "gcc", "pip"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = [
+  "python -m venv /opt/venv",
+  "/opt/venv/bin/pip install --upgrade pip",
+  "/opt/venv/bin/pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = ["echo 'Python dependencies installed'"]
 
 [start]
-cmd = "python main.py"
+cmd = "/opt/venv/bin/python main.py"
 
 [variables]
 PORT = "8001"
+PATH = "/opt/venv/bin:$PATH"
