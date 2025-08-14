@@ -5,7 +5,6 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import time
 from collections import defaultdict
-import socketio
 
 import os
 try:
@@ -23,10 +22,12 @@ except Exception as e:
         enforce_https = False
         allowed_origins = ["*"]  # Permissive for initial deployment
     settings = MinimalSettings()
-from app.routers import code, languages, health, auth, collaboration, admin, assignments, templates
-from app.database.base import engine
-from app.models import user, code_submission, collaboration as collaboration_models, assignment, template
-from app.services.websocket_manager import sio
+# Import health router immediately (lightweight)
+from app.routers import health
+
+# Lazy import heavy dependencies
+sio = None
+engine = None
 
 # Create FastAPI instance
 app = FastAPI(
@@ -36,8 +37,16 @@ app = FastAPI(
     debug=settings.debug
 )
 
-# Mount Socket.IO app
-socket_app = socketio.ASGIApp(sio, app)
+# Initialize Socket.IO lazily
+def init_socketio():
+    import socketio
+    global sio
+    if sio is None:
+        from app.services.websocket_manager import sio
+    return socketio.ASGIApp(sio, app)
+
+# For now, just use regular FastAPI app
+socket_app = app
 
 # Security Middlewares - Simplified for Railway deployment
 try:
@@ -125,8 +134,12 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Starting application...")
-    # Try to create database tables, but don't fail if missing config
+    # Try to initialize database connection and tables
+    global engine
     try:
+        from app.database.base import engine
+        from app.models import user, code_submission, collaboration as collaboration_models, assignment, template
+        
         user.Base.metadata.create_all(bind=engine)
         code_submission.Base.metadata.create_all(bind=engine)
         collaboration_models.Base.metadata.create_all(bind=engine)
@@ -146,9 +159,11 @@ async def health_check():
 # Include routers - Health check first, others conditional
 app.include_router(health.router, prefix="/api", tags=["health"])
 
-# Only include other routers if we have proper configuration
-try:
-    if hasattr(settings, 'database_url'):
+# Load other routers lazily during startup
+async def load_routers():
+    try:
+        from app.routers import code, languages, auth, collaboration, admin, assignments, templates
+        
         app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
         app.include_router(languages.router, prefix="/api", tags=["languages"])
         app.include_router(code.router, prefix="/api", tags=["code"])
@@ -157,11 +172,20 @@ try:
         app.include_router(assignments.router, prefix="/api", tags=["assignments"])
         app.include_router(templates.router, prefix="/api", tags=["templates"])
         print("✅ All routers loaded successfully")
-    else:
-        print("⚠️  Limited configuration - only health check available")
-except Exception as e:
-    print(f"⚠️  Some routers failed to load: {e}")
-    print("💡 Health check still available")
+        
+        # Initialize Socket.IO with all routers loaded
+        global socket_app
+        socket_app = init_socketio()
+        print("✅ Socket.IO initialized successfully")
+        
+    except Exception as e:
+        print(f"⚠️  Some routers failed to load: {e}")
+        print("💡 Health check still available")
+
+# Load routers after startup
+@app.on_event("startup")
+async def load_full_app():
+    await load_routers()
 
 # Root endpoint - Simplified for Railway
 @app.get("/")
@@ -183,7 +207,7 @@ async def global_exception_handler(request, exc):
 
 if __name__ == "__main__":
     uvicorn.run(
-        "app.main:socket_app",
+        "app.main:app",  # Use the main FastAPI app directly
         host=getattr(settings, 'host', '0.0.0.0'),
         port=int(os.getenv('PORT', getattr(settings, 'port', 8000))),
         reload=getattr(settings, 'debug', False)
