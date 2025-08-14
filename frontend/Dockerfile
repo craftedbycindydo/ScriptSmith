@@ -37,7 +37,7 @@ FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # Copy Railway-optimized nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.railway.conf /etc/nginx/conf.d/default.conf
 
 # Create nginx user
 RUN addgroup -g 1000 -S appuser && \
@@ -50,13 +50,5 @@ EXPOSE $PORT
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:$PORT/ || exit 1
 
-# Create startup script to handle Railway PORT variable
-RUN echo '#!/bin/sh' > /start.sh && \
-    echo 'export PORT=${PORT:-3000}' >> /start.sh && \
-    echo 'envsubst \$PORT < /etc/nginx/conf.d/default.conf > /tmp/default.conf' >> /start.sh && \
-    echo 'mv /tmp/default.conf /etc/nginx/conf.d/default.conf' >> /start.sh && \
-    echo 'nginx -g "daemon off;"' >> /start.sh && \
-    chmod +x /start.sh
-
-# Start nginx with Railway PORT handling
-CMD ["/start.sh"]
+# Start nginx with envsubst to handle PORT variable
+CMD envsubst '$PORT' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
