@@ -112,13 +112,13 @@ export const useCodeStore = create<CodeState>((set, get) => ({
       // Set fallback languages
       set({ 
         languages: [
-          { id: 'python', name: 'Python', version: '3.11', extension: 'py' },
-          { id: 'javascript', name: 'JavaScript', version: 'Node.js 18', extension: 'js' },
+          { id: 'python', name: 'Python', version: '3.12', extension: 'py' },
+          { id: 'javascript', name: 'JavaScript', version: 'Node.js 22', extension: 'js' },
           { id: 'typescript', name: 'TypeScript', version: '5.0', extension: 'ts' },
           { id: 'java', name: 'Java', version: 'OpenJDK 17', extension: 'java' },
-          { id: 'cpp', name: 'C++', version: 'GCC 11', extension: 'cpp' },
-          { id: 'go', name: 'Go', version: '1.21', extension: 'go' },
-          { id: 'rust', name: 'Rust', version: '1.70', extension: 'rs' },
+          { id: 'cpp', name: 'C++', version: 'GCC 13', extension: 'cpp' },
+          { id: 'go', name: 'Go', version: '1.23', extension: 'go' },
+          { id: 'rust', name: 'Rust', version: '1.82', extension: 'rs' },
         ]
       });
     }

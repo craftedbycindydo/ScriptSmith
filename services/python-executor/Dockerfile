@@ -1,5 +1,5 @@
 # Simple Python service for Railway.app (2025)
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 

@@ -1,5 +1,5 @@
 # Simple C++ executor service for Railway.app (2025)
-FROM python:3.10-alpine
+FROM python:3.12-alpine
 
 # Install C++ compiler
 RUN apk add --no-cache gcc g++ musl-dev

@@ -8,7 +8,7 @@ LANGUAGE_CONFIGS = {
     "python": {
         "id": "python",
         "name": "Python",
-        "version": "3.11",
+        "version": "3.12",
         "extension": "py",
         "template": '''# Python Example
 def greet(name):
@@ -21,7 +21,7 @@ print(greet("World"))''',
     "javascript": {
         "id": "javascript", 
         "name": "JavaScript",
-        "version": "Node.js 18",
+        "version": "Node.js 22",
         "extension": "js",
         "template": '''// JavaScript Example
 function greet(name) {
@@ -63,7 +63,7 @@ public class Main {
     "cpp": {
         "id": "cpp",
         "name": "C++",
-        "version": "GCC 11", 
+        "version": "GCC 13", 
         "extension": "cpp",
         "template": '''// C++ Example
 #include <iostream>
@@ -79,7 +79,7 @@ int main() {
     "go": {
         "id": "go",
         "name": "Go",
-        "version": "1.21",
+        "version": "1.23",
         "extension": "go",
         "template": '''// Go Example
 package main
@@ -95,7 +95,7 @@ func main() {
     "rust": {
         "id": "rust",
         "name": "Rust",
-        "version": "1.70",
+        "version": "1.82",
         "extension": "rs",
         "template": '''// Rust Example
 fn main() {
