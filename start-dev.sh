@@ -9,6 +9,7 @@ JAVA_PORT=8003
 CPP_PORT=8004
 GO_PORT=8005
 RUST_PORT=8006
+WEBSOCKET_PORT=8007
 BACKEND_PORT=8082
 FRONTEND_PORT=5173
 
@@ -22,6 +23,9 @@ echo "   ☕ Java: Native JVM with utilities (Port $JAVA_PORT)"
 echo "   ⚡ C++: GCC compiler with standard libraries (Port $CPP_PORT)"
 echo "   🐹 Go: Native Go runtime (Port $GO_PORT)"
 echo "   🦀 Rust: Cargo with safe execution (Port $RUST_PORT)"
+echo ""
+echo "🔌 Starting WebSocket Service..."
+echo "   🔗 WebSocket: Node.js Socket.IO for real-time collaboration (Port $WEBSOCKET_PORT)"
 echo ""
 
 # Function to check if port is in use
@@ -41,6 +45,7 @@ check_port $JAVA_PORT       # Java executor
 check_port $CPP_PORT        # C++ executor
 check_port $GO_PORT         # Go executor
 check_port $RUST_PORT       # Rust executor
+check_port $WEBSOCKET_PORT  # WebSocket service
 check_port $BACKEND_PORT    # Backend port
 check_port $FRONTEND_PORT   # Frontend port
 
@@ -201,6 +206,15 @@ server.serve_forever()
 ") &
 fi
 
+# Start WebSocket service
+if command -v node &> /dev/null; then
+    echo "  🔗 Installing WebSocket service dependencies and starting..."
+    (cd services/websocket-service && npm install && npm start) &
+else
+    echo "  ⚠️  Node.js not found - WebSocket service disabled"
+    echo "     Real-time collaboration will not work without this service"
+fi
+
 echo ""
 echo "⏳ Installing dependencies and starting microservices..."
 echo "   This may take a moment on first run..."
@@ -208,7 +222,7 @@ sleep 10  # Give more time for dependencies to install and services to start
 
 echo ""
 echo "🏥 Checking microservice health..."
-for port in $PYTHON_PORT $JAVASCRIPT_PORT $JAVA_PORT $CPP_PORT $GO_PORT $RUST_PORT; do
+for port in $PYTHON_PORT $JAVASCRIPT_PORT $JAVA_PORT $CPP_PORT $GO_PORT $RUST_PORT $WEBSOCKET_PORT; do
     if curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
         echo "  ✅ Port $port: Running"
     else
@@ -229,6 +243,7 @@ export JAVA_EXECUTOR_URL="http://localhost:$JAVA_PORT"
 export CPP_EXECUTOR_URL="http://localhost:$CPP_PORT"
 export GO_EXECUTOR_URL="http://localhost:$GO_PORT"
 export RUST_EXECUTOR_URL="http://localhost:$RUST_PORT"
+export WEBSOCKET_SERVICE_URL="http://localhost:$WEBSOCKET_PORT"
 
 python -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload &
 BACKEND_PID=$!
@@ -270,6 +285,9 @@ echo "   ⚡ C++: http://localhost:$CPP_PORT"
 echo "   🐹 Go: http://localhost:$GO_PORT"
 echo "   🦀 Rust: http://localhost:$RUST_PORT"
 echo ""
+echo "🔗 WebSocket Service:"
+echo "   🔌 Real-time Collaboration: http://localhost:$WEBSOCKET_PORT"
+echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Function to cleanup on exit
@@ -287,6 +305,7 @@ cleanup() {
     pkill -f "python server.py" 2>/dev/null
     pkill -f "go run main.go" 2>/dev/null
     pkill -f "cargo run" 2>/dev/null
+    pkill -f "node server.js" 2>/dev/null
     
     # Stop other processes
     pkill -f uvicorn 2>/dev/null

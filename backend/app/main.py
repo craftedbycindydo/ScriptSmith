@@ -21,12 +21,25 @@ except Exception as e:
         port = int(os.getenv("PORT", "8000"))
         enforce_https = False
         allowed_origins = ["*"]  # Permissive for initial deployment
+        
+        # Rate limiting settings
+        global_rate_limit = 100
+        auth_rate_limit = 10
+        login_rate_limit = 5
+        register_rate_limit = 3
+        
+        # Security settings
+        enable_security_headers = True
+        hsts_max_age = 31536000
+        trusted_hosts = ["*"]
+        
+        # Supported languages
+        supported_languages = ["python", "javascript", "java", "cpp", "go", "rust"]
     settings = MinimalSettings()
 # Import health router immediately (lightweight)
 from app.routers import health
 
 # Lazy import heavy dependencies
-sio = None
 engine = None
 
 # Create FastAPI instance
@@ -37,16 +50,7 @@ app = FastAPI(
     debug=settings.debug
 )
 
-# Initialize Socket.IO lazily
-def init_socketio():
-    import socketio
-    global sio
-    if sio is None:
-        from app.services.websocket_manager import sio
-    return socketio.ASGIApp(sio, app)
-
-# For now, just use regular FastAPI app
-socket_app = app
+# WebSocket service is now separate - no more Socket.IO integration needed
 
 # Security Middlewares - Simplified for Railway deployment
 try:
@@ -172,11 +176,7 @@ async def load_routers():
         app.include_router(assignments.router, prefix="/api", tags=["assignments"])
         app.include_router(templates.router, prefix="/api", tags=["templates"])
         print("✅ All routers loaded successfully")
-        
-        # Initialize Socket.IO with all routers loaded
-        global socket_app
-        socket_app = init_socketio()
-        print("✅ Socket.IO initialized successfully")
+        print("🔗 WebSocket service running separately on dedicated microservice")
         
     except Exception as e:
         print(f"⚠️  Some routers failed to load: {e}")
@@ -207,7 +207,7 @@ async def global_exception_handler(request, exc):
 
 if __name__ == "__main__":
     uvicorn.run(
-        "app.main:app",  # Use the main FastAPI app directly
+        "app.main:app",  # Use the main FastAPI app (no more Socket.IO integration)
         host=getattr(settings, 'host', '0.0.0.0'),
         port=int(os.getenv('PORT', getattr(settings, 'port', 8000))),
         reload=getattr(settings, 'debug', False)

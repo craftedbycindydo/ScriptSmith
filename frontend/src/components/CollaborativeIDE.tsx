@@ -3,9 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import CodeEditor from './CodeEditor';
 import OutputConsole from './OutputConsole';
+import ResizablePanels from './ResizablePanels';
 import { useCollaboration } from '@/hooks/useCollaboration';
+import type { ExecutionResult } from '@/hooks/useCollaboration';
 import { apiService } from '@/services/api';
 import { 
   Users, 
@@ -57,23 +60,60 @@ export default function CollaborativeIDE() {
   const [joining, setJoining] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [code, setCode] = useState('');
+  const [hasJoinedSession, setHasJoinedSession] = useState(false);
   const [output, setOutput] = useState('');
   const [executionError, setExecutionError] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionTime, setExecutionTime] = useState<number>(0);
+  const [lastExecutedBy, setLastExecutedBy] = useState<string>('');
   
   const monacoEditorRef = useRef<any>(null);
+  const monacoInstanceRef = useRef<any>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [participantId, setParticipantId] = useState<number | undefined>(undefined);
+
+  // Update participant ID when session details or storage changes
+  useEffect(() => {
+    const updateParticipantId = () => {
+      if (sessionDetails?.user_participant_id) {
+        setParticipantId(sessionDetails.user_participant_id);
+        return;
+      }
+      
+      const storedId = sessionStorage.getItem(`session_${shareId}_participant_id`);
+      if (storedId) {
+        const id = parseInt(storedId);
+        setParticipantId(id);
+        console.log('🔄 Updated participant ID from sessionStorage:', id);
+      } else {
+        setParticipantId(undefined);
+      }
+    };
+
+    updateParticipantId();
+  }, [sessionDetails?.user_participant_id, shareId, hasJoinedSession]); // React to hasJoinedSession changes
+
+  // Handle execution results from other participants
+  const handleExecutionResult = (result: ExecutionResult) => {
+    setOutput(result.output);
+    setExecutionError(result.error);
+    setExecutionTime(result.execution_time);
+    setLastExecutedBy(result.participant_username);
+  };
 
   const {
-    error: collaborationError
+    error: collaborationError,
+    isInitialized: collaborationReady,
+    sendExecutionResult
   } = useCollaboration({
     sessionId: sessionDetails?.session.id,
-    participantId: sessionDetails?.user_participant_id,
+    participantId: participantId, // Now reactive!
     monacoEditor: monacoEditorRef.current,
+    monaco: monacoInstanceRef.current,
     onParticipantsChange: setParticipants,
-    onConnectionChange: setIsConnected
+    onConnectionChange: setIsConnected,
+    onExecutionResult: handleExecutionResult
   });
 
   // Load session details
@@ -85,6 +125,7 @@ export default function CollaborativeIDE() {
       const details = await apiService.getSessionDetails(shareId);
       setSessionDetails(details);
       setCode(details.session.code_content || '');
+      setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load session');
     } finally {
@@ -98,9 +139,28 @@ export default function CollaborativeIDE() {
     
     setJoining(true);
     try {
-      await apiService.joinSession(shareId, { username: newUsername.trim() });
-      await loadSession(); // Reload to get updated participant info
+      const joinResponse = await apiService.joinSession(shareId, { username: newUsername.trim() });
+      
+      // Store join status and participant info in session storage
+      sessionStorage.setItem(`session_${shareId}_joined`, 'true');
+      sessionStorage.setItem(`session_${shareId}_participant_id`, joinResponse.participant_id?.toString() || '');
+      sessionStorage.setItem(`session_${shareId}_username`, newUsername.trim());
+      
+      // Update local state to show editor
+      setHasJoinedSession(true);
+      setSessionDetails(prev => prev ? {
+        ...prev,
+        is_participant: true,
+        user_participant_id: joinResponse.participant_id
+      } : null);
+      
+      // Trigger participant ID update
+      setParticipantId(joinResponse.participant_id);
+      
+      // Reload session to get updated participant info
+      await loadSession();
       setNewUsername('');
+      setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to join session');
     } finally {
@@ -116,6 +176,10 @@ export default function CollaborativeIDE() {
     setOutput('');
     setExecutionError('');
     
+    // Get current user's username
+    const currentUsername = sessionStorage.getItem(`session_${shareId}_username`) || 'You';
+    setLastExecutedBy(currentUsername);
+    
     try {
       const result = await apiService.executeCode({
         code,
@@ -126,8 +190,28 @@ export default function CollaborativeIDE() {
       setOutput(result.output);
       setExecutionError(result.error);
       setExecutionTime(result.execution_time);
+      
+      // Share execution result with other participants
+      if (sendExecutionResult) {
+        sendExecutionResult({
+          output: result.output,
+          error: result.error,
+          execution_time: result.execution_time
+        });
+      }
+      
     } catch (err: any) {
-      setExecutionError(err.response?.data?.detail || 'Failed to execute code');
+      const errorMessage = err.response?.data?.detail || 'Failed to execute code';
+      setExecutionError(errorMessage);
+      
+      // Share error result with other participants
+      if (sendExecutionResult) {
+        sendExecutionResult({
+          output: '',
+          error: errorMessage,
+          execution_time: 0
+        });
+      }
     } finally {
       setIsExecuting(false);
     }
@@ -141,12 +225,28 @@ export default function CollaborativeIDE() {
   };
 
   // Handle Monaco editor mount
-  const handleEditorDidMount = (editor: any) => {
+  const handleEditorDidMount = (editor: any, monaco: any) => {
     monacoEditorRef.current = editor;
+    monacoInstanceRef.current = monaco;
+    
+    // Set initial code content if available
+    if (sessionDetails?.session.code_content) {
+      editor.setValue(sessionDetails.session.code_content);
+    }
   };
 
   useEffect(() => {
     loadSession();
+    
+    // Check if user has already joined this session
+    if (shareId) {
+      const hasJoined = sessionStorage.getItem(`session_${shareId}_joined`) === 'true';
+      const participantId = sessionStorage.getItem(`session_${shareId}_participant_id`);
+      
+      if (hasJoined && participantId) {
+        setHasJoinedSession(true);
+      }
+    }
   }, [shareId]);
 
   if (loading) {
@@ -174,7 +274,7 @@ export default function CollaborativeIDE() {
     );
   }
 
-  if (!sessionDetails?.is_participant) {
+  if (sessionDetails && !sessionDetails.is_participant && !hasJoinedSession) {
     return (
       <div className="h-screen flex items-center justify-center">
         <Card className="w-full max-w-md">
@@ -234,11 +334,11 @@ export default function CollaborativeIDE() {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Header */}
-      <header className="border-b bg-card">
-        <div className="p-4">
-          <div className="flex items-center justify-between">
-            {/* Left side - Session info */}
+      {/* Toolbar */}
+      <div className="border-b bg-card flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-4">
+            {/* Left side - Session info and back button */}
             <div className="flex items-center space-x-4">
               <Button 
                 variant="ghost" 
@@ -249,113 +349,158 @@ export default function CollaborativeIDE() {
                 Back
               </Button>
               
-              <div>
-                <h1 className="text-lg font-bold">{sessionDetails.session.title}</h1>
-                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                  <Badge variant="outline">{sessionDetails.session.language}</Badge>
-                  <span>by {sessionDetails.session.owner_username}</span>
+                              <div>
+                  <h1 className="text-lg font-bold">{sessionDetails?.session.title}</h1>
+                  <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                    <Badge variant="outline">{sessionDetails?.session.language}</Badge>
+                    <span>by {sessionDetails?.session.owner_username}</span>
                   <div className="flex items-center space-x-1">
-                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-destructive'}`} />
-                    <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className={isConnected ? 'text-green-600' : 'text-red-600'}>
+                      {isConnected ? 'Connected' : 'Disconnected'}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
-
+            
             {/* Right side - Actions and participants */}
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 flex-wrap gap-1 sm:gap-0">
               {/* Participants */}
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 sm:space-x-3">
                 <Users className="w-4 h-4" />
-                <span className="text-sm">{participants.length}</span>
+                <span className="text-sm hidden sm:inline">{participants.length}</span>
                 
                 {/* Participant avatars */}
-                <div className="flex -space-x-2">
-                  {participants.slice(0, 5).map((participant) => (
-                    <div
+                <div className="flex -space-x-1 sm:-space-x-2">
+                  {participants.slice(0, 4).map((participant) => (
+                    <Avatar
                       key={participant.id}
-                      className="w-8 h-8 rounded-full border-2 border-background flex items-center justify-center text-xs font-medium text-primary-foreground relative"
-                      style={{ backgroundColor: participant.cursor_color || '#666' }}
-                      title={`${participant.username}${participant.is_owner ? ' (Owner)' : ''}`}
+                      className={`w-7 h-7 sm:w-8 sm:h-8 ring-2 ${
+                        participant.is_connected 
+                          ? participant.is_owner 
+                            ? 'ring-yellow-500' // Owner: yellow ring
+                            : 'ring-green-500'  // Online: green ring
+                          : 'ring-gray-400'     // Offline: gray ring
+                      } ring-offset-2 ring-offset-background`}
+                      title={`${participant.username}${participant.is_owner ? ' (Owner)' : ''}${participant.is_connected ? ' • Online' : ' • Offline'}`}
                     >
-                      {participant.username.charAt(0).toUpperCase()}
-                      {participant.is_owner && (
-                        <div className="w-3 h-3 absolute -top-1 -right-1 bg-warning rounded-full" />
-                      )}
-                      <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border border-background ${
-                        participant.is_connected ? 'bg-success' : 'bg-muted'
-                      }`} />
-                    </div>
+                      <AvatarFallback 
+                        className="text-xs sm:text-sm font-medium text-white"
+                        style={{ backgroundColor: participant.cursor_color || '#666' }}
+                      >
+                        {participant.username.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
                   ))}
-                  {participants.length > 5 && (
-                    <div className="w-8 h-8 rounded-full border-2 border-background bg-muted flex items-center justify-center text-xs">
-                      +{participants.length - 5}
-                    </div>
+                  
+                  {/* Show overflow count */}
+                  {participants.length > 4 && (
+                    <Avatar className="w-7 h-7 sm:w-8 sm:h-8 ring-2 ring-muted ring-offset-2 ring-offset-background">
+                      <AvatarFallback className="bg-muted text-xs sm:text-sm font-medium">
+                        +{participants.length - 4}
+                      </AvatarFallback>
+                    </Avatar>
                   )}
                 </div>
+                
+                {/* Mobile participant count */}
+                <span className="text-sm sm:hidden">({participants.length})</span>
               </div>
 
-              {/* Actions */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleCopyShareLink}
               >
-                <Share2 className="w-4 h-4 mr-2" />
-                Share
+                <Share2 className="w-4 h-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Share</span>
               </Button>
 
               <Button
                 onClick={handleExecuteCode}
                 disabled={isExecuting}
-                className="btn-success"
+                className="btn-success flex-1 sm:flex-none"
                 size="sm"
               >
-                <Play className="w-4 h-4 mr-2" />
-                {isExecuting ? 'Running...' : 'Run'}
+                <Play className="w-4 h-4 mr-1 lg:mr-2" />
+                <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
+                <span className="sm:hidden">{isExecuting ? '...' : 'Run'}</span>
               </Button>
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Code Editor */}
-        <div className="flex-1 p-4 min-h-0">
-          <Card className="h-full">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">
-                Collaborative Code Editor
-                {collaborationError && (
-                  <span className="text-destructive text-xs ml-2">
-                    ({collaborationError})
-                  </span>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 h-full pb-6">
-              <div className="h-full min-h-[300px]">
+      {/* Main Content - Full Width Resizable Panels */}
+      <div className="flex-1 overflow-hidden p-2 md:p-4 bg-muted/5">
+        <ResizablePanels
+          defaultLeftWidth={65}
+          minLeftWidth={40}
+          minRightWidth={25}
+          leftPanel={
+            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:mr-2">
+              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">Collaborative Code Editor</h3>
+                  <div className="flex items-center space-x-2">
+                    {collaborationError && (
+                      <span className="text-red-600 text-xs">
+                        Error
+                      </span>
+                    )}
+                    {!isConnected && !collaborationError && (
+                      <span className="text-yellow-600 text-xs">
+                        Connecting...
+                      </span>
+                    )}
+                    {isConnected && !collaborationReady && !collaborationError && (
+                      <span className="text-blue-600 text-xs">
+                        Initializing...
+                      </span>
+                    )}
+                    {collaborationReady && (
+                      <span className="text-green-600 text-xs flex items-center">
+                        <div className="w-2 h-2 rounded-full bg-green-500 mr-1" />
+                        Live
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1 overflow-hidden rounded-b-lg">
                 <CodeEditor
-                  language={sessionDetails.session.language}
+                  language={sessionDetails?.session.language || 'python'}
                   value={code}
                   onChange={(value) => setCode(value || '')}
                   onMount={handleEditorDidMount}
                 />
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Output Panel */}
-        <div className="w-96 p-4 pl-0 flex-shrink-0">
-          <OutputConsole
-            output={output}
-            error={executionError}
-            isLoading={isExecuting}
-            executionTime={executionTime}
-          />
-        </div>
+            </div>
+          }
+          rightPanel={
+            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:ml-2">
+              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">Output</h3>
+                  {lastExecutedBy && (
+                    <span className="text-xs text-muted-foreground">
+                      by {lastExecutedBy}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex-1 overflow-hidden rounded-b-lg">
+                <OutputConsole
+                  output={output}
+                  error={executionError}
+                  isLoading={isExecuting}
+                  executionTime={executionTime}
+                />
+              </div>
+            </div>
+          }
+        />
       </div>
     </div>
   );

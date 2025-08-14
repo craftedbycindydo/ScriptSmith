@@ -108,6 +108,12 @@ export default function IDE() {
 
     setCreating(true);
     try {
+      console.log('🔄 Creating collaboration session with code:', { 
+        language, 
+        codeLength: code.length,
+        codePreview: code.substring(0, 100)
+      });
+      
       const session = await apiService.createSession({
         title: `${user?.username || 'Anonymous'}'s ${language} session`,
         description: `Collaborative coding session`,
@@ -116,6 +122,8 @@ export default function IDE() {
         max_collaborators: 10,
         initial_code: code
       });
+      
+      console.log('✅ Session created:', session);
 
       const url = `${window.location.origin}/collab/${session.share_id}`;
       setShareLink(url);

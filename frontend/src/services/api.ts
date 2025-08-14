@@ -284,8 +284,9 @@ export const apiService = {
     return response.data;
   },
 
-  async joinSession(shareId: string, request: JoinSessionRequest): Promise<void> {
-    await api.post(`/collaboration/sessions/${shareId}/join`, request);
+  async joinSession(shareId: string, request: JoinSessionRequest): Promise<{participant_id: number; message: string; session_id: number; username: string}> {
+    const response = await api.post(`/collaboration/sessions/${shareId}/join`, request);
+    return response.data;
   },
 
   async listSessions(page: number = 1, pageSize: number = 20, publicOnly: boolean = false): Promise<SessionResponse[]> {

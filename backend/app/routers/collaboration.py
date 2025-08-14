@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from app.core.config import settings
 from app.database.base import get_db
@@ -52,6 +52,15 @@ class SessionDetailsResponse(BaseModel):
     participants: List[ParticipantResponse]
     is_participant: bool
     user_participant_id: Optional[int]
+
+class UpdateParticipantStatusRequest(BaseModel):
+    is_connected: bool
+
+class UpdateCursorRequest(BaseModel):
+    cursor_position: Optional[Any] = None
+
+class UpdateSessionStateRequest(BaseModel):
+    yjs_state: Optional[str] = None
 
 # Generate random cursor colors
 CURSOR_COLORS = [
@@ -157,9 +166,16 @@ async def get_session(
     for participant in participants:
         is_owner = participant.user_id == session.owner_id
         
+        # Check if this is the current user (either authenticated or anonymous)
         if current_user and participant.user_id == current_user.id:
             is_participant = True
             user_participant_id = participant.id
+        elif not current_user and not participant.user_id:
+            # For anonymous users, we'll consider the most recent anonymous participant
+            # as the current user (this is a simple approach for demo purposes)
+            if not is_participant:  # Only set the first anonymous participant found
+                is_participant = True
+                user_participant_id = participant.id
         
         participant_responses.append(ParticipantResponse(
             id=participant.id,
@@ -254,7 +270,12 @@ async def join_session(
         db.refresh(participant)
         participant_id = participant.id
     
-    return {"participant_id": participant_id, "message": "Successfully joined session"}
+    return {
+        "participant_id": participant_id, 
+        "message": "Successfully joined session",
+        "session_id": session.id,
+        "username": request.username
+    }
 
 @router.get("/collaboration/sessions", response_model=List[SessionResponse])
 async def list_sessions(
@@ -330,3 +351,107 @@ async def delete_session(
     db.commit()
     
     return {"message": "Session deactivated successfully"}
+
+# API endpoints for WebSocket service integration
+
+@router.put("/collaboration/participants/{participant_id}/status")
+async def update_participant_status(
+    participant_id: int,
+    request: UpdateParticipantStatusRequest,
+    db: Session = Depends(get_db)
+):
+    """Update participant connection status (called by WebSocket service)"""
+    
+    participant = db.query(CollaborationParticipant).filter(
+        CollaborationParticipant.id == participant_id
+    ).first()
+    
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    
+    participant.is_connected = request.is_connected
+    if not request.is_connected:
+        participant.last_seen = func.now()
+    
+    db.commit()
+    
+    return {"success": True, "participant_id": participant_id, "is_connected": request.is_connected}
+
+@router.put("/collaboration/participants/{participant_id}/cursor")
+async def update_participant_cursor(
+    participant_id: int,
+    request: UpdateCursorRequest,
+    db: Session = Depends(get_db)
+):
+    """Update participant cursor position (called by WebSocket service)"""
+    
+    participant = db.query(CollaborationParticipant).filter(
+        CollaborationParticipant.id == participant_id
+    ).first()
+    
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    
+    participant.cursor_position = request.cursor_position
+    db.commit()
+    
+    return {"success": True, "participant_id": participant_id}
+
+@router.get("/collaboration/sessions/{session_id}/participants", response_model=List[ParticipantResponse])
+async def get_session_participants(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all participants for a session (called by WebSocket service)"""
+    
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.id == session_id,
+        CollaborationSession.is_active == True
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    participants = db.query(CollaborationParticipant).filter(
+        CollaborationParticipant.session_id == session_id
+    ).all()
+    
+    participant_responses = []
+    for participant in participants:
+        is_owner = participant.user_id == session.owner_id
+        
+        participant_responses.append(ParticipantResponse(
+            id=participant.id,
+            username=participant.username,
+            is_connected=participant.is_connected,
+            cursor_color=participant.cursor_color,
+            is_owner=is_owner,
+            joined_at=participant.joined_at.isoformat()
+        ))
+    
+    return participant_responses
+
+@router.put("/collaboration/sessions/{session_id}/state")
+async def update_session_state(
+    session_id: int,
+    request: UpdateSessionStateRequest,
+    db: Session = Depends(get_db)
+):
+    """Update Y.js session state (called by WebSocket service)"""
+    
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.id == session_id,
+        CollaborationSession.is_active == True
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if request.yjs_state:
+        session.yjs_state = request.yjs_state
+    
+    session.updated_at = func.now()
+    session.last_accessed = func.now()
+    db.commit()
+    
+    return {"success": True, "session_id": session_id}

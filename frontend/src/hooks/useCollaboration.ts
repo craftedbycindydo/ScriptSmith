@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import * as Y from 'yjs';
-// @ts-ignore - y-monaco doesn't have complete TypeScript definitions
 import { MonacoBinding } from 'y-monaco';
 import { config } from '../config/env';
 
@@ -14,29 +13,120 @@ interface Participant {
   is_owner: boolean;
 }
 
+export interface ExecutionResult {
+  output: string;
+  error: string;
+  execution_time: number;
+  participant_id: number;
+  participant_username: string;
+  timestamp: string;
+}
+
 interface UseCollaborationProps {
   sessionId?: number;
   participantId?: number;
   monacoEditor?: any; // Monaco editor instance
+  monaco?: any; // Monaco instance
   onParticipantsChange?: (participants: Participant[]) => void;
   onConnectionChange?: (connected: boolean) => void;
+  onExecutionResult?: (result: ExecutionResult) => void;
 }
 
 export const useCollaboration = ({
   sessionId,
   participantId,
   monacoEditor,
+  monaco,
   onParticipantsChange,
-  onConnectionChange
+  onConnectionChange,
+  onExecutionResult
 }: UseCollaborationProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [error, setError] = useState<string | null>(null);
   
+  // State for tracking initialization
+  const [isInitialized, setIsInitialized] = useState(false);
+  
   const socketRef = useRef<Socket | null>(null);
   const yjsDocRef = useRef<Y.Doc | null>(null);
   const monacoBindingRef = useRef<MonacoBinding | null>(null);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
+
+  // Send execution result to other participants
+  const sendExecutionResult = useCallback((result: { output: string; error: string; execution_time: number }) => {
+    if (socketRef.current && sessionId && participantId) {
+      socketRef.current.emit('code_execution_result', {
+        session_id: sessionId,
+        participant_id: participantId,
+        execution_result: result
+      });
+    }
+  }, [sessionId, participantId]);
+
+  // Initialize Monaco binding  
+  const initializeMonacoBinding = useCallback(() => {
+    if (!monacoEditor || !yjsDocRef.current || !monaco) {
+      return;
+    }
+
+    // Prevent unnecessary re-initialization if binding already exists and is working
+    if (monacoBindingRef.current && monacoBindingRef.current.awareness) {
+      return;
+    }
+
+    // Clean up existing binding first
+    if (monacoBindingRef.current) {
+      monacoBindingRef.current.destroy();
+      monacoBindingRef.current = null;
+    }
+
+    try {
+      const yText = yjsDocRef.current.getText('monaco');
+      
+      // Only preserve content if Y.js document is truly empty AND editor has content
+      // This prevents duplication when binding re-initializes
+      const currentContent = monacoEditor.getValue();
+      const yjsContent = yText.toString();
+      
+      if (currentContent && !yjsContent && currentContent.trim() !== '') {
+        // Only insert if Y.js is completely empty and editor has meaningful content
+        yText.insert(0, currentContent);
+      }
+      
+      // Create Monaco binding
+      monacoBindingRef.current = new MonacoBinding(
+        yText,
+        monacoEditor.getModel(),
+        new Set([monacoEditor])
+      );
+
+      // Listen for cursor changes
+      monacoEditor.onDidChangeCursorPosition((e: { position: { lineNumber: number; column: number } }) => {
+        const position = {
+          lineNumber: e.position.lineNumber,
+          column: e.position.column
+        };
+
+        // Only send if position actually changed
+        if (JSON.stringify(position) !== JSON.stringify(lastCursorPositionRef.current)) {
+          lastCursorPositionRef.current = position;
+          // Use socketRef directly to avoid dependency issues
+          if (socketRef.current && sessionId && participantId) {
+            socketRef.current.emit('cursor_update', {
+              session_id: sessionId,
+              participant_id: participantId,
+              cursor: position
+            });
+          }
+        }
+      });
+
+      setIsInitialized(true);
+    } catch (error) {
+      setError(`Failed to initialize collaborative editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [monacoEditor, monaco, sessionId, participantId]);
 
   // Initialize Y.js document
   const initializeYjsDoc = useCallback(() => {
@@ -46,68 +136,48 @@ export const useCollaboration = ({
     return yjsDocRef.current;
   }, []);
 
-  // Initialize Monaco binding
-  const initializeMonacoBinding = useCallback(() => {
-    if (!monacoEditor || !yjsDocRef.current || monacoBindingRef.current) {
-      return;
+  // Initialize Monaco binding when all components are ready
+  useEffect(() => {
+    if (monacoEditor && monaco && yjsDocRef.current && isConnected && !monacoBindingRef.current && !isInitialized) {
+      setTimeout(() => {
+        initializeMonacoBinding();
+      }, 100);
     }
-
-    const yText = yjsDocRef.current.getText('monaco');
-    
-    monacoBindingRef.current = new MonacoBinding(
-      yText,
-      monacoEditor.getModel(),
-      new Set([monacoEditor])
-    );
-
-    // Listen for cursor changes
-    monacoEditor.onDidChangeCursorPosition((e: { position: { lineNumber: number; column: number } }) => {
-      const position = {
-        lineNumber: e.position.lineNumber,
-        column: e.position.column
-      };
-
-      // Only send if position actually changed
-      if (JSON.stringify(position) !== JSON.stringify(lastCursorPositionRef.current)) {
-        lastCursorPositionRef.current = position;
-        sendCursorUpdate(position);
-      }
-    });
-
-  }, [monacoEditor]);
-
-  // Send cursor update
-  const sendCursorUpdate = useCallback((position: { lineNumber: number; column: number }) => {
-    if (socketRef.current && sessionId && participantId) {
-      socketRef.current.emit('cursor_update', {
-        session_id: sessionId,
-        participant_id: participantId,
-        cursor: position
-      });
-    }
-  }, [sessionId, participantId]);
+  }, [monacoEditor, monaco, isConnected, isInitialized, initializeMonacoBinding]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
-    if (!sessionId || !participantId || socketRef.current?.connected) {
+    if (!sessionId || !participantId) {
       return;
+    }
+
+    if (socketRef.current?.connected) {
+      return;
+    }
+
+    // Disconnect any existing socket first
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
     }
 
     // Initialize Y.js document
     initializeYjsDoc();
 
-    // Create WebSocket connection
-    const wsUrl = config.apiBaseUrl.replace(/^http/, 'ws').replace('/api', '');
-    socketRef.current = io(wsUrl, {
-      transports: ['websocket'],
-      upgrade: false
+    // Create WebSocket connection to dedicated service
+    socketRef.current = io(config.websocketUrl, {
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      forceNew: true
     });
 
     const socket = socketRef.current;
 
     // Connection events
     socket.on('connect', () => {
-      console.log('Connected to collaboration server');
       setIsConnected(true);
       setError(null);
       onConnectionChange?.(true);
@@ -119,33 +189,33 @@ export const useCollaboration = ({
       });
     });
 
-    socket.on('disconnect', () => {
-      console.log('Disconnected from collaboration server');
+    socket.on('disconnect', (reason) => {
       setIsConnected(false);
       onConnectionChange?.(false);
+      
+      // Clear socket reference for certain disconnect reasons
+      if (reason === 'io server disconnect' || reason === 'io client disconnect') {
+        socketRef.current = null;
+      }
     });
 
     socket.on('connect_error', (err) => {
-      console.error('Connection error:', err);
-      setError('Failed to connect to collaboration server');
+      setError(`Failed to connect to collaboration server: ${err.message || 'Unknown error'}`);
       setIsConnected(false);
       onConnectionChange?.(false);
     });
 
     // Session events
-    socket.on('session_joined', (data) => {
-      console.log('Joined session:', data);
-      initializeMonacoBinding();
+    socket.on('session_joined', () => {
+      // Binding initialization is handled by useEffect
     });
 
     socket.on('participants_list', (data) => {
-      console.log('Participants list:', data.participants);
       setParticipants(data.participants);
       onParticipantsChange?.(data.participants);
     });
 
     socket.on('participant_update', (data) => {
-      console.log('Participant update:', data);
       setParticipants(prev => {
         const updated = prev.map(p => 
           p.id === data.participant_id 
@@ -173,14 +243,13 @@ export const useCollaboration = ({
           );
           Y.applyUpdate(yjsDocRef.current, update);
         } catch (err) {
-          console.error('Error applying Y.js update:', err);
+          // Silently handle Y.js update errors
         }
       }
     });
 
     // Cursor updates
     socket.on('cursor_update', (data) => {
-      console.log('Cursor update:', data);
       // Update cursor position for the participant
       setParticipants(prev => 
         prev.map(p => 
@@ -192,15 +261,33 @@ export const useCollaboration = ({
     });
 
     socket.on('error', (data) => {
-      console.error('Socket error:', data);
       setError(data.message || 'An error occurred');
+    });
+
+    // Handle execution results from other participants
+    socket.on('code_execution_result', (data) => {
+      // Only show results from other participants
+      // Ensure this doesn't interfere with Y.js document synchronization
+      if (data.participant_id !== participantId && onExecutionResult) {
+        // Use setTimeout to avoid interfering with Y.js updates
+        setTimeout(() => {
+          onExecutionResult({
+            output: data.execution_result.output,
+            error: data.execution_result.error,
+            execution_time: data.execution_result.execution_time,
+            participant_id: data.participant_id,
+            participant_username: data.participant_username,
+            timestamp: data.timestamp
+          });
+        }, 0);
+      }
     });
 
     // Listen for Y.js document changes to send updates
     if (yjsDocRef.current) {
       const updateHandler = (update: Uint8Array, origin: unknown) => {
         // Only send updates that originated from this client
-        if (origin !== socket) {
+        if (origin !== socket && socket.connected) {
           const updateString = btoa(String.fromCharCode(...update));
           socket.emit('yjs_update', {
             session_id: sessionId,
@@ -216,7 +303,7 @@ export const useCollaboration = ({
       (yjsDocRef.current as Y.Doc & { _updateHandler?: any })._updateHandler = updateHandler;
     }
 
-  }, [sessionId, participantId, initializeYjsDoc, initializeMonacoBinding, onConnectionChange, onParticipantsChange]);
+  }, [sessionId, participantId]); // Simplified dependencies - only core identifiers needed
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {
@@ -257,16 +344,16 @@ export const useCollaboration = ({
     onParticipantsChange?.([]);
   }, [sessionId, participantId, onConnectionChange, onParticipantsChange]);
 
-  // Auto-connect when session and participant are available
+  // Auto-connect when session exists
   useEffect(() => {
-    if (sessionId && participantId && monacoEditor) {
+    if (sessionId && participantId && !socketRef.current?.connected) {
       connect();
     }
 
     return () => {
-      disconnect();
+      // Don't disconnect here - socket persists for session, not individual users
     };
-  }, [sessionId, participantId, monacoEditor, connect, disconnect]);
+  }, [sessionId, participantId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -281,6 +368,8 @@ export const useCollaboration = ({
     error,
     connect,
     disconnect,
-    yjsDoc: yjsDocRef.current
+    yjsDoc: yjsDocRef.current,
+    isInitialized,
+    sendExecutionResult
   };
 };

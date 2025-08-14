@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     go_executor_url: str
     rust_executor_url: str
     
+    # WebSocket Service URL - REQUIRED FROM ENVIRONMENT
+    websocket_service_url: str
+    
     # JWT Authentication settings - ALL REQUIRED FROM ENVIRONMENT
     algorithm: str
     access_token_expire_minutes: int
