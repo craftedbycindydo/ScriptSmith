@@ -39,7 +39,7 @@ const io = socketIo(server, {
 
 // SERVER-MANAGED SESSION PERSISTENCE
 const activeConnections = new Map(); // sessionId -> Map(participantId -> socketId)
-const sessionDocuments = new Map(); // sessionId -> document content (string)
+const sessionDocuments = new Map(); // sessionId -> document content (string)  
 const socketToSession = new Map(); // socketId -> {sessionId, participantId}
 const sessionLastActivity = new Map(); // sessionId -> timestamp
 const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
@@ -56,16 +56,7 @@ setInterval(() => {
       console.log(`🧹 Cleaning up inactive session: ${sessionId}`);
       // Clean up session data
       activeConnections.delete(sessionId);
-      
-      // Clear any pending save timeouts
-      const timeoutKey = `${sessionId}_timeout`;
-      const existingTimeout = sessionDocuments.get(timeoutKey);
-      if (existingTimeout) {
-        clearTimeout(existingTimeout);
-      }
-      
       sessionDocuments.delete(sessionId);
-      sessionDocuments.delete(timeoutKey);
       sessionLastActivity.delete(sessionId);
     }
   }
@@ -191,10 +182,15 @@ io.on('connection', (socket) => {
         console.error('Failed to get participants:', error.message);
       }
       
+      // Check if this is the first participant in the session
+      const sessionConnections = activeConnections.get(sessionId);
+      const isFirstParticipant = !sessionConnections || sessionConnections.size === 0;
+      
       // Send session joined confirmation
       socket.emit('session_joined', { 
         session_id: sessionId, 
-        participant_id: participantId
+        participant_id: participantId,
+        is_first_participant: isFirstParticipant
       });
 
       // Send current document content to the new participant

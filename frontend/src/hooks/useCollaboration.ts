@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import * as Y from 'yjs';
-import { MonacoBinding } from 'y-monaco';
+// Simple websocket-based collaboration - no Y.js needed
 import { config } from '../config/env';
 
 interface Participant {
@@ -26,32 +25,28 @@ interface UseCollaborationProps {
   sessionId?: number;
   participantId?: number;
   monacoEditor?: any; // Monaco editor instance
-  monaco?: any; // Monaco instance
   onParticipantsChange?: (participants: Participant[]) => void;
   onConnectionChange?: (connected: boolean) => void;
   onExecutionResult?: (result: ExecutionResult) => void;
+  initialContent?: string; // Content to set when creating/sharing a session
 }
 
 export const useCollaboration = ({
   sessionId,
   participantId,
   monacoEditor,
-  monaco,
   onParticipantsChange,
   onConnectionChange,
-  onExecutionResult
+  onExecutionResult,
+  initialContent
 }: UseCollaborationProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // State for tracking initialization
-  const [isInitialized, setIsInitialized] = useState(false);
-  
   const socketRef = useRef<Socket | null>(null);
-  const yjsDocRef = useRef<Y.Doc | null>(null);
-  const monacoBindingRef = useRef<MonacoBinding | null>(null);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
+  const isUpdatingFromServer = useRef(false); // Prevent loops when updating from server
 
   // Send execution result to other participants
   const sendExecutionResult = useCallback((result: { output: string; error: string; execution_time: number }) => {
@@ -64,77 +59,59 @@ export const useCollaboration = ({
     }
   }, [sessionId, participantId]);
 
-  // Initialize Monaco binding  
-  const initializeMonacoBinding = useCallback(() => {
-    if (!monacoEditor || !yjsDocRef.current || !monaco) {
-      return;
-    }
-
-    // Prevent unnecessary re-initialization if binding already exists and is working
-    if (monacoBindingRef.current && monacoBindingRef.current.awareness) {
-      return;
-    }
-
-    // Clean up existing binding first
-    if (monacoBindingRef.current) {
-      monacoBindingRef.current.destroy();
-      monacoBindingRef.current = null;
-    }
-
-    try {
-      const yText = yjsDocRef.current.getText('monaco');
-      
-      // Create Monaco binding - websocket server is the source of truth
-      // All document content comes from the server, not the UI
-      monacoBindingRef.current = new MonacoBinding(
-        yText,
-        monacoEditor.getModel(),
-        new Set([monacoEditor])
-      );
-
-      // Listen for cursor changes
-      monacoEditor.onDidChangeCursorPosition((e: { position: { lineNumber: number; column: number } }) => {
-        const position = {
-          lineNumber: e.position.lineNumber,
-          column: e.position.column
-        };
-
-        // Only send if position actually changed
-        if (JSON.stringify(position) !== JSON.stringify(lastCursorPositionRef.current)) {
-          lastCursorPositionRef.current = position;
-          // Use socketRef directly to avoid dependency issues
-          if (socketRef.current && sessionId && participantId) {
-            socketRef.current.emit('cursor_update', {
-              session_id: sessionId,
-              participant_id: participantId,
-              cursor: position
-            });
-          }
-        }
+  // Send document changes to server (debounced)
+  const sendDocumentChange = useCallback((content: string) => {
+    if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
+      socketRef.current.emit('document_change', {
+        session_id: sessionId,
+        participant_id: participantId,
+        content: content
       });
-
-      setIsInitialized(true);
-    } catch (error) {
-      setError(`Failed to initialize collaborative editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [monacoEditor, monaco]);
+  }, [sessionId, participantId]);
 
-  // Initialize Y.js document
-  const initializeYjsDoc = useCallback(() => {
-    if (!yjsDocRef.current) {
-      yjsDocRef.current = new Y.Doc();
-    }
-    return yjsDocRef.current;
-  }, []);
-
-  // Initialize Monaco binding when all components are ready
+  // Set up Monaco editor change listener
   useEffect(() => {
-    if (monacoEditor && monaco && yjsDocRef.current && isConnected && !monacoBindingRef.current && !isInitialized) {
-      setTimeout(() => {
-        initializeMonacoBinding();
-      }, 100);
-    }
-  }, [monacoEditor, monaco, isConnected, isInitialized]);
+    if (!monacoEditor) return;
+
+    let changeTimeout: NodeJS.Timeout | null = null;
+
+    const disposable = monacoEditor.onDidChangeModelContent(() => {
+      // Debounce changes to avoid too many requests
+      if (changeTimeout) clearTimeout(changeTimeout);
+      
+      changeTimeout = setTimeout(() => {
+        const content = monacoEditor.getValue();
+        sendDocumentChange(content);
+      }, 300); // Send after 300ms of no changes
+    });
+
+    // Set up cursor change listener
+    const cursorDisposable = monacoEditor.onDidChangeCursorPosition((e: { position: { lineNumber: number; column: number } }) => {
+      const position = {
+        lineNumber: e.position.lineNumber,
+        column: e.position.column
+      };
+
+      // Only send if position actually changed
+      if (JSON.stringify(position) !== JSON.stringify(lastCursorPositionRef.current)) {
+        lastCursorPositionRef.current = position;
+        if (socketRef.current && sessionId && participantId) {
+          socketRef.current.emit('cursor_update', {
+            session_id: sessionId,
+            participant_id: participantId,
+            cursor: position
+          });
+        }
+      }
+    });
+
+    return () => {
+      if (changeTimeout) clearTimeout(changeTimeout);
+      disposable.dispose();
+      cursorDisposable.dispose();
+    };
+  }, [monacoEditor, sendDocumentChange, sessionId, participantId]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -151,9 +128,6 @@ export const useCollaboration = ({
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-
-    // Initialize Y.js document
-    initializeYjsDoc();
 
     // Create WebSocket connection to dedicated service
     socketRef.current = io(config.websocketUrl, {
@@ -199,16 +173,30 @@ export const useCollaboration = ({
     // Session events
     socket.on('session_joined', (data) => {
       console.log('🔗 Joined session:', data.session_id);
-      // Binding initialization is handled by useEffect
+      
+      // If this is a new session and we have initial content, send it to the server
+      if (data.is_first_participant && initialContent && monacoEditor) {
+        console.log('🆕 Setting initial content for new session');
+        isUpdatingFromServer.current = true;
+        monacoEditor.setValue(initialContent);
+        isUpdatingFromServer.current = false;
+        
+        // Send the initial content to the server
+        setTimeout(() => {
+          sendDocumentChange(initialContent);
+        }, 100);
+      }
     });
 
-    // Document content from server - replace entire editor content
+    // Receive current document content when joining
     socket.on('document_content', (data) => {
       if (monacoEditor && data.content !== undefined) {
         const currentContent = monacoEditor.getValue();
         if (currentContent !== data.content) {
-          console.log('📄 Updating editor content from server');
+          console.log('📄 Loading document content from server');
+          isUpdatingFromServer.current = true;
           monacoEditor.setValue(data.content);
+          isUpdatingFromServer.current = false;
         }
       }
     });
@@ -242,7 +230,9 @@ export const useCollaboration = ({
         const currentContent = monacoEditor.getValue();
         if (currentContent !== data.content) {
           console.log('📝 Document updated by participant:', data.participant_id);
+          isUpdatingFromServer.current = true;
           monacoEditor.setValue(data.content);
+          isUpdatingFromServer.current = false;
         }
       }
     });
@@ -266,51 +256,19 @@ export const useCollaboration = ({
     // Handle execution results from other participants
     socket.on('code_execution_result', (data) => {
       // Only show results from other participants
-      // Ensure this doesn't interfere with Y.js document synchronization
       if (data.participant_id !== participantId && onExecutionResult) {
-        // Use setTimeout to avoid interfering with Y.js updates
-        setTimeout(() => {
-          onExecutionResult({
-            output: data.execution_result.output,
-            error: data.execution_result.error,
-            execution_time: data.execution_result.execution_time,
-            participant_id: data.participant_id,
-            participant_username: data.participant_username,
-            timestamp: data.timestamp
-          });
-        }, 0);
+        onExecutionResult({
+          output: data.execution_result.output,
+          error: data.execution_result.error,
+          execution_time: data.execution_result.execution_time,
+          participant_id: data.participant_id,
+          participant_username: data.participant_username,
+          timestamp: data.timestamp
+        });
       }
     });
 
-    // Send document changes to server
-    let changeTimeout: NodeJS.Timeout | null = null;
-    
-    const handleDocumentChange = () => {
-      if (changeTimeout) clearTimeout(changeTimeout);
-      
-      changeTimeout = setTimeout(() => {
-        if (monacoEditor && socket && socket.connected) {
-          const content = monacoEditor.getValue();
-          socket.emit('document_change', {
-            session_id: sessionId,
-            participant_id: participantId,
-            content: content
-          });
-        }
-      }, 500); // Debounce document changes by 500ms
-    };
-
-    // Listen for Monaco editor changes
-    if (monacoEditor) {
-      const disposable = monacoEditor.onDidChangeModelContent(() => {
-        handleDocumentChange();
-      });
-      
-      // Store for cleanup
-      (socketRef.current as any)._monacoDisposable = disposable;
-    }
-
-  }, [sessionId, participantId]); // Simplified dependencies - only core identifiers needed
+  }, [sessionId, participantId, sendDocumentChange, initialContent]); // Include dependencies
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {
@@ -326,22 +284,7 @@ export const useCollaboration = ({
       socketRef.current = null;
     }
 
-    // Clean up Monaco binding
-    if (monacoBindingRef.current) {
-      monacoBindingRef.current.destroy();
-      monacoBindingRef.current = null;
-    }
-
-    // Clean up Monaco editor disposable
-    if (socketRef.current && (socketRef.current as any)._monacoDisposable) {
-      (socketRef.current as any)._monacoDisposable.dispose();
-      delete (socketRef.current as any)._monacoDisposable;
-    }
-
-    if (yjsDocRef.current) {
-      yjsDocRef.current.destroy();
-      yjsDocRef.current = null;
-    }
+    // Clean up state
 
     setIsConnected(false);
     setParticipants([]);
@@ -374,8 +317,6 @@ export const useCollaboration = ({
     error,
     connect,
     disconnect,
-    yjsDoc: yjsDocRef.current,
-    isInitialized,
     sendExecutionResult
   };
 };

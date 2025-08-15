@@ -104,16 +104,15 @@ export default function CollaborativeIDE() {
 
   const {
     error: collaborationError,
-    isInitialized: collaborationReady,
     sendExecutionResult
   } = useCollaboration({
     sessionId: sessionDetails?.session.id,
-    participantId: participantId, // Now reactive!
+    participantId: participantId,
     monacoEditor: monacoEditorRef.current,
-    monaco: monacoInstanceRef.current,
     onParticipantsChange: setParticipants,
     onConnectionChange: setIsConnected,
-    onExecutionResult: handleExecutionResult
+    onExecutionResult: handleExecutionResult,
+    initialContent: monacoEditorRef.current?.getValue() // Pass current editor content when sharing
   });
 
   // Load session details
@@ -454,12 +453,7 @@ export default function CollaborativeIDE() {
                         Connecting...
                       </span>
                     )}
-                    {isConnected && !collaborationReady && !collaborationError && (
-                      <span className="text-blue-600 text-xs">
-                        Initializing...
-                      </span>
-                    )}
-                    {collaborationReady && (
+                    {isConnected && !collaborationError && (
                       <span className="text-green-600 text-xs flex items-center">
                         <div className="w-2 h-2 rounded-full bg-green-500 mr-1" />
                         Live
