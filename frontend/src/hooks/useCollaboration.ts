@@ -84,28 +84,8 @@ export const useCollaboration = ({
     try {
       const yText = yjsDocRef.current.getText('monaco');
       
-      // Handle initial content preservation for new sessions only
-      // This should only happen when Y.js is truly empty AND we haven't received session state
-      const currentContent = monacoEditor.getValue();
-      const yjsContent = yText.toString();
-      const hasReceivedSessionState = (yjsDocRef.current as any)._hasReceivedSessionState;
-      
-      // Only preserve content if:
-      // 1. Y.js document is empty (new session)
-      // 2. Editor has meaningful content 
-      // 3. We haven't received any session state (meaning this is a new session, not a rejoin)
-      // 4. We're creating the initial session content
-      const shouldPreserveContent = !hasReceivedSessionState && 
-                                   currentContent && 
-                                   !yjsContent && 
-                                   currentContent.trim() !== '';
-      
-      if (shouldPreserveContent) {
-        console.log('🆕 Preserving initial content for new session');
-        yText.insert(0, currentContent);
-      }
-      
-      // Create Monaco binding - Y.js will be the source of truth from now on
+      // Create Monaco binding - websocket server is the source of truth
+      // All document content comes from the server, not the UI
       monacoBindingRef.current = new MonacoBinding(
         yText,
         monacoEditor.getModel(),
@@ -143,8 +123,6 @@ export const useCollaboration = ({
   const initializeYjsDoc = useCallback(() => {
     if (!yjsDocRef.current) {
       yjsDocRef.current = new Y.Doc();
-      // Reset session state flag for new document
-      (yjsDocRef.current as any)._hasReceivedSessionState = false;
     }
     return yjsDocRef.current;
   }, []);
@@ -220,30 +198,19 @@ export const useCollaboration = ({
 
     // Session events
     socket.on('session_joined', (data) => {
-      // Mark that we've received session state (even if null) to prevent content preservation
-      if (yjsDocRef.current) {
-        (yjsDocRef.current as any)._hasReceivedSessionState = true;
-      }
-      
-      // Apply existing session state if provided
-      if (data.yjs_state && yjsDocRef.current) {
-        try {
-          const update = new Uint8Array(
-            Array.from(atob(data.yjs_state), c => c.charCodeAt(0))
-          );
-          Y.applyUpdate(yjsDocRef.current, update);
-          console.log('📄 Applied existing session state');
-        } catch (err) {
-          console.warn('Failed to apply initial session state:', err);
-        }
-      } else {
-        if (data.is_first_participant) {
-          console.log('🆕 First participant in new session - content preservation enabled');
-        } else {
-          console.log('🔄 Joined existing session (no state available)');
-        }
-      }
+      console.log('🔗 Joined session:', data.session_id);
       // Binding initialization is handled by useEffect
+    });
+
+    // Document content from server - replace entire editor content
+    socket.on('document_content', (data) => {
+      if (monacoEditor && data.content !== undefined) {
+        const currentContent = monacoEditor.getValue();
+        if (currentContent !== data.content) {
+          console.log('📄 Updating editor content from server');
+          monacoEditor.setValue(data.content);
+        }
+      }
     });
 
     socket.on('participants_list', (data) => {
@@ -269,17 +236,13 @@ export const useCollaboration = ({
       });
     });
 
-    // Y.js document updates
-    socket.on('yjs_update', (data) => {
-      if (data.participant_id !== participantId && yjsDocRef.current) {
-        // Apply the update from other participants
-        try {
-          const update = new Uint8Array(
-            Array.from(atob(data.yjs_update), c => c.charCodeAt(0))
-          );
-          Y.applyUpdate(yjsDocRef.current, update);
-        } catch (err) {
-          // Silently handle Y.js update errors
+    // Document changes from other participants
+    socket.on('document_changed', (data) => {
+      if (data.participant_id !== participantId && monacoEditor && data.content !== undefined) {
+        const currentContent = monacoEditor.getValue();
+        if (currentContent !== data.content) {
+          console.log('📝 Document updated by participant:', data.participant_id);
+          monacoEditor.setValue(data.content);
         }
       }
     });
@@ -319,24 +282,32 @@ export const useCollaboration = ({
       }
     });
 
-    // Listen for Y.js document changes to send updates
-    if (yjsDocRef.current) {
-      const updateHandler = (update: Uint8Array, origin: unknown) => {
-        // Only send updates that originated from this client
-        if (origin !== socket && socket.connected) {
-          const updateString = btoa(String.fromCharCode(...update));
-          socket.emit('yjs_update', {
+    // Send document changes to server
+    let changeTimeout: NodeJS.Timeout | null = null;
+    
+    const handleDocumentChange = () => {
+      if (changeTimeout) clearTimeout(changeTimeout);
+      
+      changeTimeout = setTimeout(() => {
+        if (monacoEditor && socket && socket.connected) {
+          const content = monacoEditor.getValue();
+          socket.emit('document_change', {
             session_id: sessionId,
             participant_id: participantId,
-            yjs_update: updateString
+            content: content
           });
         }
-      };
+      }, 500); // Debounce document changes by 500ms
+    };
 
-      yjsDocRef.current.on('update', updateHandler);
-
-      // Store the handler for cleanup
-      (yjsDocRef.current as Y.Doc & { _updateHandler?: any })._updateHandler = updateHandler;
+    // Listen for Monaco editor changes
+    if (monacoEditor) {
+      const disposable = monacoEditor.onDidChangeModelContent(() => {
+        handleDocumentChange();
+      });
+      
+      // Store for cleanup
+      (socketRef.current as any)._monacoDisposable = disposable;
     }
 
   }, [sessionId, participantId]); // Simplified dependencies - only core identifiers needed
@@ -355,20 +326,19 @@ export const useCollaboration = ({
       socketRef.current = null;
     }
 
-    // Clean up Y.js
+    // Clean up Monaco binding
     if (monacoBindingRef.current) {
       monacoBindingRef.current.destroy();
       monacoBindingRef.current = null;
     }
 
+    // Clean up Monaco editor disposable
+    if (socketRef.current && (socketRef.current as any)._monacoDisposable) {
+      (socketRef.current as any)._monacoDisposable.dispose();
+      delete (socketRef.current as any)._monacoDisposable;
+    }
+
     if (yjsDocRef.current) {
-      // Remove update handler
-      const docWithHandler = yjsDocRef.current as Y.Doc & { _updateHandler?: any };
-      if (docWithHandler._updateHandler) {
-        yjsDocRef.current.off('update', docWithHandler._updateHandler);
-        delete docWithHandler._updateHandler;
-      }
-      
       yjsDocRef.current.destroy();
       yjsDocRef.current = null;
     }

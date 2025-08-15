@@ -39,7 +39,7 @@ const io = socketIo(server, {
 
 // SERVER-MANAGED SESSION PERSISTENCE
 const activeConnections = new Map(); // sessionId -> Map(participantId -> socketId)
-const sessionStates = new Map(); // sessionId -> Y.js state data  
+const sessionDocuments = new Map(); // sessionId -> document content (string)
 const socketToSession = new Map(); // socketId -> {sessionId, participantId}
 const sessionLastActivity = new Map(); // sessionId -> timestamp
 const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
@@ -56,7 +56,16 @@ setInterval(() => {
       console.log(`🧹 Cleaning up inactive session: ${sessionId}`);
       // Clean up session data
       activeConnections.delete(sessionId);
-      sessionStates.delete(sessionId);
+      
+      // Clear any pending save timeouts
+      const timeoutKey = `${sessionId}_timeout`;
+      const existingTimeout = sessionDocuments.get(timeoutKey);
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+      }
+      
+      sessionDocuments.delete(sessionId);
+      sessionDocuments.delete(timeoutKey);
       sessionLastActivity.delete(sessionId);
     }
   }
@@ -182,33 +191,41 @@ io.on('connection', (socket) => {
         console.error('Failed to get participants:', error.message);
       }
       
-      // Send session joined confirmation with current document state
-      let currentState = sessionStates.get(sessionId);
+      // Send session joined confirmation
+      socket.emit('session_joined', { 
+        session_id: sessionId, 
+        participant_id: participantId
+      });
+
+      // Send current document content to the new participant
+      let currentContent = sessionDocuments.get(sessionId);
       
-      // If no state in memory, try to retrieve from backend
-      if (!currentState) {
+      // If no content in memory, try to retrieve from backend
+      if (currentContent === undefined) {
         try {
           const stateResponse = await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`);
-          if (stateResponse && stateResponse.yjs_state) {
-            currentState = stateResponse.yjs_state;
+          if (stateResponse && stateResponse.document_content !== undefined) {
+            currentContent = stateResponse.document_content;
             // Cache it in memory for future use
-            sessionStates.set(sessionId, currentState);
-            console.log(`📄 Retrieved session ${sessionId} state from backend`);
+            sessionDocuments.set(sessionId, currentContent);
+            console.log(`📄 Retrieved session ${sessionId} content from backend`);
+          } else {
+            // Initialize empty document for new session
+            currentContent = '';
+            sessionDocuments.set(sessionId, currentContent);
+            console.log(`🆕 Initialized new session ${sessionId} with empty document`);
           }
         } catch (error) {
-          console.log(`📄 No existing state found for session ${sessionId} (new session or state unavailable)`);
+          console.log(`📄 No existing content found for session ${sessionId} (new session)`);
+          currentContent = '';
+          sessionDocuments.set(sessionId, currentContent);
         }
       }
       
-      // Check if this is the first participant in the session
-      const sessionConnections = activeConnections.get(sessionId);
-      const isFirstParticipant = !sessionConnections || sessionConnections.size === 0;
-      
-      socket.emit('session_joined', { 
-        session_id: sessionId, 
-        participant_id: participantId,
-        yjs_state: currentState || null,
-        is_first_participant: isFirstParticipant
+      // Send current document content to the participant
+      socket.emit('document_content', { 
+        session_id: sessionId,
+        content: currentContent
       });
       
       // Notify other participants about new connection
@@ -224,43 +241,56 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle Y.js document updates for collaborative editing
-  socket.on('yjs_update', async (data) => {
+  // Handle document content changes
+  socket.on('document_change', async (data) => {
     try {
-      const { session_id, participant_id, yjs_update } = data;
+      const { session_id, participant_id, content } = data;
       
-      if (!session_id || !participant_id || !yjs_update) {
-        socket.emit('error', { message: 'Missing required data for yjs_update' });
+      if (!session_id || !participant_id || content === undefined) {
+        socket.emit('error', { message: 'Missing required data for document_change' });
         return;
       }
       
       const sessionId = parseInt(session_id);
       const participantId = parseInt(participant_id);
       
-      // Store the Y.js update state
-      sessionStates.set(sessionId, yjs_update);
+      // Update session last activity
+      sessionLastActivity.set(sessionId, Date.now());
+      
+      // Store the document content
+      sessionDocuments.set(sessionId, content);
       
       // Broadcast to other participants in the session
-      broadcastToSession(sessionId, 'yjs_update', {
+      broadcastToSession(sessionId, 'document_changed', {
         participant_id: participantId,
-        yjs_update: yjs_update
+        content: content
       }, participantId);
       
-      // Periodically save state to backend (debounced)
-      clearTimeout(sessionStates.get(`${sessionId}_timeout`));
-      sessionStates.set(`${sessionId}_timeout`, setTimeout(async () => {
+      // Periodically save content to backend (debounced)
+      const timeoutKey = `${sessionId}_timeout`;
+      const existingTimeout = sessionDocuments.get(timeoutKey);
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+      }
+      
+      const saveTimeout = setTimeout(async () => {
         try {
           await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
-            yjs_state: yjs_update
+            document_content: content
           });
+          console.log(`💾 Saved session ${sessionId} content to backend`);
         } catch (error) {
-          console.error('Failed to save session state:', error.message);
+          console.error('Failed to save session content:', error.message);
         }
-      }, 1000)); // Save after 1 second of inactivity
+        // Clean up the timeout reference
+        sessionDocuments.delete(timeoutKey);
+      }, 2000); // Save after 2 seconds of inactivity
+      
+      sessionDocuments.set(timeoutKey, saveTimeout);
       
     } catch (error) {
-      console.error('Error in yjs_update:', error);
-      socket.emit('error', { message: 'Failed to process document update' });
+      console.error('Error in document_change:', error);
+      socket.emit('error', { message: 'Failed to process document change' });
     }
   });
   
