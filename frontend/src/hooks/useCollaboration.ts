@@ -84,17 +84,9 @@ export const useCollaboration = ({
     try {
       const yText = yjsDocRef.current.getText('monaco');
       
-      // Only preserve content if Y.js document is truly empty AND editor has content
-      // This prevents duplication when binding re-initializes
-      const currentContent = monacoEditor.getValue();
-      const yjsContent = yText.toString();
-      
-      if (currentContent && !yjsContent && currentContent.trim() !== '') {
-        // Only insert if Y.js is completely empty and editor has meaningful content
-        yText.insert(0, currentContent);
-      }
-      
-      // Create Monaco binding
+      // Create Monaco binding - let Y.js be the single source of truth
+      // When joining an existing session, Y.js will sync the current state
+      // When creating a new session, Y.js will start empty and sync any changes
       monacoBindingRef.current = new MonacoBinding(
         yText,
         monacoEditor.getModel(),
@@ -206,7 +198,18 @@ export const useCollaboration = ({
     });
 
     // Session events
-    socket.on('session_joined', () => {
+    socket.on('session_joined', (data) => {
+      // Apply existing session state if provided
+      if (data.yjs_state && yjsDocRef.current) {
+        try {
+          const update = new Uint8Array(
+            Array.from(atob(data.yjs_state), c => c.charCodeAt(0))
+          );
+          Y.applyUpdate(yjsDocRef.current, update);
+        } catch (err) {
+          console.warn('Failed to apply initial session state:', err);
+        }
+      }
       // Binding initialization is handled by useEffect
     });
 

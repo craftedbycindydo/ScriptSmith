@@ -182,8 +182,28 @@ io.on('connection', (socket) => {
         console.error('Failed to get participants:', error.message);
       }
       
-      // Send session joined confirmation
-      socket.emit('session_joined', { session_id: sessionId, participant_id: participantId });
+      // Send session joined confirmation with current document state
+      let currentState = sessionStates.get(sessionId);
+      
+      // If no state in memory, try to retrieve from backend
+      if (!currentState) {
+        try {
+          const stateResponse = await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`);
+          if (stateResponse && stateResponse.yjs_state) {
+            currentState = stateResponse.yjs_state;
+            // Cache it in memory for future use
+            sessionStates.set(sessionId, currentState);
+          }
+        } catch (error) {
+          console.log(`📄 No existing state found for session ${sessionId} (new session or state unavailable)`);
+        }
+      }
+      
+      socket.emit('session_joined', { 
+        session_id: sessionId, 
+        participant_id: participantId,
+        yjs_state: currentState || null
+      });
       
       // Notify other participants about new connection
       broadcastToSession(sessionId, 'participant_connected', {
