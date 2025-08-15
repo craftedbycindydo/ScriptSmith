@@ -84,19 +84,13 @@ export const useCollaboration = ({
         const content = monacoEditor.getValue();
         // Use socketRef directly to avoid stale closure issues
         if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
-          console.log('📤 Sending document change:', {
-            session_id: sessionId,
-            participant_id: participantId,
-            contentLength: content.length,
-            preview: content.substring(0, 50) + (content.length > 50 ? '...' : '')
-          });
           socketRef.current.emit('document_change', {
             session_id: sessionId,
             participant_id: participantId,
             content: content
           });
         }
-      }, 100); // Send after 100ms of no changes (faster)
+      }, 800); // Send after 800ms of no changes (proper debouncing)
     });
 
     // Set up cursor change listener
@@ -243,6 +237,7 @@ export const useCollaboration = ({
     socket.on('session_joined', (data) => {
       // If this is a new session and we have initial content, send it to the server
       if (data.is_first_participant && initialContent && monacoEditor) {
+        // For initial content, don't preserve cursor position
         isUpdatingFromServer.current = true;
         monacoEditor.setValue(initialContent);
         isUpdatingFromServer.current = false;
@@ -267,6 +262,7 @@ export const useCollaboration = ({
       if (currentEditor && data.content !== undefined) {
         const currentContent = currentEditor.getValue();
         if (currentContent !== data.content) {
+          // For initial content load, don't preserve cursor (start at beginning)
           isUpdatingFromServer.current = true;
           currentEditor.setValue(data.content);
           isUpdatingFromServer.current = false;
@@ -322,8 +318,51 @@ export const useCollaboration = ({
         if (currentEditor) {
           const currentContent = currentEditor.getValue();
           if (currentContent !== data.content) {
+            // Preserve cursor position
+            const currentPosition = currentEditor.getPosition();
+            const currentSelection = currentEditor.getSelection();
+            
             isUpdatingFromServer.current = true;
             currentEditor.setValue(data.content);
+            
+            // Restore cursor position if valid
+            if (currentPosition) {
+              // Ensure position is within bounds of new content
+              const model = currentEditor.getModel();
+              if (model) {
+                const lineCount = model.getLineCount();
+                const safeLineNumber = Math.min(currentPosition.lineNumber, lineCount);
+                const lineContent = model.getLineContent(safeLineNumber);
+                const safeColumn = Math.min(currentPosition.column, lineContent.length + 1);
+                
+                currentEditor.setPosition({
+                  lineNumber: safeLineNumber,
+                  column: safeColumn
+                });
+              }
+            }
+            
+            // Restore selection if valid
+            if (currentSelection) {
+              const model = currentEditor.getModel();
+              if (model) {
+                const lineCount = model.getLineCount();
+                const safeStartLine = Math.min(currentSelection.startLineNumber, lineCount);
+                const safeEndLine = Math.min(currentSelection.endLineNumber, lineCount);
+                const startLineContent = model.getLineContent(safeStartLine);
+                const endLineContent = model.getLineContent(safeEndLine);
+                const safeStartColumn = Math.min(currentSelection.startColumn, startLineContent.length + 1);
+                const safeEndColumn = Math.min(currentSelection.endColumn, endLineContent.length + 1);
+                
+                currentEditor.setSelection({
+                  startLineNumber: safeStartLine,
+                  startColumn: safeStartColumn,
+                  endLineNumber: safeEndLine,
+                  endColumn: safeEndColumn
+                });
+              }
+            }
+            
             isUpdatingFromServer.current = false;
           }
         } else {
