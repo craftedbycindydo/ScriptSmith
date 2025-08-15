@@ -124,16 +124,26 @@ async function makeBackendRequest(endpoint, method = 'GET', data = null) {
 // Utility function to broadcast to all participants in a session
 function broadcastToSession(sessionId, event, data, excludeParticipantId = null) {
   const connections = activeConnections.get(sessionId);
-  if (!connections) return;
+  if (!connections) {
+    console.log('❌ No connections found for session:', sessionId);
+    return 0;
+  }
   
+  let broadcastCount = 0;
   connections.forEach((socketId, participantId) => {
     if (excludeParticipantId && participantId === excludeParticipantId) return;
     
     const socket = io.sockets.sockets.get(socketId);
     if (socket) {
       socket.emit(event, data);
+      broadcastCount++;
+      console.log(`📤 Sent ${event} to participant ${participantId} (socket: ${socketId})`);
+    } else {
+      console.log(`❌ Socket not found for participant ${participantId}`);
     }
   });
+  
+  return broadcastCount;
 }
 
 // Socket.IO event handlers
@@ -242,7 +252,15 @@ io.on('connection', (socket) => {
     try {
       const { session_id, participant_id, content } = data;
       
+      console.log('📝 Received document_change:', {
+        sessionId: session_id,
+        participantId: participant_id,
+        contentLength: content?.length || 0,
+        socketId: socket.id
+      });
+      
       if (!session_id || !participant_id || content === undefined) {
+        console.log('❌ Missing required data for document_change');
         socket.emit('error', { message: 'Missing required data for document_change' });
         return;
       }
@@ -255,12 +273,15 @@ io.on('connection', (socket) => {
       
       // Store the document content
       sessionDocuments.set(sessionId, content);
+      console.log('💾 Stored document for session:', sessionId);
       
       // Broadcast to other participants in the session
-      broadcastToSession(sessionId, 'document_changed', {
+      const broadcastResult = broadcastToSession(sessionId, 'document_changed', {
         participant_id: participantId,
         content: content
       }, participantId);
+      
+      console.log('📤 Broadcasted document_changed to:', broadcastResult, 'participants');
       
       // Periodically save content to backend (debounced)
       const timeoutKey = `${sessionId}_timeout`;
@@ -271,16 +292,29 @@ io.on('connection', (socket) => {
       
       const saveTimeout = setTimeout(async () => {
         try {
-          await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
+          console.log(`💾 Attempting to save session ${sessionId} content to backend...`);
+          const response = await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
             document_content: content
           });
-          console.log(`💾 Saved session ${sessionId} content to backend`);
+          console.log(`✅ Successfully saved session ${sessionId} content to backend:`, response);
         } catch (error) {
-          console.error('Failed to save session content:', error.message);
+          console.error(`❌ Failed to save session ${sessionId} content:`, error.message);
+          // Retry once after a short delay
+          setTimeout(async () => {
+            try {
+              console.log(`🔄 Retrying save for session ${sessionId}...`);
+              await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
+                document_content: content
+              });
+              console.log(`✅ Retry successful for session ${sessionId}`);
+            } catch (retryError) {
+              console.error(`❌ Retry failed for session ${sessionId}:`, retryError.message);
+            }
+          }, 1000);
         }
         // Clean up the timeout reference
         sessionDocuments.delete(timeoutKey);
-      }, 2000); // Save after 2 seconds of inactivity
+      }, 500); // Save after 500ms of inactivity (faster saves)
       
       sessionDocuments.set(timeoutKey, saveTimeout);
       

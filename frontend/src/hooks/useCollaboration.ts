@@ -82,8 +82,21 @@ export const useCollaboration = ({
       
       changeTimeout = setTimeout(() => {
         const content = monacoEditor.getValue();
-        sendDocumentChange(content);
-      }, 300); // Send after 300ms of no changes
+        // Use socketRef directly to avoid stale closure issues
+        if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
+          console.log('📤 Sending document change:', {
+            session_id: sessionId,
+            participant_id: participantId,
+            contentLength: content.length,
+            preview: content.substring(0, 50) + (content.length > 50 ? '...' : '')
+          });
+          socketRef.current.emit('document_change', {
+            session_id: sessionId,
+            participant_id: participantId,
+            content: content
+          });
+        }
+      }, 100); // Send after 100ms of no changes (faster)
     });
 
     // Set up cursor change listener
@@ -93,9 +106,10 @@ export const useCollaboration = ({
         column: e.position.column
       };
 
-      // Only send if position actually changed
+      // Only send if position actually changed  
       if (JSON.stringify(position) !== JSON.stringify(lastCursorPositionRef.current)) {
         lastCursorPositionRef.current = position;
+        // Use socketRef directly to avoid stale closure issues
         if (socketRef.current && sessionId && participantId) {
           socketRef.current.emit('cursor_update', {
             session_id: sessionId,
@@ -106,12 +120,54 @@ export const useCollaboration = ({
       }
     });
 
+    // Force save on before leaving
+    const forceSave = () => {
+      if (changeTimeout) {
+        clearTimeout(changeTimeout);
+        changeTimeout = null;
+      }
+      const content = monacoEditor.getValue();
+      if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current && content) {
+        console.log('🚨 Force saving document before disconnect:', content.length, 'chars');
+        socketRef.current.emit('document_change', {
+          session_id: sessionId,
+          participant_id: participantId,
+          content: content
+        });
+      }
+    };
+
     return () => {
+      forceSave(); // Force save before cleanup
       if (changeTimeout) clearTimeout(changeTimeout);
       disposable.dispose();
       cursorDisposable.dispose();
     };
-  }, [monacoEditor, sendDocumentChange, sessionId, participantId]);
+  }, [monacoEditor, sessionId, participantId]); // Added sessionId and participantId to avoid recreating listeners
+
+  // Force save before page unload (refresh, close tab, navigate away)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (monacoEditor && socketRef.current && sessionId && participantId) {
+        const content = monacoEditor.getValue();
+        if (content) {
+          console.log('🚨 Force saving before page unload:', content.length, 'chars');
+          // Force immediate send without debouncing
+          socketRef.current?.emit('document_change', {
+            session_id: sessionId,
+            participant_id: participantId,
+            content: content
+          });
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [monacoEditor, sessionId, participantId]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -155,6 +211,19 @@ export const useCollaboration = ({
     });
 
     socket.on('disconnect', (reason) => {
+      // Force save before disconnect
+      if (monacoEditor) {
+        const content = monacoEditor.getValue();
+        if (content && socketRef.current) {
+          console.log('🚨 Force saving before socket disconnect:', content.length, 'chars');
+          socketRef.current.emit('document_change', {
+            session_id: sessionId,
+            participant_id: participantId,
+            content: content
+          });
+        }
+      }
+      
       setIsConnected(false);
       onConnectionChange?.(false);
       
@@ -172,11 +241,8 @@ export const useCollaboration = ({
 
     // Session events
     socket.on('session_joined', (data) => {
-      console.log('🔗 Joined session:', data.session_id);
-      
       // If this is a new session and we have initial content, send it to the server
       if (data.is_first_participant && initialContent && monacoEditor) {
-        console.log('🆕 Setting initial content for new session');
         isUpdatingFromServer.current = true;
         monacoEditor.setValue(initialContent);
         isUpdatingFromServer.current = false;
@@ -190,14 +256,31 @@ export const useCollaboration = ({
 
     // Receive current document content when joining
     socket.on('document_content', (data) => {
-      if (monacoEditor && data.content !== undefined) {
-        const currentContent = monacoEditor.getValue();
+      // Use the same editor resolution logic
+      const getCurrentEditor = () => {
+        return monacoEditor || 
+               (typeof window !== 'undefined' && (window as any).monacoEditorInstance) ||
+               null;
+      };
+      
+      const currentEditor = getCurrentEditor();
+      if (currentEditor && data.content !== undefined) {
+        const currentContent = currentEditor.getValue();
         if (currentContent !== data.content) {
-          console.log('📄 Loading document content from server');
           isUpdatingFromServer.current = true;
-          monacoEditor.setValue(data.content);
+          currentEditor.setValue(data.content);
           isUpdatingFromServer.current = false;
         }
+      } else if (data.content !== undefined) {
+        // Retry if editor not available yet
+        setTimeout(() => {
+          const retryEditor = getCurrentEditor();
+          if (retryEditor) {
+            isUpdatingFromServer.current = true;
+            retryEditor.setValue(data.content);
+            isUpdatingFromServer.current = false;
+          }
+        }, 100);
       }
     });
 
@@ -226,16 +309,38 @@ export const useCollaboration = ({
 
     // Document changes from other participants
     socket.on('document_changed', (data) => {
-      if (data.participant_id !== participantId && monacoEditor && data.content !== undefined) {
-        const currentContent = monacoEditor.getValue();
-        if (currentContent !== data.content) {
-          console.log('📝 Document updated by participant:', data.participant_id);
-          isUpdatingFromServer.current = true;
-          monacoEditor.setValue(data.content);
-          isUpdatingFromServer.current = false;
+      if (data.participant_id !== participantId && data.content !== undefined) {
+        // Use a function to get the current Monaco editor reference
+        const getCurrentEditor = () => {
+          // Try multiple ways to get the editor reference
+          return monacoEditor || 
+                 (typeof window !== 'undefined' && (window as any).monacoEditorInstance) ||
+                 null;
+        };
+        
+        const currentEditor = getCurrentEditor();
+        if (currentEditor) {
+          const currentContent = currentEditor.getValue();
+          if (currentContent !== data.content) {
+            isUpdatingFromServer.current = true;
+            currentEditor.setValue(data.content);
+            isUpdatingFromServer.current = false;
+          }
+        } else {
+          // Queue the update for when editor becomes available
+          setTimeout(() => {
+            const retryEditor = getCurrentEditor();
+            if (retryEditor) {
+              isUpdatingFromServer.current = true;
+              retryEditor.setValue(data.content);
+              isUpdatingFromServer.current = false;
+            }
+          }, 100);
         }
       }
     });
+    
+
 
     // Cursor updates
     socket.on('cursor_update', (data) => {
@@ -268,7 +373,7 @@ export const useCollaboration = ({
       }
     });
 
-  }, [sessionId, participantId, sendDocumentChange, initialContent]); // Include dependencies
+  }, [sessionId, participantId, initialContent]); // Removed sendDocumentChange to avoid recreating socket listeners
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {

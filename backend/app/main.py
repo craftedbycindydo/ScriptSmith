@@ -72,41 +72,56 @@ auth_rate_limit_storage = defaultdict(list)
 # Security middleware
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    # Skip security middleware for health check (like shop project)
-    if request.url.path == "/health":
+    # Skip security middleware for health check and API health
+    if request.url.path in ["/health", "/api/health"]:
         return await call_next(request)
         
     # Handle cases where request.client might be None (e.g., in some deployment scenarios)
     client_ip = getattr(request.client, 'host', '127.0.0.1') if request.client else '127.0.0.1'
     current_time = time.time()
     
-    # Clean old requests (older than 1 minute)
-    rate_limit_storage[client_ip] = [
-        req_time for req_time in rate_limit_storage[client_ip]
-        if current_time - req_time < 60
-    ]
+    # Skip rate limiting for internal service calls from WebSocket service
+    user_agent = request.headers.get('user-agent', '')
+    is_internal_service = (
+        client_ip in ['127.0.0.1', 'localhost'] and 
+        ('axios' in user_agent.lower() or 'node.js' in user_agent.lower())
+    )
     
-    # Check global rate limit
-    if len(rate_limit_storage[client_ip]) >= settings.global_rate_limit:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+    # Skip rate limiting for collaboration endpoints called by WebSocket service
+    is_collaboration_internal = request.url.path.startswith((
+        '/api/collaboration/sessions/',
+        '/api/collaboration/participants/'
+    )) and client_ip in ['127.0.0.1', 'localhost']
     
-    # Check auth endpoint rate limiting
-    if request.url.path.startswith("/api/auth/"):
-        auth_rate_limit_storage[client_ip] = [
-            req_time for req_time in auth_rate_limit_storage[client_ip]
+    # Apply rate limiting only for external requests
+    if not is_internal_service and not is_collaboration_internal:
+        # Clean old requests (older than 1 minute)
+        rate_limit_storage[client_ip] = [
+            req_time for req_time in rate_limit_storage[client_ip]
             if current_time - req_time < 60
         ]
         
-        if len(auth_rate_limit_storage[client_ip]) >= settings.auth_rate_limit:
-            raise HTTPException(
-                status_code=429, 
-                detail="Authentication rate limit exceeded. Please try again later."
-            )
+        # Check global rate limit
+        if len(rate_limit_storage[client_ip]) >= settings.global_rate_limit:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+        
+        # Check auth endpoint rate limiting
+        if request.url.path.startswith("/api/auth/"):
+            auth_rate_limit_storage[client_ip] = [
+                req_time for req_time in auth_rate_limit_storage[client_ip]
+                if current_time - req_time < 60
+            ]
+            
+            if len(auth_rate_limit_storage[client_ip]) >= settings.auth_rate_limit:
+                raise HTTPException(
+                    status_code=429, 
+                    detail="Authentication rate limit exceeded. Please try again later."
+                )
         
         auth_rate_limit_storage[client_ip].append(current_time)
-    
-    # Add current request to global rate limit
-    rate_limit_storage[client_ip].append(current_time)
+        
+        # Add current request to global rate limit (only for external requests)
+        rate_limit_storage[client_ip].append(current_time)
     
     # Process request
     response = await call_next(request)

@@ -228,6 +228,11 @@ export default function CollaborativeIDE() {
     monacoEditorRef.current = editor;
     monacoInstanceRef.current = monaco;
     
+    // Make editor available globally for socket listeners
+    if (typeof window !== 'undefined') {
+      (window as any).monacoEditorInstance = editor;
+    }
+    
     // Set initial code content if available
     if (sessionDetails?.session.code_content) {
       editor.setValue(sessionDetails.session.code_content);

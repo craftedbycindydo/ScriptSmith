@@ -61,6 +61,7 @@ class UpdateCursorRequest(BaseModel):
 
 class UpdateSessionStateRequest(BaseModel):
     yjs_state: Optional[str] = None
+    document_content: Optional[str] = None
 
 # Generate random cursor colors
 CURSOR_COLORS = [
@@ -437,7 +438,7 @@ async def update_session_state(
     request: UpdateSessionStateRequest,
     db: Session = Depends(get_db)
 ):
-    """Update Y.js session state (called by WebSocket service)"""
+    """Update session state and document content (called by WebSocket service)"""
     
     session = db.query(CollaborationSession).filter(
         CollaborationSession.id == session_id,
@@ -447,11 +448,38 @@ async def update_session_state(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
+    # Update Y.js state if provided (legacy support)
     if request.yjs_state:
         session.yjs_state = request.yjs_state
+    
+    # Update document content if provided (new simple sync model)
+    if request.document_content is not None:
+        session.code_content = request.document_content
     
     session.updated_at = func.now()
     session.last_accessed = func.now()
     db.commit()
     
-    return {"success": True, "session_id": session_id}
+    return {"success": True, "session_id": session_id, "document_saved": request.document_content is not None}
+
+@router.get("/collaboration/sessions/{session_id}/state")
+async def get_session_state(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get session state and document content (called by WebSocket service)"""
+    
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.id == session_id,
+        CollaborationSession.is_active == True
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "session_id": session_id,
+        "document_content": session.code_content or "",
+        "yjs_state": session.yjs_state,
+        "last_updated": session.updated_at.isoformat() if session.updated_at else None
+    }
