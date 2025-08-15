@@ -84,9 +84,28 @@ export const useCollaboration = ({
     try {
       const yText = yjsDocRef.current.getText('monaco');
       
-      // Create Monaco binding - let Y.js be the single source of truth
-      // When joining an existing session, Y.js will sync the current state
-      // When creating a new session, Y.js will start empty and sync any changes
+      // Handle initial content preservation for new sessions only
+      // This should only happen when Y.js is truly empty AND we haven't received session state
+      const currentContent = monacoEditor.getValue();
+      const yjsContent = yText.toString();
+      const hasReceivedSessionState = (yjsDocRef.current as any)._hasReceivedSessionState;
+      
+      // Only preserve content if:
+      // 1. Y.js document is empty (new session)
+      // 2. Editor has meaningful content 
+      // 3. We haven't received any session state (meaning this is a new session, not a rejoin)
+      // 4. We're creating the initial session content
+      const shouldPreserveContent = !hasReceivedSessionState && 
+                                   currentContent && 
+                                   !yjsContent && 
+                                   currentContent.trim() !== '';
+      
+      if (shouldPreserveContent) {
+        console.log('🆕 Preserving initial content for new session');
+        yText.insert(0, currentContent);
+      }
+      
+      // Create Monaco binding - Y.js will be the source of truth from now on
       monacoBindingRef.current = new MonacoBinding(
         yText,
         monacoEditor.getModel(),
@@ -124,6 +143,8 @@ export const useCollaboration = ({
   const initializeYjsDoc = useCallback(() => {
     if (!yjsDocRef.current) {
       yjsDocRef.current = new Y.Doc();
+      // Reset session state flag for new document
+      (yjsDocRef.current as any)._hasReceivedSessionState = false;
     }
     return yjsDocRef.current;
   }, []);
@@ -199,6 +220,11 @@ export const useCollaboration = ({
 
     // Session events
     socket.on('session_joined', (data) => {
+      // Mark that we've received session state (even if null) to prevent content preservation
+      if (yjsDocRef.current) {
+        (yjsDocRef.current as any)._hasReceivedSessionState = true;
+      }
+      
       // Apply existing session state if provided
       if (data.yjs_state && yjsDocRef.current) {
         try {
@@ -206,8 +232,15 @@ export const useCollaboration = ({
             Array.from(atob(data.yjs_state), c => c.charCodeAt(0))
           );
           Y.applyUpdate(yjsDocRef.current, update);
+          console.log('📄 Applied existing session state');
         } catch (err) {
           console.warn('Failed to apply initial session state:', err);
+        }
+      } else {
+        if (data.is_first_participant) {
+          console.log('🆕 First participant in new session - content preservation enabled');
+        } else {
+          console.log('🔄 Joined existing session (no state available)');
         }
       }
       // Binding initialization is handled by useEffect

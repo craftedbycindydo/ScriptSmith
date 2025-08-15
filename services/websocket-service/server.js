@@ -193,16 +193,22 @@ io.on('connection', (socket) => {
             currentState = stateResponse.yjs_state;
             // Cache it in memory for future use
             sessionStates.set(sessionId, currentState);
+            console.log(`📄 Retrieved session ${sessionId} state from backend`);
           }
         } catch (error) {
           console.log(`📄 No existing state found for session ${sessionId} (new session or state unavailable)`);
         }
       }
       
+      // Check if this is the first participant in the session
+      const sessionConnections = activeConnections.get(sessionId);
+      const isFirstParticipant = !sessionConnections || sessionConnections.size === 0;
+      
       socket.emit('session_joined', { 
         session_id: sessionId, 
         participant_id: participantId,
-        yjs_state: currentState || null
+        yjs_state: currentState || null,
+        is_first_participant: isFirstParticipant
       });
       
       // Notify other participants about new connection
