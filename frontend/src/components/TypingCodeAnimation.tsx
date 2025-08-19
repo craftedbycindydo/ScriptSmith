@@ -15,7 +15,7 @@ export default function TypingCodeAnimation({ className = "" }: TypingCodeAnimat
   const codeSnippets = [
     `// Real-time collaborative code editor
 function initializeWebSocket() {
-  const ws = new WebSocket('ws://localhost:8007');
+  const ws = new WebSocket(process.env.VITE_WEBSOCKET_URL);
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.type === 'code_change') {
