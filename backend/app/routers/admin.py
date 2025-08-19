@@ -521,7 +521,7 @@ async def update_admin_settings(
         
         # Broadcast settings change to all connected clients via websocket service
         try:
-            websocket_url = "http://localhost:8007/api/broadcast/admin-settings"  # WebSocket service URL
+            websocket_url = f"{settings.websocket_service_url}/api/broadcast/admin-settings"  # WebSocket service URL
             broadcast_data = {
                 "event": "admin_settings_changed",
                 "data": {
