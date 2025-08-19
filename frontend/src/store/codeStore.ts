@@ -139,7 +139,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         code,
         language,
         input_data: '',
-        template_id: selectedTemplateId
+        template_id: selectedTemplateId || undefined
       });
       
       set({ 
