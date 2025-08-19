@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiService } from '../services/api';
 import { io, Socket } from 'socket.io-client';
+import { config } from '../config/env';
 
 export interface AdminSettings {
   copy_paste_enabled: boolean;
@@ -24,7 +25,7 @@ interface AdminSettingsState {
   disconnectWebSocket: () => void;
 }
 
-const WEBSOCKET_URL = 'http://localhost:8007';
+const WEBSOCKET_URL = config.websocketUrl;
 
 export const useAdminSettingsStore = create<AdminSettingsState>()(
   persist(
