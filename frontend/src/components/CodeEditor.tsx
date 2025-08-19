@@ -174,37 +174,29 @@ export default function CodeEditor({ language, value, onChange, onMount, theme =
         _dom.addEventListener(evt, _blockFn, { capture: true, passive: false });
       });
 
-      // Layer 3: Selection prevention (less aggressive)
+      // Layer 3: Selection prevention (less aggressive - only prevent selectstart)
       const _clearSel = (e: Event) => {
         try {
           if (e.type === 'selectstart') {
             e.preventDefault();
             if (e.stopPropagation) e.stopPropagation();
           }
-          // Clear selection on mouse up only
-          if (e.type === 'mouseup') {
-            setTimeout(() => {
-              window.getSelection()?.removeAllRanges();
-            }, 10);
-          }
+          // Don't clear selection on mouseup to avoid cursor reset issues
         } catch {}
       };
 
-      ['selectstart', 'mouseup'].forEach(evt => {
+      ['selectstart'].forEach(evt => {
         _evts[evt] = _clearSel;
         _dom.addEventListener(evt, _clearSel, { capture: true, passive: false });
       });
 
       setDomListeners(_evts);
 
-      // Layer 4: Continuous monitoring and re-enforcement
+      // Layer 4: Continuous monitoring and re-enforcement (without cursor interference)
       const _monitor = setInterval(() => {
         if (_9f510 && _dom) {
-          // Clear any selections
-          try {
-            window.getSelection()?.removeAllRanges();
-          } catch {}
-          // Re-block any potentially restored clipboard functionality
+          // Don't clear selections to avoid cursor reset issues
+          // Only clear legacy clipboard data if present
           if ((window as any).clipboardData) {
             try { (window as any).clipboardData.clearData(); } catch {}
           }
@@ -237,15 +229,11 @@ export default function CodeEditor({ language, value, onChange, onMount, theme =
       } catch {}
     }
 
-    // Layer 7: Additional monitoring (simplified)
+    // Layer 7: Additional monitoring (simplified, without cursor interference)
     if (_9f510) {
       const _detector = setInterval(() => {
-        // Ensure clipboard restrictions remain active
-        if (_dom) {
-          try {
-            window.getSelection()?.removeAllRanges();
-          } catch {}
-        }
+        // Ensure clipboard restrictions remain active without clearing selections
+        // This avoids cursor reset issues while maintaining security
       }, 2000);
 
       if (_dom) {
