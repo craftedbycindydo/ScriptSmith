@@ -8,7 +8,7 @@ async def health_check():
     """Health check endpoint - simplified for Railway deployment"""
     return {
         "status": "healthy",
-        "app_name": os.getenv("APP_NAME", "Script Smith"),
+        "app_name": os.getenv("APP_NAME", "Scripting Smith"),
         "version": os.getenv("APP_VERSION", "1.0.0"),
         "environment": "production" if os.getenv("ENVIRONMENT") == "production" else "development",
         "port": os.getenv("PORT", "8000")

@@ -13,7 +13,7 @@ except Exception as e:
     print(f"Warning: Could not load full config: {e}")
     # Create minimal settings for Railway deployment
     class MinimalSettings:
-        app_name = os.getenv("APP_NAME", "Script Smith")
+        app_name = os.getenv("APP_NAME", "Scripting Smith")
         app_version = os.getenv("APP_VERSION", "1.0.0")
         debug = os.getenv("DEBUG", "false").lower() == "true"
         environment = os.getenv("ENVIRONMENT", "development")
@@ -157,18 +157,29 @@ async def startup_event():
     # Try to initialize database connection and tables
     global engine
     try:
-        from app.database.base import engine
-        from app.models import user, code_submission, collaboration as collaboration_models, assignment, template
+        from app.database.base import engine, Base
+        from app.models import User, Template, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings
         
-        user.Base.metadata.create_all(bind=engine)
-        code_submission.Base.metadata.create_all(bind=engine)
-        collaboration_models.Base.metadata.create_all(bind=engine)
-        assignment.Base.metadata.create_all(bind=engine)
-        template.Base.metadata.create_all(bind=engine)
+        # Create all tables at once using the Base metadata
+        print("🔄 Creating database tables...")
+        Base.metadata.create_all(bind=engine)
         print("✅ Database tables created successfully")
+        
+        # Verify connection by running a simple query
+        from app.database.base import SessionLocal
+        db = SessionLocal()
+        try:
+            # Test database connection
+            db.execute("SELECT 1")
+            db.close()
+            print("✅ Database connection verified")
+        except Exception as db_error:
+            print(f"⚠️  Database connection test failed: {db_error}")
+            db.close()
+            
     except Exception as e:
-        print(f"⚠️  Database connection failed: {e}")
-        print("💡 Continuing without database features for health check")
+        print(f"⚠️  Database initialization failed: {e}")
+        print("💡 Server will continue running - database features may be limited")
     
     # Load routers
     await load_routers()
@@ -198,8 +209,8 @@ async def load_routers():
         print("🔗 WebSocket service running separately on dedicated microservice")
         
     except Exception as e:
-        print(f"⚠️  Some routers failed to load: {e}")
-        print("💡 Health check still available")
+        print(f"⚠️  Router loading failed: {e}")
+        print("💡 Health check endpoint will still be available")
         import traceback
         traceback.print_exc()
 
@@ -207,7 +218,7 @@ async def load_routers():
 @app.get("/")
 async def root():
     return {
-        "message": f"Welcome to {getattr(settings, 'app_name', 'Script Smith')}",
+        "message": f"Welcome to {getattr(settings, 'app_name', 'Scripting Smith')}",
         "version": getattr(settings, 'app_version', '1.0.0'),
         "status": "running",
         "environment": getattr(settings, 'environment', 'development')

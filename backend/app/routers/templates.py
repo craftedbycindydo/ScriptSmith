@@ -9,7 +9,9 @@ from app.database.base import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
 from app.models.template import Template
+from app.models.user_template import UserTemplate
 from app.services.template_service import TemplateService
+from app.services.user_template_service import UserTemplateService
 from app.services.admin_service import AdminService
 from app.core.config import settings
 
@@ -337,3 +339,147 @@ async def get_template_for_user(
     
     template.creator_username = template.creator.username
     return template
+
+
+# User Template Endpoints (Personal Templates)
+
+class UserTemplateCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    language: str
+    code_content: str
+
+class UserTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    code_content: Optional[str] = None
+
+class UserTemplateResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    language: str
+    code_content: str
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class UserTemplateListResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    language: str
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/user-templates", response_model=UserTemplateResponse, status_code=status.HTTP_201_CREATED)
+async def create_user_template(
+    template: UserTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new personal template for the current user"""
+    try:
+        new_template = UserTemplateService.create_user_template(
+            db=db,
+            name=template.name,
+            description=template.description,
+            language=template.language,
+            code_content=template.code_content,
+            user_id=current_user.id
+        )
+        return new_template
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create template: {str(e)}"
+        )
+
+
+@router.get("/user-templates", response_model=List[UserTemplateListResponse])
+async def get_user_templates(
+    language: Optional[str] = Query(None, description="Filter by programming language"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all personal templates for the current user"""
+    try:
+        if language:
+            templates = UserTemplateService.get_user_templates_by_language(db, current_user.id, language)
+        else:
+            templates = UserTemplateService.get_all_user_templates(db, current_user.id)
+        
+        return templates
+    except Exception as e:
+        # Return empty list if anything goes wrong
+        return []
+
+
+@router.get("/user-templates/{template_id}", response_model=UserTemplateResponse)
+async def get_user_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific personal template"""
+    template = UserTemplateService.get_user_template_by_id(db, template_id, current_user.id)
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found"
+        )
+    
+    return template
+
+
+@router.put("/user-templates/{template_id}", response_model=UserTemplateResponse)
+async def update_user_template(
+    template_id: int,
+    template_update: UserTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a personal template"""
+    try:
+        updated_template = UserTemplateService.update_user_template(
+            db=db,
+            template_id=template_id,
+            user_id=current_user.id,
+            name=template_update.name,
+            description=template_update.description,
+            code_content=template_update.code_content
+        )
+        return updated_template
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update template: {str(e)}"
+        )
+
+
+@router.delete("/user-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a personal template"""
+    try:
+        UserTemplateService.delete_user_template(db, template_id, current_user.id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete template: {str(e)}"
+        )

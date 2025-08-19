@@ -7,13 +7,17 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { apiService } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
+import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { useNavigate } from 'react-router-dom';
 import AssignmentUpload from './AssignmentUpload';
 import AssignmentReports from './AssignmentReports';
 import TemplateManager from './TemplateManager';
+import CodeEditor from './CodeEditor';
+import OutputConsole from './OutputConsole';
 import { 
   Users, 
   Activity, 
@@ -30,7 +34,10 @@ import {
   Shield,
   FileText,
   ChevronDown,
-  Menu
+  Menu,
+  BarChart3,
+  Play,
+  RefreshCw
 } from 'lucide-react';
 
 interface AdminStats {
@@ -76,15 +83,53 @@ interface AdminUser {
   collaboration_sessions: number;
 }
 
+interface TemplateExecution {
+  id: number;
+  user_id?: number;
+  username?: string;
+  email?: string;
+  full_name?: string;
+  template_id?: number;
+  template_name?: string;
+  code: string;
+  language: string;
+  input_data?: string;
+  output?: string;
+  error_message?: string;
+  execution_time?: number;
+  status?: string;
+  created_at: string;
+  executed_at?: string;
+}
+
+interface TemplateExecutionsResponse {
+  executions: TemplateExecution[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export default function AdminDashboard() {
   const { user, isAuthenticated } = useAuthStore();
+  const { 
+    settings: adminSettings, 
+    updateSettings: updateAdminSettings,
+    loadSettings: loadAdminSettings,
+    initializeWebSocket,
+    disconnectWebSocket,
+    isLoading: settingsLoading,
+    error: settingsError 
+  } = useAdminSettingsStore();
   const navigate = useNavigate();
   
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [activities, setActivities] = useState<UserActivity[]>([]);
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Get admin status from user data (server-side validated)
+  const isAdmin = user?.is_admin || false;
   
   // Filters
   const [activityType, setActivityType] = useState<string>('all');
@@ -94,29 +139,30 @@ export default function AdminDashboard() {
   const [totalActivities, setTotalActivities] = useState(0);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   
+  // Activity filters
+  const [activityUserFilter, setActivityUserFilter] = useState('all');
+  
   // Tab state
   const [activeTab, setActiveTab] = useState('overview');
   
+  // Template execution states
+  const [templateExecutions, setTemplateExecutions] = useState<TemplateExecution[]>([]);
+  const [templateExecutionsTotal, setTemplateExecutionsTotal] = useState(0);
+  const [templateExecutionsPage, setTemplateExecutionsPage] = useState(1);
+  const [expandedExecution, setExpandedExecution] = useState<number | null>(null);
+  
+  // Template execution filters
+  const [templateNameFilter, setTemplateNameFilter] = useState('all');
+  const [templateUserFilter, setTemplateUserFilter] = useState('all');
+  const [templateLanguageFilter, setTemplateLanguageFilter] = useState('all');
+  const [templateStatusFilter, setTemplateStatusFilter] = useState('all');
+  
+  // Dropdown options
+  const [templates, setTemplates] = useState<Array<{id: number, name: string, language: string}>>([]);
+  const [combinedUsers, setCombinedUsers] = useState<Array<{username: string, email: string, display: string}>>([]);
 
   
   const pageSize = 20;
-  // Use backend API to verify admin status instead of hardcoded email
-  const [isAdmin, setIsAdmin] = useState(false);
-  
-  useEffect(() => {
-    if (user) {
-      // Check admin status via backend API
-      const checkAdminStatus = async () => {
-        try {
-          await apiService.getAdminStats();
-          setIsAdmin(true);
-        } catch (error) {
-          setIsAdmin(false);
-        }
-      };
-      checkAdminStatus();
-    }
-  }, [user]);
 
   // Load admin stats
   const loadStats = async () => {
@@ -131,11 +177,15 @@ export default function AdminDashboard() {
   // Load user activities
   const loadActivities = async (page: number = 1) => {
     try {
+      const { username, email } = extractUserInfo(activityUserFilter);
+      
       const data: UserActivitiesResponse = await apiService.getAdminActivities(
         page, 
         pageSize, 
         activityType === 'all' ? undefined : activityType || undefined, 
-        statusFilter === 'all' ? undefined : statusFilter || undefined
+        statusFilter === 'all' ? undefined : statusFilter || undefined,
+        email,
+        username
       );
       setActivities(data.activities);
       setTotalActivities(data.total);
@@ -149,7 +199,7 @@ export default function AdminDashboard() {
   const loadUsers = async () => {
     try {
       const data = await apiService.getAdminUsers(1, 50, userSearch || undefined);
-      setUsers(data);
+      setAdminUsers(data);
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Failed to load users');
     }
@@ -170,6 +220,55 @@ export default function AdminDashboard() {
     }
   };
 
+  // Load template executions
+  const loadTemplateExecutions = async (page: number = 1) => {
+    try {
+      const { username, email } = extractUserInfo(templateUserFilter);
+      
+      const data: TemplateExecutionsResponse = await apiService.getTemplateExecutions(
+        page,
+        pageSize,
+        undefined, // template_id
+        templateNameFilter === 'all' ? undefined : templateNameFilter,
+        email,
+        username,
+        templateLanguageFilter === 'all' ? undefined : templateLanguageFilter,
+        templateStatusFilter === 'all' ? undefined : templateStatusFilter
+      );
+      setTemplateExecutions(data.executions);
+      setTemplateExecutionsTotal(data.total);
+      setTemplateExecutionsPage(data.page);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'Failed to load template executions');
+    }
+  };
+
+  // Helper function to extract user info from combined filter
+  const extractUserInfo = (userFilter: string) => {
+    if (userFilter === 'all') return { username: undefined, email: undefined };
+    
+    const selectedUser = combinedUsers.find(user => user.display === userFilter);
+    return {
+      username: selectedUser?.username,
+      email: selectedUser?.email
+    };
+  };
+
+  // Load dropdown options
+  const loadDropdownOptions = async () => {
+    try {
+      const [templatesData, usersData] = await Promise.all([
+        apiService.getTemplatesList(),
+        apiService.getUsersList()
+      ]);
+      
+      setTemplates(templatesData.templates || []);
+      setCombinedUsers(usersData.users || []);
+    } catch (err: any) {
+      console.error('Failed to load dropdown options:', err);
+    }
+  };
+
 
 
   // Load all data
@@ -180,7 +279,9 @@ export default function AdminDashboard() {
       await Promise.all([
         loadStats(),
         loadActivities(),
-        loadUsers()
+        loadUsers(),
+        loadTemplateExecutions(),
+        loadDropdownOptions()
       ]);
     } catch (err: any) {
       console.error('Error loading admin data:', err);
@@ -192,22 +293,35 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
       loadAllData();
+      loadAdminSettings();
+      initializeWebSocket();
     } else {
       setLoading(false);
     }
+    
+    // Cleanup websocket on unmount
+    return () => {
+      disconnectWebSocket();
+    };
   }, [isAuthenticated, isAdmin]);
 
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
       loadActivities(1);
     }
-  }, [activityType, statusFilter, isAuthenticated, isAdmin]);
+  }, [activityType, statusFilter, activityUserFilter, isAuthenticated, isAdmin]);
 
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
       loadUsers();
     }
   }, [userSearch, isAuthenticated, isAdmin]);
+
+  useEffect(() => {
+    if (isAuthenticated && isAdmin && activeTab === 'template-executions') {
+      loadTemplateExecutions(1);
+    }
+  }, [templateNameFilter, templateUserFilter, templateLanguageFilter, templateStatusFilter, isAuthenticated, isAdmin, activeTab]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
@@ -256,6 +370,18 @@ export default function AdminDashboard() {
               <Button onClick={() => navigate('/login')}>Sign In</Button>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading while user data is being loaded
+  if (!user) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-foreground">Loading user information...</p>
         </div>
       </div>
     );
@@ -338,7 +464,7 @@ export default function AdminDashboard() {
             <p className="text-muted-foreground text-sm lg:text-base">Monitor system activity and manage users</p>
           </div>
           <Button onClick={loadAllData} variant="outline" className="shrink-0">
-            <Activity className="w-4 h-4 mr-2" />
+            <RefreshCw className="w-4 h-4 mr-2" />
             <span className="hidden sm:inline">Refresh</span>
           </Button>
         </div>
@@ -355,6 +481,7 @@ export default function AdminDashboard() {
                     {activeTab === 'overview' && 'System Overview'}
                     {activeTab === 'templates' && 'Templates'}
                     {activeTab === 'assignments' && 'Assignments'}
+                    {activeTab === 'template-executions' && 'Template Executions'}
                     {activeTab === 'users' && 'Users'}
                   </span>
                   <ChevronDown className="w-4 h-4" />
@@ -362,7 +489,7 @@ export default function AdminDashboard() {
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-full">
                 <DropdownMenuItem onClick={() => setActiveTab('overview')}>
-                  <Activity className="w-4 h-4 mr-2" />
+                  <BarChart3 className="w-4 h-4 mr-2" />
                   System Overview
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('templates')}>
@@ -372,6 +499,10 @@ export default function AdminDashboard() {
                 <DropdownMenuItem onClick={() => setActiveTab('assignments')}>
                   <Code className="w-4 h-4 mr-2" />
                   Assignment Management
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('template-executions')}>
+                  <Play className="w-4 h-4 mr-2" />
+                  Template Executions
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('users')}>
                   <Users className="w-4 h-4 mr-2" />
@@ -383,9 +514,9 @@ export default function AdminDashboard() {
 
           {/* Desktop Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-4">
+            <TabsList className="hidden md:grid w-full grid-cols-5">
               <TabsTrigger value="overview" className="text-sm">
-                <Activity className="w-4 h-4 mr-2" />
+                <BarChart3 className="w-4 h-4 mr-2" />
                 System Overview
               </TabsTrigger>
               <TabsTrigger value="templates" className="text-sm">
@@ -395,6 +526,10 @@ export default function AdminDashboard() {
               <TabsTrigger value="assignments" className="text-sm">
                 <Code className="w-4 h-4 mr-2" />
                 Assignments
+              </TabsTrigger>
+              <TabsTrigger value="template-executions" className="text-sm">
+                <Play className="w-4 h-4 mr-2" />
+                Template Executions
               </TabsTrigger>
               <TabsTrigger value="users" className="text-sm">
                 <Users className="w-4 h-4 mr-2" />
@@ -406,6 +541,64 @@ export default function AdminDashboard() {
             <div className="mt-6">
               {activeTab === 'overview' && (
                 <div className="space-y-6">
+
+        {/* Admin Controls Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span className="flex items-center">
+                <Shield className="w-5 h-5 mr-2" />
+                Admin Controls
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Copy-Paste Toggle */}
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="space-y-1">
+                  <div className="font-medium">Copy-Paste Functionality</div>
+                  <div className="text-sm text-muted-foreground">
+                    Control whether users can copy and paste code in the editor. Admins can always copy-paste.
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-muted-foreground">
+                    {adminSettings.copy_paste_enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <Switch
+                    checked={adminSettings.copy_paste_enabled}
+                    onCheckedChange={async (checked) => {
+                      const success = await updateAdminSettings({
+                        copy_paste_enabled: checked,
+                        notes: `Copy-paste ${checked ? 'enabled' : 'disabled'} by ${user?.username}`
+                      });
+                      if (!success && settingsError) {
+                        console.error('Failed to update copy-paste setting:', settingsError);
+                      }
+                    }}
+                    disabled={settingsLoading}
+                  />
+                </div>
+              </div>
+              
+              {/* Status Info */}
+              {adminSettings.updated_by && (
+                <div className="text-xs text-muted-foreground">
+                  Last updated by {adminSettings.updated_by}
+                  {adminSettings.updated_at && ` on ${new Date(adminSettings.updated_at).toLocaleString()}`}
+                </div>
+              )}
+              
+              {/* Error Display */}
+              {settingsError && (
+                <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">
+                  Error: {settingsError}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Stats Cards */}
         {stats && (
@@ -536,6 +729,20 @@ export default function AdminDashboard() {
                       <SelectItem value="connected">Connected</SelectItem>
                     </SelectContent>
                   </Select>
+                  
+                  <Select value={activityUserFilter} onValueChange={setActivityUserFilter}>
+                    <SelectTrigger className="w-full sm:w-[250px]">
+                      <SelectValue placeholder="User" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All users</SelectItem>
+                      {combinedUsers.map((user) => (
+                        <SelectItem key={user.display} value={user.display}>
+                          {user.display}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </CardHeader>
               <CardContent>
@@ -640,7 +847,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {users.map((user) => (
+                  {adminUsers.map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -776,6 +983,245 @@ export default function AdminDashboard() {
                   <TemplateManager />
                 </div>
               )}
+
+              {activeTab === 'template-executions' && (
+                <div className="space-y-6">
+                  {/* Template Executions Section */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center justify-between">
+                        <span className="flex items-center">
+                          <Play className="w-5 h-5 mr-2" />
+                          Template Executions
+                        </span>
+                        <Badge variant="outline">{templateExecutionsTotal} total</Badge>
+                      </CardTitle>
+                      
+                      {/* Filters */}
+                      <div className="flex flex-col sm:flex-row gap-2 mt-4">
+                        <Select value={templateNameFilter} onValueChange={setTemplateNameFilter}>
+                          <SelectTrigger className="w-full sm:w-[200px]">
+                            <SelectValue placeholder="Template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All templates</SelectItem>
+                            {templates.map((template) => (
+                              <SelectItem key={template.id} value={template.name}>
+                                {template.name} ({template.language})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        
+                        <Select value={templateUserFilter} onValueChange={setTemplateUserFilter}>
+                          <SelectTrigger className="w-full sm:w-[250px]">
+                            <SelectValue placeholder="User" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All users</SelectItem>
+                            {combinedUsers.map((user) => (
+                              <SelectItem key={user.display} value={user.display}>
+                                {user.display}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        
+                        <Select value={templateLanguageFilter} onValueChange={setTemplateLanguageFilter}>
+                          <SelectTrigger className="w-full sm:w-[150px]">
+                            <SelectValue placeholder="Language" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All languages</SelectItem>
+                            <SelectItem value="python">Python</SelectItem>
+                            <SelectItem value="javascript">JavaScript</SelectItem>
+                            <SelectItem value="java">Java</SelectItem>
+                            <SelectItem value="cpp">C++</SelectItem>
+                            <SelectItem value="go">Go</SelectItem>
+                            <SelectItem value="rust">Rust</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        
+                        <Select value={templateStatusFilter} onValueChange={setTemplateStatusFilter}>
+                          <SelectTrigger className="w-full sm:w-[120px]">
+                            <SelectValue placeholder="Status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All statuses</SelectItem>
+                            <SelectItem value="success">Success</SelectItem>
+                            <SelectItem value="error">Error</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {templateExecutions.map((execution) => (
+                          <div key={execution.id} className="border rounded-lg overflow-hidden">
+                            {/* Clickable Row */}
+                            <div 
+                              className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => setExpandedExecution(
+                                expandedExecution === execution.id ? null : execution.id
+                              )}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center space-x-2 mb-1">
+                                    <span className="font-medium">
+                                      {execution.username || 'Anonymous'}
+                                    </span>
+                                    <span className="text-sm text-muted-foreground">
+                                      ({execution.email})
+                                    </span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {execution.language}
+                                    </Badge>
+                                    {getStatusBadge(execution.status)}
+                                  </div>
+                                  {execution.template_name && (
+                                    <div className="text-sm text-muted-foreground mb-1">
+                                      Template: {execution.template_name}
+                                    </div>
+                                  )}
+                                  <div className="text-xs text-muted-foreground">
+                                    {formatDate(execution.created_at)}
+                                    {execution.execution_time && (
+                                      <> • {execution.execution_time.toFixed(3)}s</>
+                                    )}
+                                  </div>
+                                  {execution.error_message && (
+                                    <div className="text-xs text-destructive mt-1 bg-destructive/10 p-1 rounded">
+                                      {execution.error_message.slice(0, 100)}
+                                      {execution.error_message.length > 100 && '...'}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex space-x-1">
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedExecution(
+                                        expandedExecution === execution.id ? null : execution.id
+                                      );
+                                    }}
+                                    className="hover:bg-primary/10"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Expanded IDE View */}
+                            {expandedExecution === execution.id && (
+                              <div className="border-t bg-muted/20 p-4">
+                                <div className="space-y-4">
+                                  {/* Execution Details Header */}
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                    <div>
+                                      <label className="font-medium text-muted-foreground">User</label>
+                                      <div>{execution.username} ({execution.email})</div>
+                                    </div>
+                                    <div>
+                                      <label className="font-medium text-muted-foreground">Language</label>
+                                      <div className="capitalize">{execution.language}</div>
+                                    </div>
+                                    <div>
+                                      <label className="font-medium text-muted-foreground">Template</label>
+                                      <div>{execution.template_name || 'None'}</div>
+                                    </div>
+                                    <div>
+                                      <label className="font-medium text-muted-foreground">Status</label>
+                                      <div>{getStatusBadge(execution.status)}</div>
+                                    </div>
+                                  </div>
+
+                                  {/* IDE-like Layout */}
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-96">
+                                    {/* Code Editor Panel */}
+                                    <div className="flex flex-col bg-background border rounded-lg shadow-sm">
+                                      <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                                        <h4 className="text-sm font-medium">Code</h4>
+                                      </div>
+                                      <div className="flex-1 overflow-hidden rounded-b-lg">
+                                        <CodeEditor
+                                          language={execution.language}
+                                          value={execution.code}
+                                          onChange={() => {}} // Read-only
+                                          readOnly={true}
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* Output Panel */}
+                                    <div className="flex flex-col bg-background border rounded-lg shadow-sm">
+                                      <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                                        <h4 className="text-sm font-medium">Output</h4>
+                                      </div>
+                                      <div className="flex-1 overflow-hidden rounded-b-lg">
+                                        <OutputConsole
+                                          output={execution.output || ''}
+                                          error={execution.error_message || ''}
+                                          isLoading={false}
+                                          executionTime={execution.execution_time || 0}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Input Data (if present) */}
+                                  {execution.input_data && (
+                                    <div className="bg-background border rounded-lg">
+                                      <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                                        <h4 className="text-sm font-medium">Input Data</h4>
+                                      </div>
+                                      <div className="p-4">
+                                        <pre className="text-sm bg-muted/50 p-3 rounded overflow-x-auto">
+                                          <code>{execution.input_data}</code>
+                                        </pre>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Pagination */}
+                      {Math.ceil(templateExecutionsTotal / pageSize) > 1 && (
+                        <div className="flex items-center justify-between pt-4 border-t">
+                          <div className="text-sm text-muted-foreground">
+                            Showing {((templateExecutionsPage - 1) * pageSize) + 1} to {Math.min(templateExecutionsPage * pageSize, templateExecutionsTotal)} of {templateExecutionsTotal} executions
+                          </div>
+                          <div className="flex space-x-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => loadTemplateExecutions(templateExecutionsPage - 1)}
+                              disabled={templateExecutionsPage <= 1}
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => loadTemplateExecutions(templateExecutionsPage + 1)}
+                              disabled={templateExecutionsPage >= Math.ceil(templateExecutionsTotal / pageSize)}
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
               
               {activeTab === 'users' && (
                 <div className="space-y-6">
@@ -798,7 +1244,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {users.map((user) => (
+                  {adminUsers.map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">

@@ -9,6 +9,7 @@ class CodeSubmission(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for anonymous submissions
+    template_id = Column(Integer, ForeignKey("templates.id"), nullable=True)  # Track which template was used
     
     # Code details
     title = Column(String(255), nullable=True)
@@ -34,6 +35,7 @@ class CodeSubmission(Base):
     
     # Relationships
     user = relationship("User", backref="code_submissions")
+    template = relationship("Template", backref="template_usages")
     
     def __repr__(self):
         return f"<CodeSubmission(id={self.id}, language='{self.language}', user_id={self.user_id})>"

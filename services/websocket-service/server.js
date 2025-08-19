@@ -98,6 +98,27 @@ app.post('/api/sessions/:sessionId/broadcast', (req, res) => {
   }
 });
 
+// API endpoint to broadcast admin settings changes to all connected clients
+app.post('/api/broadcast/admin-settings', (req, res) => {
+  const { event, data } = req.body;
+  
+  try {
+    // Broadcast to all connected sockets
+    io.emit(event, data);
+    
+    const connectedSockets = io.sockets.sockets.size;
+    console.log(`📢 Broadcasted ${event} to ${connectedSockets} connected clients`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Admin settings broadcasted successfully',
+      connectedClients: connectedSockets
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Utility function to make HTTP requests to backend
 async function makeBackendRequest(endpoint, method = 'GET', data = null) {
   try {

@@ -18,6 +18,7 @@ class CodeExecutionRequest(BaseModel):
     code: str
     language: str
     input_data: Optional[str] = ""
+    template_id: Optional[int] = None  # Track which template was used
 
 class CodeExecutionResponse(BaseModel):
     output: str
@@ -94,6 +95,7 @@ async def execute_code(
             from sqlalchemy.sql import func
             code_submission = CodeSubmission(
                 user_id=current_user.id,
+                template_id=request.template_id,
                 code=request.code,
                 language=request.language,
                 input_data=request.input_data,

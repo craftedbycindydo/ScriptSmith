@@ -9,6 +9,7 @@ export interface User {
   full_name?: string;
   is_active: boolean;
   is_verified: boolean;
+  is_admin: boolean;
   created_at: string;
 }
 

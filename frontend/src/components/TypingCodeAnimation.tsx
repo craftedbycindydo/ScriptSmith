@@ -13,46 +13,74 @@ export default function TypingCodeAnimation({ className = "" }: TypingCodeAnimat
   const [showCursor, setShowCursor] = useState(true);
 
   const codeSnippets = [
-    `function fibonacci(n) {
-  if (n <= 1) return n;
-  return fibonacci(n-1) + fibonacci(n-2);
+    `// Real-time collaborative code editor
+function initializeWebSocket() {
+  const ws = new WebSocket('ws://localhost:8007');
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'code_change') {
+      updateEditor(data.content);
+    }
+  };
+  return ws;
 }`,
-    `const quickSort = (arr) => {
-  if (arr.length <= 1) return arr;
-  const pivot = arr[0];
-  const left = arr.slice(1).filter(x => x < pivot);
-  const right = arr.slice(1).filter(x => x >= pivot);
-  return [...quickSort(left), pivot, ...quickSort(right)];
-};`,
-    `class TreeNode {
-  constructor(val) {
-    this.val = val;
-    this.left = null;
-    this.right = null;
-  }
+    `// Multi-language code execution service
+async function executeCode(code, language, input) {
+  const response = await fetch('/api/code/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, language, input })
+  });
+  const result = await response.json();
+  return result;
 }`,
-    `async function fetchUserData(userId) {
-  try {
-    const response = await fetch(\`/api/users/\${userId}\`);
-    const userData = await response.json();
-    return userData;
-  } catch (error) {
-    console.error('Error fetching user:', error);
-  }
-}`,
-    `const useDebounce = (value, delay) => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
+    `# Python algorithm implementation
+def merge_sort(arr):
+    if len(arr) <= 1:
+        return arr
     
-    return () => clearTimeout(handler);
-  }, [value, delay]);
+    mid = len(arr) // 2
+    left = merge_sort(arr[:mid])
+    right = merge_sort(arr[mid:])
+    
+    return merge(left, right)`,
+    `// Assignment template system
+class AssignmentTemplate {
+  constructor(name, language, starterCode) {
+    this.name = name;
+    this.language = language;
+    this.starterCode = starterCode;
+    this.submissions = [];
+  }
   
-  return debouncedValue;
-};`
+  addSubmission(userId, code) {
+    this.submissions.push({ userId, code, timestamp: Date.now() });
+  }
+}`,
+    `// Real-time syntax highlighting
+import { highlight, languages } from 'prismjs';
+
+function highlightCode(code, language) {
+  try {
+    return highlight(code, languages[language], language);
+  } catch (error) {
+    return code; // Fallback to plain text
+  }
+}`,
+    `/* C++ competitive programming solution */
+#include <iostream>
+#include <vector>
+#include <algorithm>
+
+int main() {
+    std::vector<int> nums = {3, 1, 4, 1, 5, 9, 2, 6};
+    std::sort(nums.begin(), nums.end());
+    
+    for (int num : nums) {
+        std::cout << num << " ";
+    }
+    return 0;
+}`
   ];
 
   useEffect(() => {
@@ -104,7 +132,7 @@ export default function TypingCodeAnimation({ className = "" }: TypingCodeAnimat
 
       <div className="relative z-20 flex items-center text-lg font-medium text-white p-6">
         <Code2 className="mr-2 h-6 w-6 text-blue-400" />
-        Script Smith
+        Scripting Smith
       </div>
       
       <div className="relative z-20 flex-1 p-6 pt-0 min-h-0 overflow-hidden">
@@ -120,7 +148,7 @@ export default function TypingCodeAnimation({ className = "" }: TypingCodeAnimat
             <pre className="text-gray-300 whitespace-pre-wrap">
               <code>
                 <span className="text-gray-500">1  </span>
-                <span className="text-blue-300">// Welcome to Script Smith</span>
+                <span className="text-blue-300">// Welcome to Scripting Smith</span>
                 {'\n'}
                 <span className="text-gray-500">2  </span>
                 <span className="text-gray-500">// Code anywhere, anytime</span>

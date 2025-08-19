@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import CodeEditor from './CodeEditor';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
@@ -12,12 +13,19 @@ import ResizablePanels from './ResizablePanels';
 
 import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
+import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
-import { Play, Save, Download, Share2, Users } from 'lucide-react';
+import { Play, Save, Download, Share2, Users, MoreHorizontal } from 'lucide-react';
 
 export default function IDE() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuthStore();
+  const {
+    settings: adminSettings,
+    loadSettings: loadAdminSettings,
+    initializeWebSocket,
+    disconnectWebSocket
+  } = useAdminSettingsStore();
   const {
     code,
     language,
@@ -29,26 +37,61 @@ export default function IDE() {
     setCode,
     setLanguage,
     loadLanguages,
-    executeCode
+    executeCode,
+    setSelectedTemplate
   } = useCodeStore();
 
-  const [showShare, setShowShare] = useState(false);
+  const [showShareForm, setShowShareForm] = useState(false);
   const [shareLink, setShareLink] = useState<string>('');
   const [creating, setCreating] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  
+  // Download form state
+  const [showDownloadForm, setShowDownloadForm] = useState(false);
+  const [downloadFilename, setDownloadFilename] = useState('code');
 
   // Template state
   const [templates, setTemplates] = useState<any[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  
+  // User template state
+  const [userTemplates, setUserTemplates] = useState<any[]>([]);
+  const [loadingUserTemplates, setLoadingUserTemplates] = useState(false);
+  
+  // Selected template tracking state
+  const [selectedAdminTemplate, setSelectedAdminTemplate] = useState<string>('');
+  const [selectedUserTemplate, setSelectedUserTemplate] = useState<string>('');
+  const [selectedAdminTemplateName, setSelectedAdminTemplateName] = useState<string>('');
+  const [selectedUserTemplateName, setSelectedUserTemplateName] = useState<string>('');
+  
+  // Save template inline form state
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // Load languages on component mount
+  // Load languages and admin settings on component mount
   useEffect(() => {
     loadLanguages();
+    loadAdminSettings();
+    initializeWebSocket();
+    
+    // Cleanup on unmount
+    return () => {
+      disconnectWebSocket();
+    };
   }, [loadLanguages]);
 
   // Load templates when language changes (for authenticated users only)
   useEffect(() => {
     if (isAuthenticated && language) {
       loadTemplatesForLanguage(language);
+      loadUserTemplatesForLanguage(language);
+      // Clear selected templates when language changes
+      setSelectedAdminTemplate('');
+      setSelectedAdminTemplateName('');
+      setSelectedUserTemplate('');
+      setSelectedUserTemplateName('');
     }
   }, [language, isAuthenticated]);
 
@@ -66,17 +109,72 @@ export default function IDE() {
     }
   };
 
+  // Load user templates for current language
+  const loadUserTemplatesForLanguage = async (lang: string) => {
+    setLoadingUserTemplates(true);
+    try {
+      const userTemplateList = await apiService.getUserTemplates(lang);
+      setUserTemplates(Array.isArray(userTemplateList) ? userTemplateList : []);
+    } catch (error) {
+      console.error('Failed to load user templates:', error);
+      setUserTemplates([]);
+    } finally {
+      setLoadingUserTemplates(false);
+    }
+  };
+
   // Handle template selection
   const handleTemplateSelect = async (templateId: string) => {
-    if (templateId === '' || !templateId || templateId === 'no-templates') return;
+    if (templateId === 'clear-admin' || templateId === '' || !templateId || templateId === 'no-templates') {
+      setSelectedTemplate(null);
+      setSelectedAdminTemplate('');
+      setSelectedAdminTemplateName('');
+      // Only clear user template if this is a clear action, not if there are no templates
+      if (templateId === 'clear-admin') {
+        setSelectedUserTemplate('');
+        setSelectedUserTemplateName('');
+      }
+      return;
+    }
     
     try {
       const template = await apiService.getTemplate(parseInt(templateId));
       if (template && template.code_content) {
         setCode(template.code_content);
+        setSelectedTemplate(parseInt(templateId));
+        setSelectedAdminTemplate(templateId);
+        setSelectedAdminTemplateName(template.name || 'Untitled Template');
+        // Clear user template selection
+        setSelectedUserTemplate('');
+        setSelectedUserTemplateName('');
       }
     } catch (error) {
       console.error('Failed to load template:', error);
+      setSelectedTemplate(null);
+      // Could show a toast notification here if desired
+    }
+  };
+
+  // Handle user template selection
+  const handleUserTemplateSelect = async (templateId: string) => {
+    if (templateId === 'clear-user' || templateId === '' || !templateId || templateId === 'no-user-templates') {
+      setSelectedUserTemplate('');
+      setSelectedUserTemplateName('');
+      return;
+    }
+    
+    try {
+      const template = await apiService.getUserTemplate(parseInt(templateId));
+      if (template && template.code_content) {
+        setCode(template.code_content);
+        setSelectedUserTemplate(templateId);
+        setSelectedUserTemplateName(template.name || 'Untitled Template');
+        // Clear admin template selection
+        setSelectedAdminTemplate('');
+        setSelectedAdminTemplateName('');
+      }
+    } catch (error) {
+      console.error('Failed to load user template:', error);
       // Could show a toast notification here if desired
     }
   };
@@ -86,24 +184,108 @@ export default function IDE() {
   };
 
   const handleSave = () => {
-    // TODO: Implement save functionality
-    console.log('Save functionality to be implemented');
+    if (!isAuthenticated) {
+      console.log('User must be authenticated to save templates');
+      return;
+    }
+    // Close other forms if open, then toggle save form
+    if (showShareForm) {
+      setShowShareForm(false);
+      setShareLink('');
+      setLinkCopied(false);
+    }
+    if (showDownloadForm) {
+      setShowDownloadForm(false);
+      setDownloadFilename('code');
+    }
+    setShowSaveForm(!showSaveForm);
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!templateName.trim() || !code.trim()) {
+      console.error('Template name and code are required');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await apiService.createUserTemplate({
+        name: templateName.trim(),
+        description: templateDescription.trim() || undefined,
+        language: language,
+        code_content: code
+      });
+      
+      // Reload user templates
+      await loadUserTemplatesForLanguage(language);
+      
+      // Close form and reset
+      setShowSaveForm(false);
+      setTemplateName('');
+      setTemplateDescription('');
+      
+      console.log('Template saved successfully');
+    } catch (error: any) {
+      console.error('Failed to save template:', error.response?.data?.detail || error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelSave = () => {
+    setShowSaveForm(false);
+    setTemplateName('');
+    setTemplateDescription('');
   };
 
   const handleDownload = () => {
+    // Close other forms if open
+    if (showSaveForm) {
+      setShowSaveForm(false);
+    }
+    if (showShareForm) {
+      setShowShareForm(false);
+      setShareLink('');
+      setLinkCopied(false);
+    }
+    
+    // Reset filename to default and show form
+    setDownloadFilename('code');
+    setShowDownloadForm(!showDownloadForm);
+  };
+
+  const handleDownloadFile = () => {
+    const filename = downloadFilename.trim() || 'code';
     const blob = new Blob([code], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `code.${getFileExtension(language)}`;
+    a.download = `${filename}.${getFileExtension(language)}`;
     a.click();
     URL.revokeObjectURL(url);
+    
+    // Close form after download
+    setShowDownloadForm(false);
+  };
+
+  const handleCancelDownload = () => {
+    setShowDownloadForm(false);
+    setDownloadFilename('code');
   };
 
   const handleCreateShare = async () => {
     if (!isAuthenticated) {
       navigate('/login');
       return;
+    }
+
+    // Close other forms if open
+    if (showSaveForm) {
+      setShowSaveForm(false);
+    }
+    if (showDownloadForm) {
+      setShowDownloadForm(false);
+      setDownloadFilename('code');
     }
 
     setCreating(true);
@@ -127,7 +309,7 @@ export default function IDE() {
 
       const url = `${window.location.origin}/collab/${session.share_id}`;
       setShareLink(url);
-      setShowShare(true);
+      setShowShareForm(true);
     } catch (error) {
       console.error('Failed to create collaborative session:', error);
     } finally {
@@ -137,6 +319,14 @@ export default function IDE() {
 
   const handleCopyShareLink = () => {
     navigator.clipboard.writeText(shareLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  const handleCancelShare = () => {
+    setShowShareForm(false);
+    setShareLink('');
+    setLinkCopied(false);
   };
 
 
@@ -154,16 +344,46 @@ export default function IDE() {
     return extensions[lang] || 'txt';
   };
 
+  // Check if the current user is admin (can always copy-paste)
+  const isAdmin = async () => {
+    if (!isAuthenticated) return false;
+    try {
+      await apiService.getAdminStats(); // This will fail if user is not admin
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Check if copy-paste should be disabled for this user
+  const [userIsAdmin, setUserIsAdmin] = useState(false);
+  
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      const adminStatus = await isAdmin();
+      setUserIsAdmin(adminStatus);
+    };
+    
+    if (isAuthenticated) {
+      checkAdminStatus();
+    }
+  }, [isAuthenticated]);
+
+  // Determine if copy-paste should be disabled
+  const copyPasteDisabled = !adminSettings.copy_paste_enabled && !userIsAdmin;
+
+
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Toolbar */}
       <div className="border-b bg-card flex-shrink-0">
-        <div className="px-4 py-2">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-4">
+        <div className="px-4 py-3 md:px-6 lg:px-8">
+          <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between space-y-3 xl:space-y-0 xl:space-x-6">
             {/* Language and Template selectors */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3 w-full sm:w-auto">
+            <div className="flex flex-col lg:flex-row items-start lg:items-center space-y-2 lg:space-y-0 lg:space-x-4 w-full lg:w-auto">
               {/* Language selector */}
-              <div className="w-full sm:w-auto">
+              <div className="w-full sm:w-auto sm:min-w-[180px] lg:min-w-[200px]">
                 <LanguageSelector
                   selectedLanguage={language}
                   languages={languages}
@@ -173,36 +393,82 @@ export default function IDE() {
               
               {/* Template selector - only for authenticated users */}
               {isAuthenticated && (
-                <div className="w-full sm:w-auto sm:min-w-[200px]">
-                  <Select onValueChange={handleTemplateSelect} value="">
-                    <SelectTrigger size="sm" disabled={loadingTemplates}>
-                      <SelectValue placeholder={loadingTemplates ? "Loading..." : "Load Template"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {!templates || templates.length === 0 ? (
-                        <SelectItem value="no-templates" disabled>
-                          No templates available
-                        </SelectItem>
-                      ) : (
-                        templates.map((template) => template && template.id ? (
-                          <SelectItem key={template.id} value={template.id.toString()}>
-                            {template.name || 'Untitled Template'}
-                            {template.description && (
-                              <span className="text-muted-foreground text-xs ml-1">
-                                - {template.description}
-                              </span>
-                            )}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full lg:w-auto">
+                  <div className="w-full sm:w-auto sm:flex-1 sm:max-w-[200px] lg:max-w-[220px]">
+                    <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
+                      <SelectTrigger 
+                        size="sm" 
+                        disabled={loadingTemplates}
+                        className="w-full"
+                      >
+                        <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Admin Templates"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedAdminTemplateName && (
+                          <SelectItem value="clear-admin">
+                            <span className="text-muted-foreground">Clear selection</span>
                           </SelectItem>
-                        ) : null)
-                      )}
-                    </SelectContent>
-                  </Select>
+                        )}
+                        {!templates || templates.length === 0 ? (
+                          <SelectItem value="no-templates" disabled>
+                            No admin templates available
+                          </SelectItem>
+                        ) : (
+                          templates.map((template) => template && template.id ? (
+                            <SelectItem key={template.id} value={template.id.toString()}>
+                              {template.name || 'Untitled Template'}
+                              {template.description && (
+                                <span className="text-muted-foreground text-xs ml-1">
+                                  - {template.description}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ) : null)
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="w-full sm:w-auto sm:flex-1 sm:max-w-[200px] lg:max-w-[220px]">
+                    <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
+                      <SelectTrigger 
+                        size="sm" 
+                        disabled={loadingUserTemplates}
+                        className="w-full"
+                      >
+                        <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedUserTemplateName && (
+                          <SelectItem value="clear-user">
+                            <span className="text-muted-foreground">Clear selection</span>
+                          </SelectItem>
+                        )}
+                        {!userTemplates || userTemplates.length === 0 ? (
+                          <SelectItem value="no-user-templates" disabled>
+                            No personal templates saved
+                          </SelectItem>
+                        ) : (
+                          userTemplates.map((template) => template && template.id ? (
+                            <SelectItem key={template.id} value={template.id.toString()}>
+                              {template.name || 'Untitled Template'}
+                              {template.description && (
+                                <span className="text-muted-foreground text-xs ml-1">
+                                  - {template.description}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ) : null)
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               )}
             </div>
             
             {/* Action buttons */}
-            <div className="flex items-center space-x-2 flex-wrap gap-1 sm:gap-0">
+            <div className="flex items-center space-x-2 lg:space-x-3 xl:space-x-4 flex-wrap gap-1 sm:gap-0 lg:gap-0">
               <Button
                 onClick={handleRunCode}
                 disabled={isLoading}
@@ -229,24 +495,239 @@ export default function IDE() {
                 </Button>
               )}
 
-              <Button variant="outline" onClick={handleSave} size="sm" className="hidden md:flex">
-                <Save className="w-4 h-4 mr-2" />
-                Save
-              </Button>
+              {/* Save button - only for authenticated users */}
+              {isAuthenticated && (
+                <Button variant="outline" onClick={handleSave} size="sm" className="hidden md:flex">
+                  <Save className="w-4 h-4 mr-2" />
+                  Save
+                </Button>
+              )}
               <Button variant="outline" onClick={handleDownload} size="sm" className="hidden lg:flex">
                 <Download className="w-4 h-4 mr-2" />
                 Download
               </Button>
               
-              {/* Mobile dropdown for extra actions */}
-              <div className="block md:hidden">
-                <Button variant="outline" size="sm" className="px-2">
-                  ⋯
-                </Button>
-              </div>
+                             {/* Mobile dropdown for extra actions */}
+               <div className="block md:hidden">
+                 <DropdownMenu>
+                   <DropdownMenuTrigger asChild>
+                     <Button variant="outline" size="sm" className="px-2">
+                       <MoreHorizontal className="w-4 h-4" />
+                     </Button>
+                   </DropdownMenuTrigger>
+                   <DropdownMenuContent align="end">
+                     {isAuthenticated && (
+                       <DropdownMenuItem onClick={handleSave}>
+                         <Save className="w-4 h-4 mr-2" />
+                         Save Template
+                       </DropdownMenuItem>
+                     )}
+                     <DropdownMenuItem onClick={handleDownload}>
+                       <Download className="w-4 h-4 mr-2" />
+                       Download Code
+                     </DropdownMenuItem>
+                   </DropdownMenuContent>
+                 </DropdownMenu>
+               </div>
             </div>
           </div>
         </div>
+        
+        {/* Save Template Form - Collapsible section between toolbar and content */}
+        {showSaveForm && (
+          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
+            <div className="px-4 py-3 md:px-6 lg:px-8">
+              <div className="relative">
+                {/* Chat bubble arrow pointing up - positioned within the section to avoid overlap */}
+                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
+                
+                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
+                  <div className="px-4 py-4 md:px-6 lg:px-8">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6">
+                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
+                        <Save className="w-4 h-4" />
+                        Save as Template
+                      </div>
+                      
+                      <div className="flex flex-col sm:flex-row lg:flex-row items-start sm:items-center lg:items-center gap-3 sm:gap-4 lg:gap-6 w-full lg:flex-1">
+                        <div className="w-full sm:flex-1 lg:flex-1 max-w-xs lg:max-w-sm">
+                          <Input
+                            type="text"
+                            placeholder="Template name"
+                            value={templateName}
+                            onChange={(e) => setTemplateName(e.target.value)}
+                            className="h-9 text-sm w-full"
+                            autoFocus
+                          />
+                        </div>
+                        
+                        <div className="w-full sm:flex-1 lg:flex-1 max-w-xs lg:max-w-md">
+                          <Input
+                            type="text"
+                            placeholder="Description (optional)"
+                            value={templateDescription}
+                            onChange={(e) => setTemplateDescription(e.target.value)}
+                            className="h-9 text-sm w-full"
+                          />
+                        </div>
+                        
+                        <div className="flex items-center justify-center text-xs text-muted-foreground px-3 py-2 bg-muted/50 rounded-md min-w-[80px] lg:min-w-[100px]">
+                          <span className="font-medium">{language}</span>
+                        </div>
+                        
+                        <div className="flex items-center gap-3 w-full sm:w-auto lg:w-auto">
+                          <Button 
+                            onClick={handleSaveTemplate} 
+                            disabled={saving || !templateName.trim()}
+                            size="sm"
+                            className="h-9 px-6 flex-1 sm:flex-none lg:flex-none"
+                          >
+                            {saving ? 'Saving...' : 'Save'}
+                          </Button>
+                          
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={handleCancelSave}
+                            className="h-9 w-9 p-0"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Share Form - Collapsible section for sharing collaborative sessions */}
+        {showShareForm && (
+          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
+            <div className="px-4 py-3 md:px-6 lg:px-8">
+              <div className="relative">
+                {/* Chat bubble arrow pointing up */}
+                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
+                
+                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
+                  <div className="px-4 py-4 md:px-6 lg:px-8">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6">
+                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
+                        <Share2 className="w-4 h-4" />
+                        Share Collaborative Session
+                      </div>
+                      
+                      <div className="flex flex-col sm:flex-row lg:flex-row items-start sm:items-center lg:items-center gap-3 sm:gap-4 lg:gap-6 w-full lg:flex-1">
+                        <div className="w-full sm:flex-1 lg:flex-1">
+                          <Input
+                            type="text"
+                            value={shareLink}
+                            readOnly
+                            className="h-9 text-sm w-full font-mono text-xs"
+                            placeholder="Share link will appear here..."
+                          />
+                        </div>
+                        
+                        <div className="flex items-center gap-3 w-full sm:w-auto lg:w-auto">
+                          <Button 
+                            onClick={handleCopyShareLink} 
+                            disabled={!shareLink}
+                            size="sm"
+                            className="h-9 px-6 flex-1 sm:flex-none lg:flex-none"
+                          >
+                            {linkCopied ? 'Copied!' : 'Copy Link'}
+                          </Button>
+                          
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={handleCancelShare}
+                            className="h-9 w-9 p-0"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4 pt-4 border-t border-border/30">
+                      <div className="text-xs text-muted-foreground">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <Users className="w-4 h-4" />
+                          <span className="font-medium">Collaboration Features:</span>
+                        </div>
+                        <ul className="list-disc list-inside space-y-1 ml-6 text-xs">
+                          <li>Real-time collaborative editing</li>
+                          <li>Live cursor tracking with usernames</li>
+                          <li>Shared code execution</li>
+                          <li>Up to 10 collaborators</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Download Form - Collapsible section for custom filename download */}
+        {showDownloadForm && (
+          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
+            <div className="px-4 py-3 md:px-6 lg:px-8">
+              <div className="relative">
+                {/* Chat bubble arrow pointing up */}
+                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
+                
+                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
+                  <div className="px-4 py-4 md:px-6 lg:px-8">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
+                        <Download className="w-4 h-4" />
+                        Download Code
+                      </div>
+                      
+                      <div className="flex items-center gap-2 flex-1">
+                        <Input
+                          type="text"
+                          placeholder="Enter filename"
+                          value={downloadFilename}
+                          onChange={(e) => setDownloadFilename(e.target.value)}
+                          className="h-9 text-sm flex-1"
+                          autoFocus
+                        />
+                        
+                        <div className="flex items-center justify-center text-xs text-muted-foreground px-2 py-1 bg-muted/50 rounded text-nowrap">
+                          <span className="font-medium">.{getFileExtension(language)}</span>
+                        </div>
+                        
+                        <Button 
+                          onClick={handleDownloadFile} 
+                          disabled={!downloadFilename.trim()}
+                          size="sm"
+                          className="h-9 px-4"
+                        >
+                          Download
+                        </Button>
+                        
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={handleCancelDownload}
+                          className="h-9 w-9 p-0"
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Content - Full Width Resizable Panels */}
@@ -258,13 +739,21 @@ export default function IDE() {
           leftPanel={
             <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:mr-2">
               <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                <h3 className="text-sm font-medium">Code Editor</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">Code Editor</h3>
+                  {copyPasteDisabled && (
+                    <div className="text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded">
+                      Copy-paste disabled
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex-1 overflow-hidden rounded-b-lg">
                 <CodeEditor
                   language={language}
                   value={code}
                   onChange={(value) => setCode(value || '')}
+                  copyPasteDisabled={copyPasteDisabled}
                 />
               </div>
             </div>
@@ -287,42 +776,9 @@ export default function IDE() {
         />
       </div>
 
-      {/* Share Dialog */}
-      <Dialog open={showShare} onOpenChange={setShowShare}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Share Collaborative Code Session</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Share this link with others to collaborate in real-time:
-            </p>
-            <div className="flex items-center space-x-2">
-              <Input
-                type="text"
-                value={shareLink}
-                readOnly
-                className="flex-1"
-              />
-              <Button onClick={handleCopyShareLink} size="sm">
-                Copy
-              </Button>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              <div className="flex items-center space-x-2 mb-2">
-                <Users className="w-4 h-4" />
-                <span>Features:</span>
-              </div>
-              <ul className="list-disc list-inside space-y-1 ml-6">
-                <li>Real-time collaborative editing</li>
-                <li>Live cursor tracking with usernames</li>
-                <li>Shared code execution</li>
-                <li>Up to 10 collaborators</li>
-              </ul>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+
+
+
     </div>
   );
 }

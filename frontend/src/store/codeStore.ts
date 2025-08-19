@@ -9,6 +9,7 @@ interface CodeState {
   isLoading: boolean;
   languages: Language[];
   executionTime: number;
+  selectedTemplateId: number | null;
   setCode: (code: string) => void;
   setLanguage: (language: string) => void;
   setOutput: (output: string) => void;
@@ -18,6 +19,7 @@ interface CodeState {
   clearOutput: () => void;
   loadLanguages: () => Promise<void>;
   executeCode: () => Promise<void>;
+  setSelectedTemplate: (templateId: number | null) => void;
 }
 
 const defaultCode: Record<string, string> = {
@@ -74,6 +76,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   isLoading: false,
   languages: [],
   executionTime: 0,
+  selectedTemplateId: null,
   setCode: (code) => set({ code }),
   setLanguage: async (language) => {
     try {
@@ -84,7 +87,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         code: template.template || defaultCode[language] || defaultCode.python,
         output: '',
         error: '',
-        executionTime: 0
+        executionTime: 0,
+        selectedTemplateId: null
       });
     } catch (error) {
       // Fallback to local template
@@ -93,7 +97,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         code: defaultCode[language] || defaultCode.python,
         output: '',
         error: '',
-        executionTime: 0
+        executionTime: 0,
+        selectedTemplateId: null
       });
     }
   },
@@ -125,7 +130,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   },
 
   executeCode: async () => {
-    const { code, language } = get();
+    const { code, language, selectedTemplateId } = get();
     
     set({ isLoading: true, output: '', error: '', executionTime: 0 });
     
@@ -133,7 +138,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
       const response = await apiService.executeCode({
         code,
         language,
-        input_data: ''
+        input_data: '',
+        template_id: selectedTemplateId
       });
       
       set({ 
@@ -150,5 +156,9 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         isLoading: false
       });
     }
+  },
+
+  setSelectedTemplate: (templateId: number | null) => {
+    set({ selectedTemplateId: templateId });
   },
 }));

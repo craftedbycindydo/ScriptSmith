@@ -40,6 +40,7 @@ export interface CodeExecutionRequest {
   code: string;
   language: string;
   input_data?: string;
+  template_id?: number;
 }
 
 export interface CodeExecutionResponse {
@@ -88,6 +89,7 @@ export interface User {
   full_name?: string;
   is_active: boolean;
   is_verified: boolean;
+  is_admin: boolean;
   created_at: string;
 }
 
@@ -304,7 +306,14 @@ export const apiService = {
     return response.data;
   },
 
-  async getAdminActivities(page: number = 1, pageSize: number = 20, activityType?: string, status?: string): Promise<any> {
+  async getAdminActivities(
+    page: number = 1, 
+    pageSize: number = 20, 
+    activityType?: string, 
+    status?: string,
+    userEmail?: string,
+    userName?: string
+  ): Promise<any> {
     const params = new URLSearchParams({
       page: page.toString(),
       page_size: pageSize.toString()
@@ -312,6 +321,8 @@ export const apiService = {
     
     if (activityType) params.append('activity_type', activityType);
     if (status) params.append('status', status);
+    if (userEmail) params.append('user_email', userEmail);
+    if (userName) params.append('user_name', userName);
     
     const response = await api.get(`/admin/activities?${params}`);
     return response.data;
@@ -442,6 +453,100 @@ export const apiService = {
 
   async deleteAssignment(assignmentId: number): Promise<void> {
     await api.delete(`/assignments/${assignmentId}`);
+  },
+
+  // Template execution endpoints
+  async getTemplateExecutions(
+    page: number = 1, 
+    pageSize: number = 50, 
+    templateId?: number,
+    templateName?: string,
+    userEmail?: string,
+    userName?: string,
+    language?: string,
+    status?: string,
+    dateFrom?: string,
+    dateTo?: string
+  ): Promise<any> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      page_size: pageSize.toString(),
+    });
+    
+    if (templateId) params.append('template_id', templateId.toString());
+    if (templateName) params.append('template_name', templateName);
+    if (userEmail) params.append('user_email', userEmail);
+    if (userName) params.append('user_name', userName);
+    if (language) params.append('language', language);
+    if (status) params.append('status', status);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+
+    const response = await api.get(`/admin/template-executions?${params.toString()}`);
+    return response.data;
+  },
+
+  // Get templates for dropdown filter
+  async getTemplatesList(): Promise<any> {
+    const response = await api.get('/admin/templates-list');
+    return response.data;
+  },
+
+  // Get users for dropdown filters
+  async getUsersList(): Promise<any> {
+    const response = await api.get('/admin/users-list');
+    return response.data;
+  },
+
+  // Admin Settings Management
+  async getAdminSettings(): Promise<any> {
+    const response = await api.get('/admin/settings');
+    return response.data;
+  },
+
+  async updateAdminSettings(settings: any): Promise<any> {
+    const response = await api.put('/admin/settings', settings);
+    return response.data;
+  },
+
+  async getPublicAdminSettings(): Promise<any> {
+    const response = await api.get('/admin/settings/public');
+    return response.data;
+  },
+
+  // User Templates (Personal Templates)
+  async createUserTemplate(templateData: {
+    name: string;
+    description?: string;
+    language: string;
+    code_content: string;
+  }): Promise<any> {
+    const response = await api.post('/user-templates', templateData);
+    return response.data;
+  },
+
+  async getUserTemplates(language?: string): Promise<any[]> {
+    const params = language ? { language } : {};
+    const response = await api.get('/user-templates', { params });
+    return response.data;
+  },
+
+  async getUserTemplate(templateId: number): Promise<any> {
+    const response = await api.get(`/user-templates/${templateId}`);
+    return response.data;
+  },
+
+  async updateUserTemplate(templateId: number, updateData: {
+    name?: string;
+    description?: string;
+    code_content?: string;
+  }): Promise<any> {
+    const response = await api.put(`/user-templates/${templateId}`, updateData);
+    return response.data;
+  },
+
+  async deleteUserTemplate(templateId: number): Promise<void> {
+    await api.delete(`/user-templates/${templateId}`);
   },
 };
 

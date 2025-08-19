@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from app.database.base import get_db
 from app.services.auth import AuthService
+from app.services.admin_service import AdminService
 from app.services.security import SecurityService
 from app.core.config import settings
 from app.utils.security_validators import validate_input_security, SecurityValidator
@@ -14,6 +15,9 @@ router = APIRouter()
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+# Initialize admin service
+admin_service = AdminService(settings)
 
 # Pydantic models for request/response
 class UserCreate(BaseModel):
@@ -29,6 +33,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     is_active: bool
     is_verified: bool
+    is_admin: bool
     created_at: str
     
     class Config:
@@ -182,6 +187,7 @@ async def register_user(
             full_name=db_user.full_name,
             is_active=db_user.is_active,
             is_verified=db_user.is_verified,
+            is_admin=admin_service.has_admin_access(db_user),
             created_at=db_user.created_at.isoformat()
         )
     except HTTPException:
@@ -337,6 +343,7 @@ async def get_current_user_info(current_user = Depends(get_current_active_user))
         full_name=current_user.full_name,
         is_active=current_user.is_active,
         is_verified=current_user.is_verified,
+        is_admin=admin_service.has_admin_access(current_user),
         created_at=current_user.created_at.isoformat()
     )
 

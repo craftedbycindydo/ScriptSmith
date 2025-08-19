@@ -59,6 +59,7 @@ export default function Navbar() {
 
   const handleLogout = () => {
     logout();
+    setIsAdmin(false); // Reset admin status immediately on logout
     navigate('/');
     setIsMobileMenuOpen(false);
   };
@@ -98,7 +99,7 @@ export default function Navbar() {
               className="hidden font-bold sm:inline-block cursor-pointer hover:text-primary transition-colors"
               onClick={() => handleNavigation('/')}
             >
-              Script Smith
+              Scripting Smith
             </span>
           </div>
 
