@@ -60,17 +60,81 @@ class PythonExecutor:
         
     def _create_safe_environment(self) -> Dict[str, str]:
         """Create a safe environment for code execution"""
-        # Start with minimal environment
-        safe_env = {
-            'PATH': '/usr/bin:/bin',
+        import os
+        
+        # Base environment - keep essential system variables but remove Python-specific ones
+        base_env = {}
+        
+        # List of environment variables that could cause Python conflicts
+        python_conflict_vars = {
+            'PYTHONHOME', 'VIRTUAL_ENV', 'CONDA_DEFAULT_ENV', 'CONDA_PREFIX',
+            'PIPENV_ACTIVE', 'POETRY_ACTIVE', 'PYENV_VERSION', 'PYTHONSTARTUP'
+        }
+        
+        # Copy safe environment variables from parent process
+        for key, value in os.environ.items():
+            if key not in python_conflict_vars:
+                base_env[key] = value
+        
+        # Override with safe execution environment
+        safe_overrides = {
             'PYTHONPATH': '',
-            'PYTHONHOME': sys.prefix,
             'HOME': '/tmp',
             'USER': 'coderunner',
             'SHELL': '/bin/sh',
             'TMPDIR': '/tmp',
         }
-        return safe_env
+        
+        # Update PATH to ensure we can find Python
+        # Railway containers: /usr/local/bin, Local dev: varies
+        current_path = base_env.get('PATH', '/usr/local/bin:/usr/bin:/bin')
+        safe_overrides['PATH'] = current_path
+        
+        base_env.update(safe_overrides)
+        return base_env
+    
+    def _find_safe_python_executable(self) -> str:
+        """Find the safest Python executable for the current environment"""
+        import os
+        import platform
+        import logging
+        
+        # Detect environment type
+        is_container = os.path.exists('/.dockerenv') or os.environ.get('RAILWAY_ENVIRONMENT')
+        is_macos = platform.system() == 'Darwin'
+        
+        # For debugging - can be removed in production
+        print(f"🔍 Environment detection: container={is_container}, macos={is_macos}")
+        
+        if is_container:
+            # Railway/Docker container - clean environment, use standard paths
+            container_paths = ['/usr/local/bin/python3', '/usr/bin/python3', '/usr/local/bin/python']
+            for path in container_paths:
+                if os.path.exists(path):
+                    print(f"✅ Using container Python: {path}")
+                    return path
+        else:
+            # Local development - try to avoid venv conflicts
+            if is_macos:
+                # macOS common system Python locations (avoid Homebrew in venv scenarios)
+                macos_paths = ['/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3']
+                for path in macos_paths:
+                    if os.path.exists(path):
+                        print(f"✅ Using macOS Python: {path}")
+                        return path
+            else:
+                # Linux local development
+                linux_paths = ['/usr/bin/python3', '/usr/local/bin/python3']
+                for path in linux_paths:
+                    if os.path.exists(path):
+                        print(f"✅ Using Linux Python: {path}")
+                        return path
+        
+        # Fallback: use which to find python3, then python, then current executable
+        python_executable = shutil.which('python3') or shutil.which('python') or sys.executable
+        print(f"⚠️  Using fallback Python: {python_executable}")
+        
+        return python_executable
     
     def _create_restricted_code(self, code: str) -> str:
         """Wrap user code with security restrictions"""
@@ -142,9 +206,12 @@ class PythonExecutor:
             # Create safe environment
             env = self._create_safe_environment()
             
+            # Find the best Python executable for the current environment
+            python_executable = self._find_safe_python_executable()
+            
             # Execute with subprocess - much cleaner approach
             process = await asyncio.create_subprocess_exec(
-                sys.executable, str(code_file),
+                python_executable, str(code_file),
                 stdin=asyncio.subprocess.PIPE if input_data else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
