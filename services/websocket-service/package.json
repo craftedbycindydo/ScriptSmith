@@ -8,13 +8,17 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "socket.io": "^4.7.4",
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
+    "@socket.io/redis-adapter": "^8.3.0",
     "axios": "^1.6.2",
-    "yjs": "^13.6.10",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "redis": "^5.8.1",
+    "socket.io": "^4.7.4",
+    "y-protocols": "^1.0.6",
     "y-websocket": "^1.5.0",
-    "y-protocols": "^1.0.6"
+    "yjs": "^13.6.10",
+    "zod": "^4.0.17"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
@@ -22,7 +26,12 @@
   "engines": {
     "node": "20.x"
   },
-  "keywords": ["websocket", "socket.io", "collaboration", "real-time"],
+  "keywords": [
+    "websocket",
+    "socket.io",
+    "collaboration",
+    "real-time"
+  ],
   "author": "Code Submission Platform",
   "license": "MIT"
 }

@@ -149,10 +149,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create database tables - Graceful failure for Railway
+# Create database tables and load routers - Combined startup event
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Starting application...")
+    
     # Try to initialize database connection and tables
     global engine
     try:
@@ -168,6 +169,9 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️  Database connection failed: {e}")
         print("💡 Continuing without database features for health check")
+    
+    # Load routers
+    await load_routers()
 
 # Simple health check (like shop project)
 @app.get("/health")
@@ -196,11 +200,8 @@ async def load_routers():
     except Exception as e:
         print(f"⚠️  Some routers failed to load: {e}")
         print("💡 Health check still available")
-
-# Load routers after startup
-@app.on_event("startup")
-async def load_full_app():
-    await load_routers()
+        import traceback
+        traceback.print_exc()
 
 # Root endpoint - Simplified for Railway
 @app.get("/")
