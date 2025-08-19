@@ -508,16 +508,16 @@ async def update_admin_settings(
     """Update admin settings (Admin only)"""
     try:
         # Get existing settings or create default
-        settings = AdminSettings.get_or_create_default(db)
+        admin_settings = AdminSettings.get_or_create_default(db)
         
         # Update settings
-        settings.copy_paste_enabled = settings_update.copy_paste_enabled
-        settings.updated_by = admin_user.username
+        admin_settings.copy_paste_enabled = settings_update.copy_paste_enabled
+        admin_settings.updated_by = admin_user.username
         if settings_update.notes is not None:
-            settings.notes = settings_update.notes
+            admin_settings.notes = settings_update.notes
             
         db.commit()
-        db.refresh(settings)
+        db.refresh(admin_settings)
         
         # Broadcast settings change to all connected clients via websocket service
         try:
@@ -525,7 +525,7 @@ async def update_admin_settings(
             broadcast_data = {
                 "event": "admin_settings_changed",
                 "data": {
-                    "copy_paste_enabled": settings.copy_paste_enabled,
+                    "copy_paste_enabled": admin_settings.copy_paste_enabled,
                     "updated_by": admin_user.username
                 }
             }
@@ -543,11 +543,11 @@ async def update_admin_settings(
         return {
             "message": "Admin settings updated successfully",
             "settings": {
-                "id": settings.id,
-                "copy_paste_enabled": settings.copy_paste_enabled,
-                "updated_by": settings.updated_by,
-                "updated_at": settings.updated_at,
-                "notes": settings.notes
+                "id": admin_settings.id,
+                "copy_paste_enabled": admin_settings.copy_paste_enabled,
+                "updated_by": admin_settings.updated_by,
+                "updated_at": admin_settings.updated_at,
+                "notes": admin_settings.notes
             }
         }
     except Exception as e:
