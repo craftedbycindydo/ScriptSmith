@@ -30,8 +30,13 @@ class ClassroomService:
     ) -> Classroom:
         """Create a new classroom"""
         
-        # Verify user has permission to create classrooms (admin only)
-        if not created_by.is_admin:
+        # Verify admin permissions using the same logic as AdminService
+        # This includes both role-based admin AND environment-based admin emails
+        from app.services.admin_service import AdminService
+        from app.core.config import settings
+        admin_service = AdminService(settings)
+        
+        if not admin_service.has_admin_access(created_by):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only administrators can create classrooms"
