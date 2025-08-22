@@ -1784,7 +1784,7 @@ export default function AdminDashboard() {
                                 <p className="mb-4">You haven't created any classrooms yet.</p>
                                 <p className="text-sm mb-4">Create your first classroom to start organizing students and managing content.</p>
                                 <Button 
-                                  onClick={() => setShowCreateClassroom(true)}
+                                  onClick={() => setIsCreatingClassroom(true)}
                                   size="sm" 
                                   variant="default"
                                   className="mr-2"
@@ -2828,7 +2828,7 @@ export default function AdminDashboard() {
                                 <p className="text-sm font-medium text-foreground mb-2">No classrooms yet</p>
                                 <p className="text-xs mb-3">Create your first classroom to get started</p>
                                 <Button 
-                                  onClick={() => setShowCreateClassroom(true)}
+                                  onClick={() => setIsCreatingClassroom(true)}
                                   size="sm" 
                                   variant="default"
                                   className="mb-2"
