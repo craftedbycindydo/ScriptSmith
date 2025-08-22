@@ -10,10 +10,12 @@
     "healthcheckPath": "/health",
     "healthcheckTimeout": 10,
     "resources": {
-      "memory": "2GB"
+      "memory": "4GB",
+      "vCPUs": 4
     },
     "numReplicas": 1,
     "sleepApplication": false,
-    "healthcheckEnabled": true
+    "healthcheckEnabled": true,
+    "region": "us-west1"
   }
 }

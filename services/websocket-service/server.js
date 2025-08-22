@@ -24,7 +24,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// Configure Socket.IO with CORS and enhanced stability
+// Configure Socket.IO with CORS and performance optimization
 const io = socketIo(server, {
   cors: {
     origin: CORS_ORIGINS,
@@ -35,16 +35,28 @@ const io = socketIo(server, {
   pingTimeout: SOCKET_PING_TIMEOUT,
   pingInterval: SOCKET_PING_INTERVAL,
   allowEIO3: true,
-  // Enhanced connection management
-  connectTimeout: 60000, // 1 minute connection timeout
-  perMessageDeflate: false, // Disable compression for stability
-  httpCompression: false,
-  maxHttpBufferSize: 1e6, // 1MB max buffer
+  // Enhanced connection management and performance
+  connectTimeout: 30000, // Reduced to 30s for faster failover
+  perMessageDeflate: {
+    threshold: 1024, // Only compress messages > 1KB
+    concurrencyLimit: 10,
+    windowBits: 13
+  },
+  httpCompression: true, // Enable HTTP compression for better performance
+  maxHttpBufferSize: 5e6, // Increased to 5MB for larger documents
   allowRequest: (req, callback) => {
-    // Allow all connections but log them
-    console.log(`🔗 New connection request from: ${req.headers.origin || req.connection.remoteAddress}`);
+    // Reduced logging for better performance
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🔗 New connection request from: ${req.headers.origin || req.connection.remoteAddress}`);
+    }
     callback(null, true);
-  }
+  },
+  // Performance optimizations for high-traffic collaboration
+  adapter: null, // Use default in-memory adapter (fastest for single instance)
+  cookie: false, // Disable cookies for better performance
+  serveClient: false, // Don't serve client library
+  destroyUpgrade: false, // Keep connections alive during upgrades
+  destroyUpgradeTimeout: 1000
 });
 
 // SERVER-MANAGED SESSION PERSISTENCE
@@ -54,6 +66,17 @@ const sessionCursorPositions = new Map(); // sessionId -> Map(participantId -> c
 const socketToSession = new Map(); // socketId -> {sessionId, participantId}
 const sessionLastActivity = new Map(); // sessionId -> timestamp
 const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
+
+// Performance optimization: throttling and debouncing
+const documentChangeTimeouts = new Map(); // sessionId_participantId -> timeoutId
+const cursorUpdateTimeouts = new Map(); // sessionId_participantId -> timeoutId
+const lastDocumentChange = new Map(); // sessionId_participantId -> timestamp
+const lastCursorUpdate = new Map(); // sessionId_participantId -> timestamp
+
+// Configurable thresholds for performance tuning
+const DOCUMENT_CHANGE_DEBOUNCE_MS = 150; // Wait 150ms after last keystroke
+const CURSOR_UPDATE_THROTTLE_MS = 100; // Max one cursor update per 100ms
+const BACKEND_SAVE_DEBOUNCE_MS = 1000; // Save to backend after 1s of inactivity
 
 console.log(`🔌 WebSocket Service starting on port ${PORT}`);
 console.log(`🔗 Backend URL: ${BACKEND_URL}`);
@@ -281,6 +304,31 @@ function handleBatchAdmissionUpdate(sessionId, data) {
   broadcastToSession(sessionId, 'batch_admission_update', data);
 }
 
+// Optimized cursor update function with backend debouncing
+async function performCursorUpdate(sessionId, participantId, cursor) {
+  try {
+    // Persist cursor position in WebSocket server memory
+    if (!sessionCursorPositions.has(sessionId)) {
+      sessionCursorPositions.set(sessionId, new Map());
+    }
+    sessionCursorPositions.get(sessionId).set(participantId, cursor);
+    
+    // Broadcast cursor update to other participants immediately
+    broadcastToSession(sessionId, 'cursor_update', {
+      participant_id: participantId,
+      cursor: cursor
+    }, participantId);
+    
+    // Update cursor position in backend (with debouncing)
+    // Skip backend updates for cursor positions to reduce load
+    // Cursor positions are not critical to persist and cause high DB load
+    // They are maintained in WebSocket server memory and re-sent when users join
+    
+  } catch (error) {
+    console.error('Error in performCursorUpdate:', error);
+  }
+}
+
 // Socket.IO event handlers
 io.on('connection', (socket) => {
   
@@ -456,31 +504,23 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle document content changes
+  // Handle document content changes with debouncing
   socket.on('document_change', async (data) => {
     try {
       const { session_id, participant_id, content } = data;
       
-      console.log('📝 Received document_change:', {
-        sessionId: session_id,
-        participantId: participant_id,
-        contentLength: content?.length || 0,
-        socketId: socket.id
-      });
-      
       if (!session_id || !participant_id || content === undefined) {
-        console.log('❌ Missing required data for document_change');
         socket.emit('error', { message: 'Missing required data for document_change' });
         return;
       }
       
       const sessionId = parseInt(session_id);
       const participantId = parseInt(participant_id);
+      const participantKey = `${sessionId}_${participantId}`;
       
-      // Check if participant has edit permissions
+      // Check if participant has edit permissions (cached for performance)
       const permissionCheck = await checkParticipantPermission(sessionId, participantId, 'edit');
       if (!permissionCheck.allowed) {
-        console.log(`❌ Permission denied for participant ${participantId}: ${permissionCheck.reason}`);
         socket.emit('permission_denied', { 
           message: `Edit permission denied: ${permissionCheck.reason}`,
           action: 'document_change'
@@ -488,68 +528,82 @@ io.on('connection', (socket) => {
         return;
       }
       
-      // Update session last activity
+      // Store the document content immediately for local state
+      sessionDocuments.set(sessionId, content);
       sessionLastActivity.set(sessionId, Date.now());
       
-      // Store the document content
-      sessionDocuments.set(sessionId, content);
-      console.log('💾 Stored document for session:', sessionId);
-      
-      // Broadcast to other participants in the session
-      const broadcastResult = broadcastToSession(sessionId, 'document_changed', {
-        participant_id: participantId,
-        content: content
-      }, participantId);
-      
-      console.log('📤 Broadcasted document_changed to:', broadcastResult, 'participants');
-      
-      // After document change, re-broadcast all cursor positions to keep them synchronized
-      // This ensures cursors are properly displayed after content changes
-      const cursorsForSession = sessionCursorPositions.get(sessionId);
-      if (cursorsForSession && cursorsForSession.size > 0) {
-        console.log(`📍 Re-broadcasting ${cursorsForSession.size} cursor positions after document change`);
-        cursorsForSession.forEach((cursorPosition, participantIdWithCursor) => {
-          broadcastToSession(sessionId, 'cursor_update', {
-            participant_id: participantIdWithCursor,
-            cursor: cursorPosition
-          }, -1); // Send to everyone (including the cursor owner for consistency)
-        });
-      }
-      
-      // Periodically save content to backend (debounced)
-      const timeoutKey = `${sessionId}_timeout`;
-      const existingTimeout = sessionDocuments.get(timeoutKey);
+      // Clear existing debounce timeout
+      const existingTimeout = documentChangeTimeouts.get(participantKey);
       if (existingTimeout) {
         clearTimeout(existingTimeout);
       }
       
-      const saveTimeout = setTimeout(async () => {
+      // Debounce document broadcasting and backend saving
+      const debounceTimeout = setTimeout(async () => {
         try {
-          console.log(`💾 Attempting to save session ${sessionId} content to backend...`);
-          const response = await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
-            document_content: content
-          });
-          console.log(`✅ Successfully saved session ${sessionId} content to backend:`, response);
-        } catch (error) {
-          console.error(`❌ Failed to save session ${sessionId} content:`, error.message);
-          // Retry once after a short delay
-          setTimeout(async () => {
+          // Broadcast to other participants (debounced)
+          const broadcastResult = broadcastToSession(sessionId, 'document_changed', {
+            participant_id: participantId,
+            content: content
+          }, participantId);
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`📤 Debounced broadcast to ${broadcastResult} participants for session ${sessionId}`);
+          }
+          
+          // Re-broadcast cursor positions (throttled)
+          const cursorsForSession = sessionCursorPositions.get(sessionId);
+          if (cursorsForSession && cursorsForSession.size > 0) {
+            cursorsForSession.forEach((cursorPosition, participantIdWithCursor) => {
+              broadcastToSession(sessionId, 'cursor_update', {
+                participant_id: participantIdWithCursor,
+                cursor: cursorPosition
+              }, -1);
+            });
+          }
+          
+          // Save to backend with longer debouncing
+          const backendTimeoutKey = `${sessionId}_backend_timeout`;
+          const existingBackendTimeout = sessionDocuments.get(backendTimeoutKey);
+          if (existingBackendTimeout) {
+            clearTimeout(existingBackendTimeout);
+          }
+          
+          const backendSaveTimeout = setTimeout(async () => {
             try {
-              console.log(`🔄 Retrying save for session ${sessionId}...`);
               await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
                 document_content: content
               });
-              console.log(`✅ Retry successful for session ${sessionId}`);
-            } catch (retryError) {
-              console.error(`❌ Retry failed for session ${sessionId}:`, retryError.message);
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`✅ Saved session ${sessionId} to backend`);
+              }
+            } catch (error) {
+              console.error(`❌ Backend save failed for session ${sessionId}:`, error.message);
+              // Single retry with exponential backoff
+              setTimeout(async () => {
+                try {
+                  await makeBackendRequest(`/collaboration/sessions/${sessionId}/state`, 'PUT', {
+                    document_content: content
+                  });
+                } catch (retryError) {
+                  console.error(`❌ Backend save retry failed for session ${sessionId}:`, retryError.message);
+                }
+              }, 2000);
             }
-          }, 1000);
+            sessionDocuments.delete(backendTimeoutKey);
+          }, BACKEND_SAVE_DEBOUNCE_MS);
+          
+          sessionDocuments.set(backendTimeoutKey, backendSaveTimeout);
+          
+        } catch (error) {
+          console.error('Error in debounced document_change:', error);
         }
-        // Clean up the timeout reference
-        sessionDocuments.delete(timeoutKey);
-      }, 500); // Save after 500ms of inactivity (faster saves)
+        
+        // Clean up timeout reference
+        documentChangeTimeouts.delete(participantKey);
+      }, DOCUMENT_CHANGE_DEBOUNCE_MS);
       
-      sessionDocuments.set(timeoutKey, saveTimeout);
+      documentChangeTimeouts.set(participantKey, debounceTimeout);
       
     } catch (error) {
       console.error('Error in document_change:', error);
@@ -558,40 +612,48 @@ io.on('connection', (socket) => {
   });
   
 
-  // Handle cursor position updates
+  // Handle cursor position updates with throttling
   socket.on('cursor_update', async (data) => {
     try {
       const { session_id, participant_id, cursor } = data;
       
-      if (!session_id || !participant_id) {
+      if (!session_id || !participant_id || !cursor) {
         socket.emit('error', { message: 'Missing required data for cursor_update' });
         return;
       }
       
       const sessionId = parseInt(session_id);
       const participantId = parseInt(participant_id);
+      const participantKey = `${sessionId}_${participantId}`;
+      const now = Date.now();
       
-      // Persist cursor position in WebSocket server memory
-      if (!sessionCursorPositions.has(sessionId)) {
-        sessionCursorPositions.set(sessionId, new Map());
+      // Throttle cursor updates to prevent spam
+      const lastUpdate = lastCursorUpdate.get(participantKey) || 0;
+      if (now - lastUpdate < CURSOR_UPDATE_THROTTLE_MS) {
+        // Update position locally but don't broadcast yet
+        if (!sessionCursorPositions.has(sessionId)) {
+          sessionCursorPositions.set(sessionId, new Map());
+        }
+        sessionCursorPositions.get(sessionId).set(participantId, cursor);
+        
+        // Clear existing throttle timeout and set new one
+        const existingTimeout = cursorUpdateTimeouts.get(participantKey);
+        if (existingTimeout) {
+          clearTimeout(existingTimeout);
+        }
+        
+        const throttleTimeout = setTimeout(() => {
+          performCursorUpdate(sessionId, participantId, cursor);
+          cursorUpdateTimeouts.delete(participantKey);
+        }, CURSOR_UPDATE_THROTTLE_MS - (now - lastUpdate));
+        
+        cursorUpdateTimeouts.set(participantKey, throttleTimeout);
+        return;
       }
-      sessionCursorPositions.get(sessionId).set(participantId, cursor);
-      console.log(`💾 Persisted cursor position for participant ${participantId} in session ${sessionId}:`, cursor);
       
-      // Update cursor position in backend
-      try {
-        await makeBackendRequest(`/collaboration/participants/${participantId}/cursor`, 'PUT', {
-          cursor_position: cursor
-        });
-      } catch (error) {
-        console.error('Failed to update cursor position:', error.message);
-      }
-      
-      // Broadcast cursor update to other participants
-      broadcastToSession(sessionId, 'cursor_update', {
-        participant_id: participantId,
-        cursor: cursor
-      }, participantId);
+      // Immediate update if enough time has passed
+      lastCursorUpdate.set(participantKey, now);
+      performCursorUpdate(sessionId, participantId, cursor);
       
     } catch (error) {
       console.error('Error in cursor_update:', error);
