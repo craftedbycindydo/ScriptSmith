@@ -44,6 +44,7 @@ import {
   RefreshCw,
   UserMinus,
   UserPlus,
+  Plus,
   Copy,
   Check,
   PanelLeft,
@@ -817,8 +818,8 @@ export default function AdminDashboard() {
     );
   }
 
-  // Check if user has no classrooms
-  if (user?.classroom_context && !user.classroom_context.has_classroom) {
+  // Check if user has no classrooms (but allow admins to access dashboard to create classrooms)
+  if (user?.classroom_context && !user.classroom_context.has_classroom && !isAdmin) {
     return (
       <div className="min-h-screen bg-background p-6">
         <div className="max-w-4xl mx-auto">
@@ -1777,8 +1778,27 @@ export default function AdminDashboard() {
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
                             <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                            <p>No classrooms found in user context</p>
-                            <p className="text-sm mb-4">This might be a data loading issue</p>
+                            {isAdmin ? (
+                              <>
+                                <p className="text-lg font-medium text-foreground mb-2">Welcome, Admin!</p>
+                                <p className="mb-4">You haven't created any classrooms yet.</p>
+                                <p className="text-sm mb-4">Create your first classroom to start organizing students and managing content.</p>
+                                <Button 
+                                  onClick={() => setIsCreatingClassroom(true)}
+                                  size="sm" 
+                                  variant="default"
+                                  className="mr-2"
+                                >
+                                  <Plus className="w-4 h-4 mr-2" />
+                                  Create First Classroom
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <p>No classrooms found in user context</p>
+                                <p className="text-sm mb-4">This might be a data loading issue</p>
+                              </>
+                            )}
                             <div className="space-x-2">
                               <Button 
                                 size="sm" 
@@ -2803,8 +2823,26 @@ export default function AdminDashboard() {
                         ) : (
                           <div className="text-center py-6 text-muted-foreground">
                             <Shield className="w-8 h-8 mx-auto mb-3 opacity-50" />
-                            <p className="text-sm">No classrooms found</p>
-                            <p className="text-xs mb-3">This might be a data loading issue</p>
+                            {isAdmin ? (
+                              <>
+                                <p className="text-sm font-medium text-foreground mb-2">No classrooms yet</p>
+                                <p className="text-xs mb-3">Create your first classroom to get started</p>
+                                <Button 
+                                  onClick={() => setIsCreatingClassroom(true)}
+                                  size="sm" 
+                                  variant="default"
+                                  className="mb-2"
+                                >
+                                  <Plus className="w-3 h-3 mr-1" />
+                                  Create Classroom
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-sm">No classrooms found</p>
+                                <p className="text-xs mb-3">This might be a data loading issue</p>
+                              </>
+                            )}
                             <div className="space-y-2">
                               <Button 
                                 size="sm" 
