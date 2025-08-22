@@ -11,6 +11,10 @@ class CodeSubmission(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for anonymous submissions
     template_id = Column(Integer, ForeignKey("templates.id"), nullable=True)  # Track which template was used
     
+    # Classroom scope (nullable for migration compatibility)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    classroom = relationship("Classroom", back_populates="code_submissions")
+    
     # Code details
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)

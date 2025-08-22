@@ -7,6 +7,7 @@ interface ResizablePanelsProps {
   minLeftWidth?: number;
   minRightWidth?: number;
   className?: string;
+  orientation?: 'horizontal' | 'vertical';
 }
 
 export default function ResizablePanels({
@@ -16,11 +17,14 @@ export default function ResizablePanels({
   minLeftWidth = 30,
   minRightWidth = 25,
   className = '',
+  orientation = 'horizontal',
 }: ResizablePanelsProps) {
   const [leftWidth, setLeftWidth] = useState(defaultLeftWidth);
   const [isDragging, setIsDragging] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  const isVertical = orientation === 'vertical';
 
   // Check if screen is mobile size
   useEffect(() => {
@@ -44,7 +48,10 @@ export default function ResizablePanels({
       if (!isDragging || !containerRef.current) return;
 
       const containerRect = containerRef.current.getBoundingClientRect();
-      const newLeftWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+      
+      const newLeftWidth = isVertical 
+        ? ((e.clientY - containerRect.top) / containerRect.height) * 100
+        : ((e.clientX - containerRect.left) / containerRect.width) * 100;
 
       // Enforce min/max constraints
       const clampedWidth = Math.max(
@@ -54,7 +61,7 @@ export default function ResizablePanels({
 
       setLeftWidth(clampedWidth);
     },
-    [isDragging, minLeftWidth, minRightWidth]
+    [isDragging, minLeftWidth, minRightWidth, isVertical]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -65,7 +72,7 @@ export default function ResizablePanels({
     if (isDragging) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'col-resize';
+      document.body.style.cursor = isVertical ? 'row-resize' : 'col-resize';
       document.body.style.userSelect = 'none';
 
       return () => {
@@ -75,20 +82,20 @@ export default function ResizablePanels({
         document.body.style.userSelect = '';
       };
     }
-  }, [isDragging, handleMouseMove, handleMouseUp]);
+  }, [isDragging, handleMouseMove, handleMouseUp, isVertical]);
 
   const rightWidth = 100 - leftWidth;
 
-  // Mobile layout: Stack vertically
+  // Mobile layout: Stack vertically regardless of orientation
   if (isMobile) {
     return (
       <div ref={containerRef} className={`flex flex-col h-full ${className}`}>
-        {/* Top Panel (Code Editor) */}
+        {/* Top Panel */}
         <div className="flex-1 overflow-hidden mb-1">
           {leftPanel}
         </div>
         
-        {/* Bottom Panel (Output) */}
+        {/* Bottom Panel */}
         <div className="flex-1 overflow-hidden mt-1">
           {rightPanel}
         </div>
@@ -96,39 +103,78 @@ export default function ResizablePanels({
     );
   }
 
-  // Desktop layout: Side by side with resizable handle
-  return (
-    <div ref={containerRef} className={`flex h-full ${className}`}>
-      {/* Left Panel */}
-      <div 
-        className="flex-shrink-0 overflow-hidden"
-        style={{ width: `${leftWidth}%` }}
-      >
-        {leftPanel}
-      </div>
+  // Desktop layout: Resizable panels
+  if (isVertical) {
+    // Vertical orientation - Top/Bottom split
+    return (
+      <div ref={containerRef} className={`flex flex-col h-full ${className}`}>
+        {/* Top Panel */}
+        <div 
+          className="flex-shrink-0 overflow-hidden"
+          style={{ height: `${leftWidth}%` }}
+        >
+          {leftPanel}
+        </div>
 
-      {/* Resize Handle */}
-      <div
-        className={`flex-shrink-0 w-0 bg-transparent cursor-col-resize relative group transition-colors z-10 ${
-          isDragging ? '' : ''
-        }`}
-        onMouseDown={handleMouseDown}
-      >
-        {/* Larger hit area for easier grabbing */}
-        <div className="absolute inset-y-0 -left-3 -right-3 w-6 flex items-center justify-center">
-          <div className={`w-1 h-8 bg-muted-foreground/20 group-hover:bg-blue-500 rounded-full transition-colors ${
-            isDragging ? 'bg-blue-500' : ''
-          }`}></div>
+        {/* Resize Handle */}
+        <div
+          className={`flex-shrink-0 h-0 bg-transparent cursor-row-resize relative group transition-colors z-10 ${
+            isDragging ? '' : ''
+          }`}
+          onMouseDown={handleMouseDown}
+        >
+          {/* Larger hit area for easier grabbing */}
+          <div className="absolute inset-x-0 -top-3 -bottom-3 h-6 flex items-center justify-center">
+            <div className={`h-1 w-8 bg-muted-foreground/20 group-hover:bg-blue-500 rounded-full transition-colors ${
+              isDragging ? 'bg-blue-500' : ''
+            }`}></div>
+          </div>
+        </div>
+
+        {/* Bottom Panel */}
+        <div 
+          className="flex-1 overflow-hidden"
+          style={{ height: `${rightWidth}%` }}
+        >
+          {rightPanel}
         </div>
       </div>
+    );
+  } else {
+    // Horizontal orientation - Left/Right split
+    return (
+      <div ref={containerRef} className={`flex h-full ${className}`}>
+        {/* Left Panel */}
+        <div 
+          className="flex-shrink-0 overflow-hidden"
+          style={{ width: `${leftWidth}%` }}
+        >
+          {leftPanel}
+        </div>
 
-      {/* Right Panel */}
-      <div 
-        className="flex-1 overflow-hidden"
-        style={{ width: `${rightWidth}%` }}
-      >
-        {rightPanel}
+        {/* Resize Handle */}
+        <div
+          className={`flex-shrink-0 w-0 bg-transparent cursor-col-resize relative group transition-colors z-10 ${
+            isDragging ? '' : ''
+          }`}
+          onMouseDown={handleMouseDown}
+        >
+          {/* Larger hit area for easier grabbing */}
+          <div className="absolute inset-y-0 -left-3 -right-3 w-6 flex items-center justify-center">
+            <div className={`w-1 h-8 bg-muted-foreground/20 group-hover:bg-blue-500 rounded-full transition-colors ${
+              isDragging ? 'bg-blue-500' : ''
+            }`}></div>
+          </div>
+        </div>
+
+        {/* Right Panel */}
+        <div 
+          className="flex-1 overflow-hidden"
+          style={{ width: `${rightWidth}%` }}
+        >
+          {rightPanel}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 }

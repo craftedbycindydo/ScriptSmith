@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import field_validator
 import os
 
@@ -102,6 +102,9 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [lang.strip() for lang in v.split(",")]
         return v
+    
+    # OpenAI settings - OPTIONAL (for code complexity analysis)
+    openai_api_key: Optional[str] = None
 
     class Config:
         env_file = ".env"

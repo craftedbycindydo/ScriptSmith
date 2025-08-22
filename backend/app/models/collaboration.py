@@ -20,6 +20,10 @@ class CollaborationSession(Base):
     is_public = Column(Boolean, default=False)  # Whether it appears in public listings
     max_collaborators = Column(Integer, default=10)
     
+    # Classroom scope (nullable for migration compatibility)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    classroom = relationship("Classroom", back_populates="collaboration_sessions")
+    
     # Code state
     code_content = Column(Text, nullable=True, default="")
     
@@ -52,6 +56,10 @@ class CollaborationParticipant(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for anonymous users
     username = Column(String(100), nullable=False)  # Display name for the session
     
+    # RBAC fields
+    role = Column(String(20), nullable=False, default="editor")  # "owner", "editor", "viewer"
+    status = Column(String(20), nullable=False, default="pending")  # "approved", "pending", "rejected", "kicked"
+    
     # Connection state
     is_connected = Column(Boolean, default=False)
     cursor_position = Column(JSON, nullable=True)  # Store cursor position as JSON
@@ -69,3 +77,18 @@ class CollaborationParticipant(Base):
     
     def __repr__(self):
         return f"<CollaborationParticipant(id={self.id}, username='{self.username}', session_id={self.session_id})>"
+    
+    @property
+    def is_owner(self):
+        """Check if participant is the session owner"""
+        return self.role == "owner"
+    
+    @property
+    def can_edit(self):
+        """Check if participant can edit code"""
+        return self.role in ["owner", "editor"] and self.status == "approved"
+    
+    @property
+    def can_view(self):
+        """Check if participant can view code"""
+        return self.role in ["owner", "editor", "viewer"] and self.status == "approved"

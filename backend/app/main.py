@@ -157,8 +157,9 @@ async def startup_event():
     # Try to initialize database connection and tables
     global engine
     try:
+        from sqlalchemy import text
         from app.database.base import engine, Base
-        from app.models import User, Template, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings
+        from app.models import User, Template, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom
         
         # Create all tables at once using the Base metadata
         print("🔄 Creating database tables...")
@@ -170,11 +171,33 @@ async def startup_event():
         db = SessionLocal()
         try:
             # Test database connection
-            db.execute("SELECT 1")
-            db.close()
+            db.execute(text("SELECT 1"))
             print("✅ Database connection verified")
+            
+            # Run classroom migration if needed
+            print("🔄 Checking for database migrations...")
+            from app.services.database_migration import DatabaseMigrationService
+            
+            if DatabaseMigrationService.is_migration_needed(db):
+                print("🚀 Running classroom migration...")
+                migration_result = DatabaseMigrationService.run_classroom_migration(db)
+                
+                if migration_result["success"]:
+                    print("✅ Classroom migration completed successfully!")
+                    print(f"📊 Migration summary:")
+                    print(f"   • Default classroom: {migration_result.get('default_classroom_key', 'N/A')}")
+                    print(f"   • Users migrated: {migration_result.get('users_migrated', 0)}")
+                    print(f"   • Tables updated: {len(migration_result.get('tables_migrated', []))}")
+                else:
+                    print("⚠️  Migration had issues:")
+                    for error in migration_result.get("errors", []):
+                        print(f"   • {error}")
+            else:
+                print("✅ No migration needed - database is up to date")
+            
+            db.close()
         except Exception as db_error:
-            print(f"⚠️  Database connection test failed: {db_error}")
+            print(f"⚠️  Database connection/migration failed: {db_error}")
             db.close()
             
     except Exception as e:
@@ -196,7 +219,7 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 # Load other routers lazily during startup
 async def load_routers():
     try:
-        from app.routers import code, languages, auth, collaboration, admin, assignments, templates
+        from app.routers import code, languages, auth, collaboration, admin, assignments, templates, classroom
         
         app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
         app.include_router(languages.router, prefix="/api", tags=["languages"])
@@ -205,6 +228,7 @@ async def load_routers():
         app.include_router(admin.router, prefix="/api", tags=["admin"])
         app.include_router(assignments.router, prefix="/api", tags=["assignments"])
         app.include_router(templates.router, prefix="/api", tags=["templates"])
+        app.include_router(classroom.router, prefix="/api", tags=["classroom"])
         print("✅ All routers loaded successfully")
         print("🔗 WebSocket service running separately on dedicated microservice")
         

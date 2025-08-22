@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuthStore } from '@/store/authStore';
 import { useTheme } from '@/contexts/ThemeContext';
-import { apiService } from '@/services/api';
 import { 
   Code2, 
   Settings, 
@@ -38,16 +37,9 @@ export default function Navbar() {
   
   useEffect(() => {
     if (user) {
-      // Check admin status via backend API
-      const checkAdminStatus = async () => {
-        try {
-          await apiService.getAdminStats();
-          setIsAdmin(true);
-        } catch (error) {
-          setIsAdmin(false);
-        }
-      };
-      checkAdminStatus();
+      // Use server-side validated admin status from user object
+      // This avoids making unnecessary API calls for non-admin users
+      setIsAdmin(user.is_admin || false);
     }
   }, [user]);
 

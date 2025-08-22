@@ -8,6 +8,7 @@ from app.database.base import get_db
 from app.services.auth import AuthService
 from app.services.admin_service import AdminService
 from app.services.security import SecurityService
+from app.services.classroom_service import ClassroomService
 from app.core.config import settings
 from app.utils.security_validators import validate_input_security, SecurityValidator
 
@@ -25,6 +26,14 @@ class UserCreate(BaseModel):
     username: str
     password: str
     full_name: Optional[str] = None
+    classroom_key: Optional[str] = None  # Optional for joining a classroom
+
+class AdminUserCreate(BaseModel):
+    """For admin-only registration without classroom key"""
+    email: EmailStr
+    username: str
+    password: str
+    full_name: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int
@@ -35,6 +44,7 @@ class UserResponse(BaseModel):
     is_verified: bool
     is_admin: bool
     created_at: str
+    classroom_context: Optional[dict] = None
     
     class Config:
         from_attributes = True
@@ -87,6 +97,9 @@ async def get_current_user(
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
+        
+        # Extract classroom context from token
+        classroom_context = payload.get("classroom_context", {})
             
     except Exception:
         raise credentials_exception
@@ -94,6 +107,9 @@ async def get_current_user(
     user = AuthService.get_user_by_email(db, email=email)
     if user is None:
         raise credentials_exception
+    
+    # Attach classroom context to user object for easy access
+    user.classroom_context = classroom_context
     
     return user
 
@@ -169,9 +185,12 @@ async def register_user(
         # Sanitize input
         user.email = SecurityValidator.sanitize_input(user.email, 254)
         user.username = SecurityValidator.sanitize_input(user.username, 50)
+        if user.classroom_key:
+            user.classroom_key = SecurityValidator.sanitize_input(user.classroom_key, 100)
         if user.full_name:
             user.full_name = SecurityValidator.sanitize_input(user.full_name, 255)
         
+        # Create user first
         db_user = AuthService.create_user(
             db=db,
             email=user.email,
@@ -179,6 +198,21 @@ async def register_user(
             password=user.password,
             full_name=user.full_name
         )
+        
+        # Join classroom if a key is provided
+        if user.classroom_key:
+            try:
+                ClassroomService.join_classroom(
+                    db=db,
+                    user=db_user,
+                    classroom_key=user.classroom_key,
+                    role="STUDENT"
+                )
+            except HTTPException:
+                # If joining classroom fails, delete the user to maintain consistency
+                db.delete(db_user)
+                db.commit()
+                raise
         
         return UserResponse(
             id=db_user.id,
@@ -196,6 +230,72 @@ async def register_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create user: {str(e)}"
+        )
+
+@router.post("/register-admin", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register_admin_user(
+    user: AdminUserCreate, 
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Register a new admin user (for initial setup, doesn't require classroom key)"""
+    try:
+        # Validate client IP and headers
+        client_ip = request.client.host
+        if not SecurityValidator.validate_client_ip(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request from invalid IP address"
+            )
+        
+        is_valid, error = SecurityValidator.check_request_headers(dict(request.headers))
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error
+            )
+        
+        # Validate input security
+        validate_input_security(
+            password=user.password,
+            email=user.email,
+            username=user.username
+        )
+        
+        # Sanitize input
+        user.email = SecurityValidator.sanitize_input(user.email, 254)
+        user.username = SecurityValidator.sanitize_input(user.username, 50)
+        if user.full_name:
+            user.full_name = SecurityValidator.sanitize_input(user.full_name, 255)
+        
+        # Create admin user
+        db_user = AuthService.create_user(
+            db=db,
+            email=user.email,
+            username=user.username,
+            password=user.password,
+            full_name=user.full_name
+        )
+        
+        # Promote to admin
+        admin_service.promote_to_admin(db, db_user.id, db_user)
+        
+        return UserResponse(
+            id=db_user.id,
+            email=db_user.email,
+            username=db_user.username,
+            full_name=db_user.full_name,
+            is_active=db_user.is_active,
+            is_verified=db_user.is_verified,
+            is_admin=True,
+            created_at=db_user.created_at.isoformat()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create admin user: {str(e)}"
         )
 
 @router.post("/login", response_model=Token)
@@ -242,15 +342,24 @@ async def login_user(
                 detail="Email not verified. Please check your email and verify your account.",
             )
         
-        # Create tokens
+        # Get classroom context for token
+        classroom_context = ClassroomService.get_classroom_context(db, user)
+        
+        # Create tokens with classroom context
+        token_data = {
+            "sub": user.email, 
+            "user_id": user.id,
+            "classroom_context": classroom_context
+        }
+        
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
         access_token = SecurityService.create_access_token(
-            data={"sub": user.email, "user_id": user.id},
+            data=token_data,
             expires_delta=access_token_expires
         )
         
         refresh_token = SecurityService.create_refresh_token(
-            data={"sub": user.email, "user_id": user.id}
+            data=token_data
         )
         
         # If cookies are requested, set secure HttpOnly cookies
@@ -334,8 +443,14 @@ async def refresh_token(
     )
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user = Depends(get_current_active_user)):
-    """Get current user information"""
+async def get_current_user_info(
+    current_user = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user information with classroom context"""
+    # Get fresh classroom context from database
+    classroom_context = ClassroomService.get_classroom_context(db, current_user)
+    
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
@@ -344,7 +459,8 @@ async def get_current_user_info(current_user = Depends(get_current_active_user))
         is_active=current_user.is_active,
         is_verified=current_user.is_verified,
         is_admin=admin_service.has_admin_access(current_user),
-        created_at=current_user.created_at.isoformat()
+        created_at=current_user.created_at.isoformat(),
+        classroom_context=classroom_context
     )
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)

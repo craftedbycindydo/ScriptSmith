@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { apiService, type Language } from '../services/api';
 
+interface ComplexityAnalysis {
+  time_complexity: string;
+  space_complexity: string;
+  explanation: string;
+  available: boolean;
+}
+
 interface CodeState {
   code: string;
   language: string;
@@ -10,12 +17,14 @@ interface CodeState {
   languages: Language[];
   executionTime: number;
   selectedTemplateId: number | null;
+  complexity: ComplexityAnalysis | null;
   setCode: (code: string) => void;
   setLanguage: (language: string) => void;
   setOutput: (output: string) => void;
   setError: (error: string) => void;
   setLoading: (loading: boolean) => void;
   setExecutionTime: (time: number) => void;
+  setComplexity: (complexity: ComplexityAnalysis | null) => void;
   clearOutput: () => void;
   loadLanguages: () => Promise<void>;
   executeCode: () => Promise<void>;
@@ -77,6 +86,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   languages: [],
   executionTime: 0,
   selectedTemplateId: null,
+  complexity: null,
   setCode: (code) => set({ code }),
   setLanguage: async (language) => {
     try {
@@ -88,7 +98,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         output: '',
         error: '',
         executionTime: 0,
-        selectedTemplateId: null
+        selectedTemplateId: null,
+        complexity: null
       });
     } catch (error) {
       // Fallback to local template
@@ -98,7 +109,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         output: '',
         error: '',
         executionTime: 0,
-        selectedTemplateId: null
+        selectedTemplateId: null,
+        complexity: null
       });
     }
   },
@@ -106,7 +118,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   setError: (error) => set({ error, output: '' }),
   setLoading: (isLoading) => set({ isLoading }),
   setExecutionTime: (executionTime) => set({ executionTime }),
-  clearOutput: () => set({ output: '', error: '', executionTime: 0 }),
+  setComplexity: (complexity) => set({ complexity }),
+  clearOutput: () => set({ output: '', error: '', executionTime: 0, complexity: null }),
   
   loadLanguages: async () => {
     try {
@@ -132,7 +145,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   executeCode: async () => {
     const { code, language, selectedTemplateId } = get();
     
-    set({ isLoading: true, output: '', error: '', executionTime: 0 });
+    set({ isLoading: true, output: '', error: '', executionTime: 0, complexity: null });
     
     try {
       const response = await apiService.executeCode({
@@ -146,6 +159,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         output: response.output,
         error: response.error,
         executionTime: response.execution_time,
+        complexity: response.complexity || null,
         isLoading: false
       });
     } catch (error: any) {
@@ -153,6 +167,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         error: error.response?.data?.detail || error.message || 'Failed to execute code',
         output: '',
         executionTime: 0,
+        complexity: null,
         isLoading: false
       });
     }

@@ -9,13 +9,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import CodeEditor from './CodeEditor';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
+import ComplexityAnalysis from './ComplexityAnalysis';
 import ResizablePanels from './ResizablePanels';
 
 import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
-import { Play, Save, Download, Share2, Users, MoreHorizontal } from 'lucide-react';
+import { Play, Save, Download, Share2, Users, MoreHorizontal, Send, CheckCircle } from 'lucide-react';
 
 export default function IDE() {
   const navigate = useNavigate();
@@ -34,6 +35,7 @@ export default function IDE() {
     error,
     isLoading,
     executionTime,
+    complexity,
     setCode,
     setLanguage,
     loadLanguages,
@@ -64,6 +66,15 @@ export default function IDE() {
   const [selectedAdminTemplateName, setSelectedAdminTemplateName] = useState<string>('');
   const [selectedUserTemplateName, setSelectedUserTemplateName] = useState<string>('');
   
+  // Submit functionality state
+  const [canSubmit, setCanSubmit] = useState<boolean>(false);
+  const [hasSubmitted, setHasSubmitted] = useState<boolean>(false);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+  const [showRunFirstModal, setShowRunFirstModal] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [hasExecutedCode, setHasExecutedCode] = useState<boolean>(false);
+  const [lastExecutionResult, setLastExecutionResult] = useState<any>(null);
+  
   // Save template inline form state
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [templateName, setTemplateName] = useState('');
@@ -73,14 +84,19 @@ export default function IDE() {
   // Load languages and admin settings on component mount
   useEffect(() => {
     loadLanguages();
-    loadAdminSettings();
-    initializeWebSocket();
+    loadAdminSettings(isAuthenticated);
+    
+    // Initialize WebSocket for all authenticated users with classroom context
+    if (isAuthenticated && user) {
+      const classroomIds = user.classroom_context?.classrooms?.map((c: any) => c.id) || [];
+      initializeWebSocket(user.id, classroomIds);
+    }
     
     // Cleanup on unmount
     return () => {
       disconnectWebSocket();
     };
-  }, [loadLanguages]);
+  }, [loadLanguages, isAuthenticated, user]);
 
   // Load templates when language changes (for authenticated users only)
   useEffect(() => {
@@ -94,6 +110,13 @@ export default function IDE() {
       setSelectedUserTemplateName('');
     }
   }, [language, isAuthenticated]);
+
+  // Reset execution state when code changes or template changes
+  useEffect(() => {
+    // Reset execution tracking when code changes
+    setHasExecutedCode(false);
+    setLastExecutionResult(null);
+  }, [code, selectedAdminTemplate, selectedUserTemplate]);
 
   // Load templates for current language
   const loadTemplatesForLanguage = async (lang: string) => {
@@ -129,6 +152,8 @@ export default function IDE() {
       setSelectedTemplate(null);
       setSelectedAdminTemplate('');
       setSelectedAdminTemplateName('');
+      setCanSubmit(false);
+      setHasSubmitted(false);
       // Only clear user template if this is a clear action, not if there are no templates
       if (templateId === 'clear-admin') {
         setSelectedUserTemplate('');
@@ -147,11 +172,16 @@ export default function IDE() {
         // Clear user template selection
         setSelectedUserTemplate('');
         setSelectedUserTemplateName('');
+        
+        // Check submission status
+        setCanSubmit(template.can_submit || false);
+        setHasSubmitted(!!template.user_submission);
       }
     } catch (error) {
       console.error('Failed to load template:', error);
       setSelectedTemplate(null);
-      // Could show a toast notification here if desired
+      setCanSubmit(false);
+      setHasSubmitted(false);
     }
   };
 
@@ -169,18 +199,85 @@ export default function IDE() {
         setCode(template.code_content);
         setSelectedUserTemplate(templateId);
         setSelectedUserTemplateName(template.name || 'Untitled Template');
-        // Clear admin template selection
+        // Clear admin template selection and submission state
         setSelectedAdminTemplate('');
         setSelectedAdminTemplateName('');
+        setCanSubmit(false);
+        setHasSubmitted(false);
       }
     } catch (error) {
       console.error('Failed to load user template:', error);
-      // Could show a toast notification here if desired
     }
   };
 
   const handleRunCode = async () => {
-    await executeCode();
+    try {
+      await executeCode();
+      // Mark that code has been executed and capture the result
+      setHasExecutedCode(true);
+      setLastExecutionResult({
+        output,
+        error,
+        execution_time: executionTime,
+        status: error ? 'error' : 'success'
+      });
+    } catch (err) {
+      setHasExecutedCode(true);
+      setLastExecutionResult({
+        output: '',
+        error: String(err),
+        execution_time: 0,
+        status: 'error'
+      });
+    }
+  };
+
+  const handleSubmitTemplate = () => {
+    if (!selectedAdminTemplate) return;
+    
+    // Check if code has been executed
+    if (!hasExecutedCode) {
+      setShowRunFirstModal(true);
+      return;
+    }
+    
+    setShowSubmitModal(true);
+  };
+
+  const handleConfirmSubmit = async () => {
+    if (!selectedAdminTemplate || !hasExecutedCode) return;
+    
+    setSubmitting(true);
+    try {
+      await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
+        code_content: code,
+        execution_output: lastExecutionResult?.output || output,
+        execution_status: lastExecutionResult?.status || (error ? 'error' : 'success'),
+        execution_time: lastExecutionResult?.execution_time || executionTime,
+        error_message: lastExecutionResult?.error || error
+      });
+      
+      // Refresh template data to get updated submission status
+      const refreshedTemplate = await apiService.getTemplate(parseInt(selectedAdminTemplate));
+      if (refreshedTemplate) {
+        setCanSubmit(refreshedTemplate.can_submit || false);
+        setHasSubmitted(!!refreshedTemplate.user_submission);
+      }
+      setShowSubmitModal(false);
+    } catch (error) {
+      console.error('Failed to submit template:', error);
+      alert('Failed to submit template. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancelSubmit = () => {
+    setShowSubmitModal(false);
+  };
+
+  const handleCloseRunFirstModal = () => {
+    setShowRunFirstModal(false);
   };
 
   const handleSave = () => {
@@ -344,30 +441,9 @@ export default function IDE() {
     return extensions[lang] || 'txt';
   };
 
-  // Check if the current user is admin (can always copy-paste)
-  const isAdmin = async () => {
-    if (!isAuthenticated) return false;
-    try {
-      await apiService.getAdminStats(); // This will fail if user is not admin
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
   // Check if copy-paste should be disabled for this user
-  const [userIsAdmin, setUserIsAdmin] = useState(false);
-  
-  useEffect(() => {
-    const checkAdminStatus = async () => {
-      const adminStatus = await isAdmin();
-      setUserIsAdmin(adminStatus);
-    };
-    
-    if (isAuthenticated) {
-      checkAdminStatus();
-    }
-  }, [isAuthenticated]);
+  // Use server-validated admin status from user object (no API call needed)
+  const userIsAdmin = user?.is_admin || false;
 
   // Determine if copy-paste should be disabled
   const copyPasteDisabled = !adminSettings.copy_paste_enabled && !userIsAdmin;
@@ -401,7 +477,7 @@ export default function IDE() {
                         disabled={loadingTemplates}
                         className="w-full"
                       >
-                        <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Admin Templates"} />
+                        <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
                       </SelectTrigger>
                       <SelectContent>
                         {selectedAdminTemplateName && (
@@ -411,7 +487,7 @@ export default function IDE() {
                         )}
                         {!templates || templates.length === 0 ? (
                           <SelectItem value="no-templates" disabled>
-                            No admin templates available
+                            No professor templates available
                           </SelectItem>
                         ) : (
                           templates.map((template) => template && template.id ? (
@@ -479,6 +555,32 @@ export default function IDE() {
                 <span className="hidden sm:inline">{isLoading ? 'Running...' : 'Run'}</span>
                 <span className="sm:hidden">{isLoading ? '...' : 'Run'}</span>
               </Button>
+
+              {/* Submit button for admin templates */}
+              {isAuthenticated && selectedAdminTemplate && (
+                <Button
+                  onClick={handleSubmitTemplate}
+                  disabled={!canSubmit}
+                  variant={hasSubmitted && !canSubmit ? "secondary" : "default"}
+                  size="sm"
+                  className="flex-1 sm:flex-none"
+                  title={(hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : ''}
+                >
+                  {hasSubmitted && !canSubmit ? (
+                    <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-1 sm:mr-2" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {hasSubmitted && !canSubmit ? 'Submitted' : 
+                     hasSubmitted && canSubmit ? 'Submit Again' : 'Submit'}
+                  </span>
+                  <span className="sm:hidden">
+                    {hasSubmitted && !canSubmit ? 'Done' : 
+                     hasSubmitted && canSubmit ? 'Again' : 'Submit'}
+                  </span>
+                </Button>
+              )}
 
               {/* Authenticated user features */}
               {isAuthenticated && (
@@ -759,26 +861,151 @@ export default function IDE() {
             </div>
           }
           rightPanel={
-            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:ml-2">
-              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                <h3 className="text-sm font-medium">Output</h3>
-              </div>
-              <div className="flex-1 overflow-hidden rounded-b-lg">
-                <OutputConsole
-                  output={output}
-                  error={error}
-                  isLoading={isLoading}
-                  executionTime={executionTime}
-                />
-              </div>
+            <div className="h-full md:ml-2">
+              <ResizablePanels
+                orientation="vertical"
+                defaultLeftWidth={50}
+                minLeftWidth={25}
+                minRightWidth={25}
+                leftPanel={
+                  <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm">
+                    <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                      <h3 className="text-sm font-medium">Output</h3>
+                    </div>
+                    <div className="flex-1 overflow-hidden rounded-b-lg">
+                      <OutputConsole
+                        output={output}
+                        error={error}
+                        isLoading={isLoading}
+                        executionTime={executionTime}
+                      />
+                    </div>
+                  </div>
+                }
+                rightPanel={
+                  <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm">
+                    <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                      <h3 className="text-sm font-medium">Complexity Analysis</h3>
+                    </div>
+                    <div className="flex-1 p-4 overflow-hidden rounded-b-lg">
+                      <ComplexityAnalysis
+                        complexity={complexity}
+                        isLoading={isLoading}
+                      />
+                    </div>
+                  </div>
+                }
+              />
             </div>
           }
         />
       </div>
 
+      {/* Submit Confirmation Modal */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6">
+              <div className="flex items-center mb-4">
+                <Send className="w-6 h-6 mr-3 text-blue-500" />
+                <h2 className="text-lg font-semibold">Submit Template</h2>
+              </div>
+              
+              <div className="mb-6">
+                <p className="text-gray-600 dark:text-gray-300 mb-4">
+                  Are you sure you want to submit your code for "<strong>{selectedAdminTemplateName}</strong>"?
+                </p>
+                
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3 mb-3">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>Execution Results:</strong> Your code execution results 
+                    ({lastExecutionResult?.status || (error ? 'error' : 'success')}) 
+                    will be saved with this submission.
+                  </p>
+                </div>
+                
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    {hasSubmitted ? (
+                      <>
+                        <strong>Note:</strong> You have an exclusion that allows you to submit once more. This will replace your previous submission.
+                      </>
+                    ) : (
+                      <>
+                        <strong>Note:</strong> Once submitted, you cannot submit again for this template unless your instructor provides an exclusion.
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
 
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={handleCancelSubmit}
+                  disabled={submitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleConfirmSubmit}
+                  disabled={submitting}
+                  className="bg-blue-500 hover:bg-blue-600 text-white"
+                >
+                  {submitting ? (
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Submitting...
+                    </div>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      Submit Code
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Run Code First Modal */}
+      {showRunFirstModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6">
+              <div className="flex items-center mb-4">
+                <div className="w-6 h-6 mr-3 text-amber-500">
+                  ⚠️
+                </div>
+                <h2 className="text-lg font-semibold">Run Code Required</h2>
+              </div>
+              
+              <div className="mb-6">
+                <p className="text-gray-600 dark:text-gray-300 mb-4">
+                  You must run your code before submitting it.
+                </p>
+                
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>💡 Tip:</strong> Click the green "Run" button to execute your code, then try submitting again.
+                  </p>
+                </div>
+              </div>
 
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleCloseRunFirstModal}
+                  className="bg-blue-500 hover:bg-blue-600 text-white"
+                >
+                  Got it!
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

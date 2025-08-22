@@ -1,22 +1,31 @@
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Loader2, User } from 'lucide-react';
 
 interface OutputConsoleProps {
   output: string;
   error: string | null;
   isLoading: boolean;
   executionTime?: number;
+  lastExecutedBy?: string;
 }
 
-export default function OutputConsole({ output, error, isLoading, executionTime }: OutputConsoleProps) {
+export default function OutputConsole({ output, error, isLoading, executionTime, lastExecutedBy }: OutputConsoleProps) {
   const hasOutput = output && output.trim() !== '';
   const hasError = error && error.trim() !== '';
   const hasContent = hasOutput || hasError;
 
   return (
     <div className="h-full flex flex-col bg-background rounded-b-lg overflow-hidden">
-      {/* Status and timing info in top right */}
-      <div className="px-4 py-2 flex items-center justify-end border-b bg-muted/10">
+      {/* Status and timing info */}
+      <div className="px-4 py-2 flex items-center justify-between border-b bg-muted/10">
+        <div className="flex items-center space-x-2">
+          {lastExecutedBy && hasContent && (
+            <Badge variant="outline" className="text-xs">
+              <User className="w-3 h-3 mr-1" />
+              {lastExecutedBy}
+            </Badge>
+          )}
+        </div>
         <div className="flex items-center space-x-2">
           {executionTime && executionTime > 0 && (
             <Badge variant="secondary" className="text-xs">

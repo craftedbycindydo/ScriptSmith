@@ -14,7 +14,9 @@ from app.models.code_submission import CodeSubmission
 from app.models.collaboration import CollaborationSession, CollaborationParticipant
 from app.models.template import Template
 from app.models.admin_settings import AdminSettings
+from app.models.classroom import Classroom, UserClassroom
 from app.services.admin_service import AdminService
+from app.services.classroom_service import ClassroomService
 
 router = APIRouter()
 
@@ -54,45 +56,129 @@ class UserDetailsResponse(BaseModel):
     collaboration_sessions: int
     recent_activity: List[UserActivityItem]
 
-# Admin authentication dependency
+# Admin authentication dependency with classroom context
 async def get_admin_user(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Verify that the current user has admin access using secure RBAC"""
     admin_service.verify_admin_access(current_user)
+    
+    # Get user's classroom context
+    classroom_context = ClassroomService.get_classroom_context(db, current_user)
+    current_user.classroom_context = classroom_context
+    
     return current_user
+
+def get_user_classroom_ids(user: User) -> List[int]:
+    """Get list of classroom IDs that the user has access to"""
+    if not hasattr(user, 'classroom_context') or not user.classroom_context.get('classrooms'):
+        return []
+    return [c['id'] for c in user.classroom_context['classrooms']]
 
 @router.get("/admin/stats", response_model=AdminStatsResponse)
 async def get_admin_stats(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get overall system statistics"""
+    """Get classroom-scoped system statistics"""
+    
+    # Get user's classroom IDs
+    classroom_ids = get_user_classroom_ids(admin_user)
+    if not classroom_ids:
+        # Return empty stats if user has no classrooms
+        return AdminStatsResponse(
+            total_users=0,
+            total_code_executions=0,
+            total_collaboration_sessions=0,
+            active_sessions=0,
+            executions_today=0,
+            new_users_today=0,
+            error_rate_percentage=0,
+            popular_languages=[]
+        )
     
     # Calculate dates
     today = datetime.utcnow().date()
     today_start = datetime.combine(today, datetime.min.time())
     
-    # Total counts
-    total_users = db.query(User).count()
-    total_executions = db.query(CodeSubmission).count()
-    total_sessions = db.query(CollaborationSession).count()
+    # Total counts (classroom-scoped)
+    total_users = db.query(User).join(UserClassroom).filter(
+        UserClassroom.classroom_id.in_(classroom_ids),
+        UserClassroom.is_active == True
+    ).count()
+    
+    # Handle code submissions with proper null checking for classroom_id
+    total_executions = db.query(CodeSubmission).filter(
+        or_(
+            CodeSubmission.classroom_id.in_(classroom_ids),
+            and_(CodeSubmission.classroom_id.is_(None), CodeSubmission.user_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
+    ).count()
+    
+    # Handle collaboration sessions with proper null checking
+    total_sessions = db.query(CollaborationSession).filter(
+        or_(
+            CollaborationSession.classroom_id.in_(classroom_ids),
+            and_(CollaborationSession.classroom_id.is_(None), CollaborationSession.owner_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
+    ).count()
+    
     active_sessions = db.query(CollaborationSession).filter(
-        CollaborationSession.is_active == True
+        CollaborationSession.is_active == True,
+        or_(
+            CollaborationSession.classroom_id.in_(classroom_ids),
+            and_(CollaborationSession.classroom_id.is_(None), CollaborationSession.owner_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
     ).count()
     
     # Today's stats
     executions_today = db.query(CodeSubmission).filter(
-        CodeSubmission.created_at >= today_start
+        CodeSubmission.created_at >= today_start,
+        or_(
+            CodeSubmission.classroom_id.in_(classroom_ids),
+            and_(CodeSubmission.classroom_id.is_(None), CodeSubmission.user_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
     ).count()
     
-    new_users_today = db.query(User).filter(
-        User.created_at >= today_start
+    new_users_today = db.query(User).join(UserClassroom).filter(
+        User.created_at >= today_start,
+        UserClassroom.classroom_id.in_(classroom_ids),
+        UserClassroom.is_active == True
     ).count()
     
     # Error rate
     error_executions = db.query(CodeSubmission).filter(
-        CodeSubmission.status == "error"
+        CodeSubmission.status == "error",
+        or_(
+            CodeSubmission.classroom_id.in_(classroom_ids),
+            and_(CodeSubmission.classroom_id.is_(None), CodeSubmission.user_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
     ).count()
     
     error_rate = (error_executions / total_executions * 100) if total_executions > 0 else 0
@@ -101,6 +187,16 @@ async def get_admin_stats(
     language_stats = db.query(
         CodeSubmission.language,
         func.count(CodeSubmission.id).label('count')
+    ).filter(
+        or_(
+            CodeSubmission.classroom_id.in_(classroom_ids),
+            and_(CodeSubmission.classroom_id.is_(None), CodeSubmission.user_id.in_(
+                db.query(User.id).join(UserClassroom).filter(
+                    UserClassroom.classroom_id.in_(classroom_ids),
+                    UserClassroom.is_active == True
+                ).subquery()
+            ))
+        )
     ).group_by(CodeSubmission.language).order_by(desc('count')).limit(5).all()
     
     popular_languages = [
@@ -153,10 +249,25 @@ async def get_user_activities(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date_to format")
     
-    # Get code executions
+    # Get classroom IDs
+    classroom_ids = get_user_classroom_ids(admin_user)
+    if not classroom_ids:
+        return UserActivityResponse(activities=[], total=0, page=page, page_size=page_size)
+    
+    # Get code executions (classroom-scoped)
     if not activity_type or activity_type == "code_execution":
         execution_query = db.query(CodeSubmission).join(
             User, CodeSubmission.user_id == User.id, isouter=True
+        ).filter(
+            or_(
+                CodeSubmission.classroom_id.in_(classroom_ids),
+                and_(CodeSubmission.classroom_id.is_(None), CodeSubmission.user_id.in_(
+                    db.query(User.id).join(UserClassroom).filter(
+                        UserClassroom.classroom_id.in_(classroom_ids),
+                        UserClassroom.is_active == True
+                    ).subquery()
+                ))
+            )
         )
         
         if user_id:
@@ -190,11 +301,21 @@ async def get_user_activities(
                 error_message=execution.error_message
             ))
     
-    # Get collaboration session activities
+    # Get collaboration session activities (classroom-scoped)
     if not activity_type or activity_type in ["session_creation", "session_join"]:
         # Session creations
         if not activity_type or activity_type == "session_creation":
-            session_query = db.query(CollaborationSession).join(User)
+            session_query = db.query(CollaborationSession).join(User).filter(
+                or_(
+                    CollaborationSession.classroom_id.in_(classroom_ids),
+                    and_(CollaborationSession.classroom_id.is_(None), CollaborationSession.owner_id.in_(
+                        db.query(User.id).join(UserClassroom).filter(
+                            UserClassroom.classroom_id.in_(classroom_ids),
+                            UserClassroom.is_active == True
+                        ).subquery()
+                    ))
+                )
+            )
             
             if user_id:
                 session_query = session_query.filter(CollaborationSession.owner_id == user_id)
@@ -281,9 +402,17 @@ async def get_all_users(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all users with basic info"""
+    """Get classroom-scoped users with basic info"""
     
-    query = db.query(User)
+    classroom_ids = get_user_classroom_ids(admin_user)
+    if not classroom_ids:
+        return []
+    
+    # Query users in the admin's classrooms
+    query = db.query(User).join(UserClassroom).filter(
+        UserClassroom.classroom_id.in_(classroom_ids),
+        UserClassroom.is_active == True
+    ).distinct()
     
     if search:
         search_filter = or_(
@@ -298,12 +427,22 @@ async def get_all_users(
     
     result = []
     for user in users:
+        # Count executions in user's classrooms
         execution_count = db.query(CodeSubmission).filter(
-            CodeSubmission.user_id == user.id
+            CodeSubmission.user_id == user.id,
+            or_(
+                CodeSubmission.classroom_id.in_(classroom_ids),
+                CodeSubmission.classroom_id.is_(None)  # Include legacy data
+            )
         ).count()
         
+        # Count sessions owned by user in classrooms  
         session_count = db.query(CollaborationSession).filter(
-            CollaborationSession.owner_id == user.id
+            CollaborationSession.owner_id == user.id,
+            or_(
+                CollaborationSession.classroom_id.in_(classroom_ids),
+                CollaborationSession.classroom_id.is_(None)  # Include legacy data
+            )
         ).count()
         
         result.append({
@@ -477,11 +616,22 @@ async def get_admin_settings(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get current admin settings (Admin only)"""
+    """Get current admin settings for user's primary classroom (Admin only)"""
     try:
-        settings = AdminSettings.get_or_create_default(db)
+        classroom_ids = get_user_classroom_ids(admin_user)
+        if not classroom_ids:
+            raise HTTPException(
+                status_code=404,
+                detail="No classroom found for user"
+            )
+        
+        # Use the first classroom for admin settings
+        primary_classroom_id = classroom_ids[0]
+        settings = AdminSettings.get_or_create_default(db, primary_classroom_id)
+        
         return {
             "id": settings.id,
+            "classroom_id": settings.classroom_id,
             "copy_paste_enabled": settings.copy_paste_enabled,
             "updated_by": settings.updated_by,
             "updated_at": settings.updated_at,
@@ -505,10 +655,18 @@ async def update_admin_settings(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Update admin settings (Admin only)"""
+    """Update admin settings for user's primary classroom (Admin only)"""
     try:
-        # Get existing settings or create default
-        admin_settings = AdminSettings.get_or_create_default(db)
+        classroom_ids = get_user_classroom_ids(admin_user)
+        if not classroom_ids:
+            raise HTTPException(
+                status_code=404,
+                detail="No classroom found for user"
+            )
+        
+        # Use the first classroom for admin settings
+        primary_classroom_id = classroom_ids[0]
+        admin_settings = AdminSettings.get_or_create_default(db, primary_classroom_id)
         
         # Update settings
         admin_settings.copy_paste_enabled = settings_update.copy_paste_enabled
@@ -519,14 +677,16 @@ async def update_admin_settings(
         db.commit()
         db.refresh(admin_settings)
         
-        # Broadcast settings change to all connected clients via websocket service
+        # Broadcast settings change to classroom-specific clients via websocket service
         try:
             websocket_url = f"{settings.websocket_service_url}/api/broadcast/admin-settings"  # WebSocket service URL
             broadcast_data = {
                 "event": "admin_settings_changed",
+                "classroom_id": primary_classroom_id,
                 "data": {
                     "copy_paste_enabled": admin_settings.copy_paste_enabled,
-                    "updated_by": admin_user.username
+                    "updated_by": admin_user.username,
+                    "classroom_id": primary_classroom_id
                 }
             }
             
@@ -557,18 +717,182 @@ async def update_admin_settings(
             detail=f"Failed to update admin settings: {str(e)}"
         )
 
+# Per-classroom admin settings endpoints
+@router.get("/admin/classrooms/{classroom_id}/settings")
+async def get_classroom_admin_settings(
+    classroom_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get admin settings for a specific classroom (Admin only)"""
+    try:
+        # Validate admin has access to this classroom
+        classroom_ids = get_user_classroom_ids(admin_user)
+        if classroom_id not in classroom_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this classroom"
+            )
+        
+        settings = AdminSettings.get_or_create_default(db, classroom_id)
+        
+        return {
+            "id": settings.id,
+            "classroom_id": settings.classroom_id,
+            "copy_paste_enabled": settings.copy_paste_enabled,
+            "updated_by": settings.updated_by,
+            "updated_at": settings.updated_at,
+            "notes": settings.notes
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get admin settings: {str(e)}"
+        )
+
+@router.put("/admin/classrooms/{classroom_id}/settings")
+async def update_classroom_admin_settings(
+    classroom_id: int,
+    settings_update: AdminSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Update admin settings for a specific classroom (Admin only)"""
+    try:
+        # Validate admin has access to this classroom
+        classroom_ids = get_user_classroom_ids(admin_user)
+        if classroom_id not in classroom_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this classroom"
+            )
+        
+        admin_settings = AdminSettings.get_or_create_default(db, classroom_id)
+        
+        # Update settings
+        admin_settings.copy_paste_enabled = settings_update.copy_paste_enabled
+        admin_settings.updated_by = admin_user.username
+        if settings_update.notes is not None:
+            admin_settings.notes = settings_update.notes
+            
+        db.commit()
+        db.refresh(admin_settings)
+        
+        # Broadcast settings change to classroom-specific clients via websocket service
+        try:
+            websocket_url = f"{settings.websocket_service_url}/api/broadcast/admin-settings"
+            broadcast_data = {
+                "event": "admin_settings_changed",
+                "classroom_id": classroom_id,
+                "data": {
+                    "copy_paste_enabled": admin_settings.copy_paste_enabled,
+                    "updated_by": admin_user.username,
+                    "classroom_id": classroom_id
+                }
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(websocket_url, json=broadcast_data, timeout=5.0)
+                if response.status_code == 200:
+                    print(f"✅ Successfully broadcasted admin settings change for classroom {classroom_id}")
+                else:
+                    print(f"⚠️ Failed to broadcast admin settings change for classroom {classroom_id}: {response.status_code}")
+        except Exception as broadcast_error:
+            print(f"⚠️ Failed to broadcast admin settings change for classroom {classroom_id}: {str(broadcast_error)}")
+            # Don't fail the request if broadcast fails
+        
+        return {
+            "message": "Admin settings updated successfully",
+            "settings": {
+                "id": admin_settings.id,
+                "classroom_id": admin_settings.classroom_id,
+                "copy_paste_enabled": admin_settings.copy_paste_enabled,
+                "updated_by": admin_settings.updated_by,
+                "updated_at": admin_settings.updated_at,
+                "notes": admin_settings.notes
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update admin settings: {str(e)}"
+        )
+
 
 @router.get("/admin/settings/public")
 async def get_public_admin_settings(
     db: Session = Depends(get_db)
 ):
-    """Get public admin settings (no authentication required)"""
+    """Get public admin settings (no authentication required) - returns merged settings for all classrooms"""
     try:
-        settings = AdminSettings.get_or_create_default(db)
+        # Get all classrooms and their settings
+        classrooms = db.query(Classroom).all()
+        if not classrooms:
+            # Return defaults if no classrooms exist yet
+            return {
+                "copy_paste_enabled": True
+            }
+        
+        # For public access, we need to decide on a policy:
+        # If ANY classroom has copy-paste disabled, disable it globally
+        # This ensures the most restrictive setting applies
+        copy_paste_enabled = True
+        
+        for classroom in classrooms:
+            settings = db.query(AdminSettings).filter(
+                AdminSettings.classroom_id == classroom.id
+            ).first()
+            
+            if settings and not settings.copy_paste_enabled:
+                copy_paste_enabled = False
+                break
+        
         return {
-            "copy_paste_enabled": settings.copy_paste_enabled
+            "copy_paste_enabled": copy_paste_enabled
         }
+        
     except Exception as e:
+        print(f"❌ Error in public admin settings: {str(e)}")
+        # Return default values if settings can't be retrieved
+        return {
+            "copy_paste_enabled": True
+        }
+
+@router.get("/admin/settings/user")
+async def get_user_admin_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get admin settings for the current user's classroom (authenticated users only)"""
+    try:
+        # Get user's classroom IDs
+        classroom_memberships = db.query(UserClassroom).filter(
+            UserClassroom.user_id == current_user.id,
+            UserClassroom.is_active == True
+        ).all()
+        
+        if not classroom_memberships:
+            # Return defaults if user is not in any classroom
+            return {
+                "copy_paste_enabled": True
+            }
+        
+        # Use the first classroom's settings (most users are in one classroom)
+        first_classroom_id = classroom_memberships[0].classroom_id
+        settings = AdminSettings.get_or_create_default(db, first_classroom_id)
+        
+        return {
+            "copy_paste_enabled": settings.copy_paste_enabled,
+            "classroom_id": first_classroom_id
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in user admin settings: {str(e)}")
         # Return default values if settings can't be retrieved
         return {
             "copy_paste_enabled": True
@@ -717,8 +1041,18 @@ async def get_templates_list(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all templates for dropdown filter"""
-    templates = db.query(Template).filter(Template.is_active == True).all()
+    """Get classroom-scoped templates for dropdown filter"""
+    classroom_ids = get_user_classroom_ids(admin_user)
+    if not classroom_ids:
+        return {"templates": []}
+    
+    templates = db.query(Template).filter(
+        Template.is_active == True,
+        or_(
+            Template.classroom_id.in_(classroom_ids),
+            Template.classroom_id.is_(None)  # Include legacy templates
+        )
+    ).all()
     
     return {
         "templates": [
@@ -736,8 +1070,16 @@ async def get_users_list(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all users for dropdown filters"""
-    users = db.query(User).filter(User.is_active == True).all()
+    """Get classroom-scoped users for dropdown filters"""
+    classroom_ids = get_user_classroom_ids(admin_user)
+    if not classroom_ids:
+        return {"users": [], "usernames": [], "emails": []}
+    
+    users = db.query(User).join(UserClassroom).filter(
+        User.is_active == True,
+        UserClassroom.classroom_id.in_(classroom_ids),
+        UserClassroom.is_active == True
+    ).distinct().all()
     
     # Get combined user data (username and email)
     combined_users = []

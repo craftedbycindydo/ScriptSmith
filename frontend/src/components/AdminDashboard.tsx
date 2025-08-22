@@ -3,10 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+
 import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { apiService } from '@/services/api';
@@ -18,6 +20,7 @@ import AssignmentReports from './AssignmentReports';
 import TemplateManager from './TemplateManager';
 import CodeEditor from './CodeEditor';
 import OutputConsole from './OutputConsole';
+import TemplateSubmissions from './TemplateSubmissions';
 import { 
   Users, 
   Activity, 
@@ -25,6 +28,7 @@ import {
   Share2, 
   AlertTriangle, 
   TrendingUp,
+  Send,
   Search,
   Eye,
   UserX,
@@ -37,7 +41,15 @@ import {
   Menu,
   BarChart3,
   Play,
-  RefreshCw
+  RefreshCw,
+  UserMinus,
+  UserPlus,
+  Copy,
+  Check,
+  PanelLeft,
+  PanelLeftOpen,
+  X,
+  Trash2
 } from 'lucide-react';
 
 interface AdminStats {
@@ -110,15 +122,13 @@ interface TemplateExecutionsResponse {
 }
 
 export default function AdminDashboard() {
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, refreshUser } = useAuthStore();
   const { 
-    settings: adminSettings, 
-    updateSettings: updateAdminSettings,
+    updateClassroomSettings: updateClassroomAdminSettings,
     loadSettings: loadAdminSettings,
     initializeWebSocket,
     disconnectWebSocket,
-    isLoading: settingsLoading,
-    error: settingsError 
+    setCurrentClassroom
   } = useAdminSettingsStore();
   const navigate = useNavigate();
   
@@ -126,7 +136,9 @@ export default function AdminDashboard() {
   const [activities, setActivities] = useState<UserActivity[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  
+  // User search error state
+  const [userSearchError, setUserSearchError] = useState<string | null>(null);
   
   // Get admin status from user data (server-side validated)
   const isAdmin = user?.is_admin || false;
@@ -145,11 +157,46 @@ export default function AdminDashboard() {
   // Tab state
   const [activeTab, setActiveTab] = useState('overview');
   
+  // Sidebar collapse state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  
   // Template execution states
   const [templateExecutions, setTemplateExecutions] = useState<TemplateExecution[]>([]);
   const [templateExecutionsTotal, setTemplateExecutionsTotal] = useState(0);
   const [templateExecutionsPage, setTemplateExecutionsPage] = useState(1);
   const [expandedExecution, setExpandedExecution] = useState<number | null>(null);
+  
+  // Member management states
+  const [expandedClassroom, setExpandedClassroom] = useState<number | null>(null);
+  const [classroomMembers, setClassroomMembers] = useState<{[key: number]: any[]}>({});
+  const [loadingMembers, setLoadingMembers] = useState<{[key: number]: boolean}>({});
+  
+  // Classroom creation states
+  const [isCreatingClassroom, setIsCreatingClassroom] = useState(false);
+  const [newClassroom, setNewClassroom] = useState({
+    name: '',
+    description: '',
+    maxMembers: ''
+  });
+  const [classroomCreationError, setClassroomCreationError] = useState<string>('');
+  const [classroomCreationSuccess, setClassroomCreationSuccess] = useState<string>('');
+  const [creatingClassroom, setCreatingClassroom] = useState(false);
+  
+  // Remove member modal states
+  const [removeModalOpen, setRemoveModalOpen] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState<{classroomId: number, memberId: number, memberName: string} | null>(null);
+  
+  // Delete classroom modal states
+  const [deleteClassroomModalOpen, setDeleteClassroomModalOpen] = useState(false);
+  const [classroomToDelete, setClassroomToDelete] = useState<{id: number, name: string, memberCount: number} | null>(null);
+  const [deletingClassroom, setDeletingClassroom] = useState(false);
+  
+  // Add student states
+  const [addingStudent, setAddingStudent] = useState<{[key: number]: boolean}>({});
+  const [studentEmails, setStudentEmails] = useState<{[key: number]: string}>({});
+  
+  // Copy key feedback state
+  const [copiedClassroomKey, setCopiedClassroomKey] = useState<number | null>(null);
   
   // Template execution filters
   const [templateNameFilter, setTemplateNameFilter] = useState('all');
@@ -160,6 +207,11 @@ export default function AdminDashboard() {
   // Dropdown options
   const [templates, setTemplates] = useState<Array<{id: number, name: string, language: string}>>([]);
   const [combinedUsers, setCombinedUsers] = useState<Array<{username: string, email: string, display: string}>>([]);
+  
+  // Per-classroom admin settings
+  const [classroomSettings, setClassroomSettings] = useState<{[key: number]: {copy_paste_enabled: boolean, isLoading: boolean}}>({});
+  const [loadingClassroomSettings, setLoadingClassroomSettings] = useState<{[key: number]: boolean}>({});
+  const [classroomNotifications, setClassroomNotifications] = useState<{[key: number]: {message: string, type: 'success' | 'error'} | null}>({});
 
   
   const pageSize = 20;
@@ -170,7 +222,7 @@ export default function AdminDashboard() {
       const data = await apiService.getAdminStats();
       setStats(data);
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load stats');
+      console.error('Failed to load stats:', err);
     }
   };
 
@@ -191,17 +243,24 @@ export default function AdminDashboard() {
       setTotalActivities(data.total);
       setCurrentPage(data.page);
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load activities');
+      console.error('Failed to load activities:', err);
     }
   };
 
   // Load users
   const loadUsers = async () => {
     try {
+      setUserSearchError(null);
       const data = await apiService.getAdminUsers(1, 50, userSearch || undefined);
       setAdminUsers(data);
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load users');
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to load users';
+      // Show user search errors inline, not as global errors
+      if (userSearch && (errorMessage.includes('No user found') || errorMessage.includes('not found'))) {
+        setUserSearchError(errorMessage);
+      } else {
+        console.error('Failed to load users:', err);
+      }
     }
   };
 
@@ -216,7 +275,7 @@ export default function AdminDashboard() {
       
       await loadUsers(); // Reload users list
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || `Failed to ${activate ? 'activate' : 'deactivate'} user`);
+      console.error(`Failed to ${activate ? 'activate' : 'deactivate'} user:`, err);
     }
   };
 
@@ -239,7 +298,7 @@ export default function AdminDashboard() {
       setTemplateExecutionsTotal(data.total);
       setTemplateExecutionsPage(data.page);
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load template executions');
+      console.error('Failed to load template executions:', err);
     }
   };
 
@@ -252,6 +311,107 @@ export default function AdminDashboard() {
       username: selectedUser?.username,
       email: selectedUser?.email
     };
+  };
+
+  // Load classroom-specific admin settings
+  const loadClassroomSettings = async (classroomId: number) => {
+    if (classroomSettings[classroomId]) {
+      // Already loaded
+      return;
+    }
+
+    setLoadingClassroomSettings(prev => ({ ...prev, [classroomId]: true }));
+    try {
+      const settings = await apiService.getClassroomAdminSettings(classroomId);
+      setClassroomSettings(prev => ({
+        ...prev,
+        [classroomId]: {
+          copy_paste_enabled: settings.copy_paste_enabled,
+          isLoading: false
+        }
+      }));
+    } catch (err: any) {
+      console.error(`Failed to load classroom ${classroomId} settings:`, err);
+      // Set default values on error
+      setClassroomSettings(prev => ({
+        ...prev,
+        [classroomId]: {
+          copy_paste_enabled: true,
+          isLoading: false
+        }
+      }));
+    } finally {
+      setLoadingClassroomSettings(prev => ({ ...prev, [classroomId]: false }));
+    }
+  };
+
+  // Handle classroom-specific copy-paste toggle
+  const handleClassroomCopyPasteToggle = async (classroomId: number, enabled: boolean) => {
+    // Clear any existing notification
+    setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
+    
+    setClassroomSettings(prev => ({
+      ...prev,
+      [classroomId]: {
+        ...prev[classroomId],
+        isLoading: true
+      }
+    }));
+
+    try {
+      const success = await updateClassroomAdminSettings(classroomId, {
+        copy_paste_enabled: enabled,
+        notes: `Copy-paste ${enabled ? 'enabled' : 'disabled'} by ${user?.username} for classroom ${classroomId}`
+      });
+
+      if (success) {
+        setClassroomSettings(prev => ({
+          ...prev,
+          [classroomId]: {
+            copy_paste_enabled: enabled,
+            isLoading: false
+          }
+        }));
+        
+        // Set inline success notification
+        setClassroomNotifications(prev => ({
+          ...prev,
+          [classroomId]: {
+            message: `Copy-paste ${enabled ? 'enabled' : 'disabled'} successfully`,
+            type: 'success'
+          }
+        }));
+        
+        // Clear notification after 3 seconds
+        setTimeout(() => {
+          setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
+        }, 3000);
+      }
+    } catch (error: any) {
+      console.error(`Failed to update classroom ${classroomId} copy-paste setting:`, error);
+      
+      // Set inline error notification
+      setClassroomNotifications(prev => ({
+        ...prev,
+        [classroomId]: {
+          message: `Failed to update copy-paste setting: ${error.response?.data?.detail || error.message}`,
+          type: 'error'
+        }
+      }));
+      
+      // Clear error notification after 5 seconds
+      setTimeout(() => {
+        setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
+      }, 5000);
+    } finally {
+      setClassroomSettings(prev => ({
+        ...prev,
+        [classroomId]: {
+          ...prev[classroomId],
+          isLoading: false
+        }
+      }));
+    }
   };
 
   // Load dropdown options
@@ -274,7 +434,6 @@ export default function AdminDashboard() {
   // Load all data
   const loadAllData = async () => {
     setLoading(true);
-    setError(null);
     try {
       await Promise.all([
         loadStats(),
@@ -283,6 +442,13 @@ export default function AdminDashboard() {
         loadTemplateExecutions(),
         loadDropdownOptions()
       ]);
+      
+      // Load classroom settings for all classrooms
+      if (user?.classroom_context?.classrooms) {
+        user.classroom_context.classrooms.forEach((classroom: any) => {
+          loadClassroomSettings(classroom.id);
+        });
+      }
     } catch (err: any) {
       console.error('Error loading admin data:', err);
     } finally {
@@ -290,11 +456,239 @@ export default function AdminDashboard() {
     }
   };
 
+  // Handle classroom creation
+  const handleCreateClassroom = async () => {
+    // Clear previous messages
+    setClassroomCreationError('');
+    setClassroomCreationSuccess('');
+    
+    const name = newClassroom.name.trim();
+    if (!name) {
+      setClassroomCreationError('Classroom name is required');
+      return;
+    }
+
+    const description = newClassroom.description.trim() || undefined;
+    const maxMembers = newClassroom.maxMembers ? parseInt(newClassroom.maxMembers) : undefined;
+
+    // Validate max members if provided
+    if (maxMembers !== undefined && (maxMembers < 1 || maxMembers > 1000)) {
+      setClassroomCreationError('Max students must be between 1 and 1000');
+      return;
+    }
+
+    setCreatingClassroom(true);
+    try {
+      await apiService.createClassroom({
+        name,
+        description,
+        max_members: maxMembers,
+        allow_collaboration: true
+      });
+
+      // Show success message
+      setClassroomCreationSuccess(`Classroom "${name}" created successfully!`);
+      
+      // Clear the form and hide it after a delay
+      setTimeout(() => {
+        setNewClassroom({
+          name: '',
+          description: '',
+          maxMembers: ''
+        });
+        setIsCreatingClassroom(false);
+        setClassroomCreationSuccess('');
+      }, 2000);
+
+      // Refresh user data to get updated classroom context
+      const success = await refreshUser();
+      if (!success) {
+        window.location.reload(); // Fallback
+      }
+
+      console.log('Classroom created successfully');
+    } catch (err: any) {
+      console.error('Failed to create classroom:', err);
+      const errorMessage = err.response?.data?.detail || err.message || 'Unknown error occurred';
+      setClassroomCreationError(`Failed to create classroom: ${errorMessage}`);
+    } finally {
+      setCreatingClassroom(false);
+    }
+  };
+
+  // Handle canceling classroom creation
+  const handleCancelClassroomCreation = () => {
+    setNewClassroom({
+      name: '',
+      description: '',
+      maxMembers: ''
+    });
+    setClassroomCreationError('');
+    setClassroomCreationSuccess('');
+    setIsCreatingClassroom(false);
+  };
+
+  // Handle member management
+  const loadClassroomMembers = async (classroomId: number) => {
+    if (classroomMembers[classroomId]) {
+      // Already loaded
+      return;
+    }
+
+    setLoadingMembers(prev => ({ ...prev, [classroomId]: true }));
+    try {
+      const members = await apiService.getClassroomMembers(classroomId);
+      setClassroomMembers(prev => ({ ...prev, [classroomId]: members }));
+    } catch (err: any) {
+      console.error('Failed to load members:', err);
+    } finally {
+      setLoadingMembers(prev => ({ ...prev, [classroomId]: false }));
+    }
+  };
+
+  const handleClassroomClick = async (classroomId: number) => {
+    if (expandedClassroom === classroomId) {
+      setExpandedClassroom(null);
+    } else {
+      setExpandedClassroom(classroomId);
+      setCurrentClassroom(classroomId); // Set current classroom for WebSocket filtering
+      await loadClassroomMembers(classroomId);
+    }
+  };
+
+  const handleRemoveMemberClick = (classroomId: number, memberId: number, memberName: string) => {
+    setMemberToRemove({ classroomId, memberId, memberName });
+    setRemoveModalOpen(true);
+  };
+
+  const confirmRemoveMember = async () => {
+    if (!memberToRemove) return;
+
+    const { classroomId, memberId } = memberToRemove;
+
+    try {
+      await apiService.removeClassroomMember(classroomId, memberId);
+      
+      // Refresh the member list
+      setClassroomMembers(prev => ({
+        ...prev,
+        [classroomId]: prev[classroomId]?.filter(member => member.id !== memberId) || []
+      }));
+      
+      // Note: Member count will be updated on next refresh or page reload
+    } catch (err: any) {
+      console.error('Remove member error:', err);
+    } finally {
+      setRemoveModalOpen(false);
+      setMemberToRemove(null);
+    }
+  };
+
+  const cancelRemoveMember = () => {
+    setRemoveModalOpen(false);
+    setMemberToRemove(null);
+  };
+
+  const handleAddStudentByEmail = async (classroomId: number) => {
+    const email = studentEmails[classroomId]?.trim();
+    if (!email) {
+      setUserSearchError('Please enter a student email address');
+      return;
+    }
+
+    setAddingStudent(prev => ({ ...prev, [classroomId]: true }));
+    setUserSearchError(null); // Clear any previous errors
+    try {
+      await apiService.addStudentToClassroom(classroomId, email);
+      
+      // Clear the email input
+      setStudentEmails(prev => ({ ...prev, [classroomId]: '' }));
+      
+      // Refresh the member list to show the new student
+      setClassroomMembers(prev => ({ ...prev, [classroomId]: [] })); // Clear to force reload
+      await loadClassroomMembers(classroomId);
+    } catch (err: any) {
+      console.error('Add student error:', err);
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to add student';
+      setUserSearchError(errorMessage);
+    } finally {
+      setAddingStudent(prev => ({ ...prev, [classroomId]: false }));
+    }
+  };
+
+  const copyClassroomKey = (key: string, classroomId: number) => {
+    navigator.clipboard.writeText(key);
+    setCopiedClassroomKey(classroomId);
+    // Clear the feedback after 2 seconds
+    setTimeout(() => {
+      setCopiedClassroomKey(null);
+    }, 2000);
+  };
+
+  // Delete classroom functions
+  const handleDeleteClassroomClick = (classroomId: number, classroomName: string, memberCount: number) => {
+    setClassroomToDelete({ id: classroomId, name: classroomName, memberCount });
+    setDeleteClassroomModalOpen(true);
+  };
+
+  const confirmDeleteClassroom = async () => {
+    if (!classroomToDelete) return;
+
+    setDeletingClassroom(true);
+    try {
+      const result = await apiService.deleteClassroom(classroomToDelete.id);
+      
+      // Show success message - classroom will be removed from user context on refresh
+      console.log('Classroom deleted:', result);
+      
+      // Refresh user data to update classroom context
+      const success = await refreshUser();
+      if (!success) {
+        window.location.reload(); // Fallback if refresh fails
+      }
+      
+    } catch (err: any) {
+      console.error('Delete classroom error:', err);
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to delete classroom';
+      // For now, we'll log the error. In production, you might want to show a toast notification
+      alert(`Error: ${errorMessage}`);
+    } finally {
+      setDeletingClassroom(false);
+      setDeleteClassroomModalOpen(false);
+      setClassroomToDelete(null);
+    }
+  };
+
+  const cancelDeleteClassroom = () => {
+    setDeleteClassroomModalOpen(false);
+    setClassroomToDelete(null);
+  };
+
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
       loadAllData();
-      loadAdminSettings();
-      initializeWebSocket();
+      loadAdminSettings(isAuthenticated);
+      
+      // Initialize WebSocket with user and classroom context
+      const classroomIds = user?.classroom_context?.classrooms?.map((c: any) => c.id) || [];
+      initializeWebSocket(user?.id, classroomIds);
+      
+      // Debug: Log user data to understand classroom context
+      console.log('🔍 Current user data:', user);
+      console.log('🔍 Classroom context:', user?.classroom_context);
+      
+      // Force refresh user data to get latest classroom context
+      const refreshUserData = async () => {
+        try {
+          const success = await refreshUser();
+          console.log('🔄 User data refresh success:', success);
+          console.log('🔄 Updated user:', user);
+        } catch (err) {
+          console.error('Failed to refresh user data:', err);
+        }
+      };
+      
+      refreshUserData();
     } else {
       setLoading(false);
     }
@@ -423,33 +817,35 @@ export default function AdminDashboard() {
     );
   }
 
-  if (error) {
+  // Check if user has no classrooms
+  if (user?.classroom_context && !user.classroom_context.has_classroom) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background p-6">
-        <div className="text-center max-w-md">
-          <AlertTriangle className="w-12 h-12 text-destructive mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-destructive mb-2">Admin Dashboard Error</h2>
-          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 mb-4">
-            <p className="text-destructive font-mono text-sm">{error}</p>
-          </div>
-          <p className="text-muted-foreground mb-4 text-sm">
-            This usually happens when:
-            <br />• Backend server is not running
-            <br />• Authentication token expired
-            <br />• Admin endpoints are not accessible
-          </p>
-          <div className="space-x-2">
-            <Button onClick={loadAllData} variant="outline">
-              Try Again
-            </Button>
-            <Button onClick={() => navigate('/')} variant="default">
-              Go to IDE
-            </Button>
+      <div className="min-h-screen bg-background p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-foreground mb-2">No Classroom Access</h2>
+              <p className="text-muted-foreground mb-4">
+                You don't have access to any classrooms yet.<br/>
+                Contact your system administrator to get added to a classroom.
+              </p>
+              <div className="space-x-2">
+                <Button onClick={() => navigate('/')} variant="outline">
+                  Go to IDE
+                </Button>
+                <Button onClick={loadAllData} variant="default">
+                  Refresh
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
   }
+
+  // Note: Removed full-page error display, errors now shown inline
 
   return (
     <div className="min-h-screen bg-background p-4 lg:p-6">
@@ -461,7 +857,27 @@ export default function AdminDashboard() {
               <Shield className="w-6 lg:w-8 h-6 lg:h-8 mr-2 lg:mr-3 shrink-0" />
               <span className="truncate">Admin Dashboard</span>
             </h1>
-            <p className="text-muted-foreground text-sm lg:text-base">Monitor system activity and manage users</p>
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-sm lg:text-base">Monitor system activity and manage users</p>
+              {user?.classroom_context?.current_classroom && (
+                <div className="flex items-center text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground mr-1">Classroom:</span>
+                  {user.classroom_context.current_classroom.name}
+                  <Badge variant="outline" className="ml-2 text-xs">
+                    {user.classroom_context.current_classroom.role}
+                  </Badge>
+                  <span className="mx-2">•</span>
+                  <span>{user.classroom_context.current_classroom.member_count} members</span>
+                </div>
+              )}
+              {user?.classroom_context && !user.classroom_context.has_classroom && (
+                <div className="text-sm text-amber-600 dark:text-amber-400">
+                  ⚠️ No classroom assigned. Contact system administrator.
+                </div>
+              )}
+
+
+            </div>
           </div>
           <Button onClick={loadAllData} variant="outline" className="shrink-0">
             <RefreshCw className="w-4 h-4 mr-2" />
@@ -469,19 +885,23 @@ export default function AdminDashboard() {
           </Button>
         </div>
 
-        {/* Main Content with Responsive Tabs/Dropdown */}
+
+
+        {/* Main Content with Left Panel/Right Panel Layout */}
         <div className="w-full">
           {/* Mobile Dropdown */}
-          <div className="block md:hidden mb-6">
+          <div className="block lg:hidden mb-6">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="w-full justify-between">
                   <span className="flex items-center">
                     <Menu className="w-4 h-4 mr-2" />
                     {activeTab === 'overview' && 'System Overview'}
-                    {activeTab === 'templates' && 'Templates'}
+                    {activeTab === 'classrooms' && 'Classrooms'}
+                    {activeTab === 'templates' && 'Professor Templates'}
                     {activeTab === 'assignments' && 'Assignments'}
-                    {activeTab === 'template-executions' && 'Template Executions'}
+                    {activeTab === 'template-executions' && 'Executions'}
+                    {activeTab === 'template-submissions' && 'Submissions'}
                     {activeTab === 'users' && 'Users'}
                   </span>
                   <ChevronDown className="w-4 h-4" />
@@ -492,113 +912,148 @@ export default function AdminDashboard() {
                   <BarChart3 className="w-4 h-4 mr-2" />
                   System Overview
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('classrooms')}>
+                  <Shield className="w-4 h-4 mr-2" />
+                  Classrooms
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('templates')}>
                   <FileText className="w-4 h-4 mr-2" />
-                  Template Management
+                  Professor Templates
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('assignments')}>
                   <Code className="w-4 h-4 mr-2" />
-                  Assignment Management
+                  Assignments
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('template-executions')}>
                   <Play className="w-4 h-4 mr-2" />
-                  Template Executions
+                  Executions
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('template-submissions')}>
+                  <Send className="w-4 h-4 mr-2" />
+                  Submissions
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('users')}>
                   <Users className="w-4 h-4 mr-2" />
-                  User Management
+                  Users
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
-          {/* Desktop Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-5">
-              <TabsTrigger value="overview" className="text-sm">
-                <BarChart3 className="w-4 h-4 mr-2" />
-                System Overview
-              </TabsTrigger>
-              <TabsTrigger value="templates" className="text-sm">
-                <FileText className="w-4 h-4 mr-2" />
-                Templates
-              </TabsTrigger>
-              <TabsTrigger value="assignments" className="text-sm">
-                <Code className="w-4 h-4 mr-2" />
-                Assignments
-              </TabsTrigger>
-              <TabsTrigger value="template-executions" className="text-sm">
-                <Play className="w-4 h-4 mr-2" />
-                Template Executions
-              </TabsTrigger>
-              <TabsTrigger value="users" className="text-sm">
-                <Users className="w-4 h-4 mr-2" />
-                Users
-              </TabsTrigger>
-            </TabsList>
-          
-            {/* Tab Content */}
-            <div className="mt-6">
+          {/* Desktop Layout: Left Panel + Right Panel */}
+          <div className={`hidden lg:grid lg:gap-6 lg:h-[calc(100vh-200px)] ${
+            sidebarCollapsed ? 'lg:grid-cols-[80px_1fr]' : 'lg:grid-cols-[280px_1fr]'
+          }`}>
+            {/* Left Navigation Panel */}
+            <Card className="h-full flex flex-col">
+              <CardHeader className="pb-3 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  {!sidebarCollapsed && (
+                    <CardTitle className="text-lg">Dashboard Menu</CardTitle>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                    className="h-8 w-8 p-0"
+                    title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                  >
+                    {sidebarCollapsed ? (
+                      <PanelLeftOpen className="w-4 h-4" />
+                    ) : (
+                      <PanelLeft className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0 flex-1 overflow-hidden">
+                <nav className="space-y-1 p-4 h-full">
+                  <Button
+                    variant={activeTab === 'overview' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('overview')}
+                    title={sidebarCollapsed ? 'System Overview' : ''}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">System Overview</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'classrooms' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('classrooms')}
+                    title={sidebarCollapsed ? 'Classrooms' : ''}
+                  >
+                    <Shield className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Classrooms</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'templates' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('templates')}
+                    title={sidebarCollapsed ? 'Professor Templates' : ''}
+                  >
+                    <FileText className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Professor Templates</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'assignments' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('assignments')}
+                    title={sidebarCollapsed ? 'Assignments' : ''}
+                  >
+                    <Code className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Assignments</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'template-executions' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('template-executions')}
+                    title={sidebarCollapsed ? 'Executions' : ''}
+                  >
+                    <Play className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Executions</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'template-submissions' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('template-submissions')}
+                    title={sidebarCollapsed ? 'Submissions' : ''}
+                  >
+                    <Send className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Submissions</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'users' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('users')}
+                    title={sidebarCollapsed ? 'Users' : ''}
+                  >
+                    <Users className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Users</span>}
+                  </Button>
+                </nav>
+              </CardContent>
+            </Card>
+
+            {/* Right Content Panel */}
+            <Card className="h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6">
               {activeTab === 'overview' && (
                 <div className="space-y-6">
-
-        {/* Admin Controls Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center">
-                <Shield className="w-5 h-5 mr-2" />
-                Admin Controls
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {/* Copy-Paste Toggle */}
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="space-y-1">
-                  <div className="font-medium">Copy-Paste Functionality</div>
-                  <div className="text-sm text-muted-foreground">
-                    Control whether users can copy and paste code in the editor. Admins can always copy-paste.
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-muted-foreground">
-                    {adminSettings.copy_paste_enabled ? 'Enabled' : 'Disabled'}
-                  </span>
-                  <Switch
-                    checked={adminSettings.copy_paste_enabled}
-                    onCheckedChange={async (checked) => {
-                      const success = await updateAdminSettings({
-                        copy_paste_enabled: checked,
-                        notes: `Copy-paste ${checked ? 'enabled' : 'disabled'} by ${user?.username}`
-                      });
-                      if (!success && settingsError) {
-                        console.error('Failed to update copy-paste setting:', settingsError);
-                      }
-                    }}
-                    disabled={settingsLoading}
-                  />
-                </div>
-              </div>
-              
-              {/* Status Info */}
-              {adminSettings.updated_by && (
-                <div className="text-xs text-muted-foreground">
-                  Last updated by {adminSettings.updated_by}
-                  {adminSettings.updated_at && ` on ${new Date(adminSettings.updated_at).toLocaleString()}`}
-                </div>
-              )}
-              
-              {/* Error Display */}
-              {settingsError && (
-                <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">
-                  Error: {settingsError}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Stats Cards */}
         {stats && (
@@ -746,7 +1201,7 @@ export default function AdminDashboard() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3">
                   {activities.map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
@@ -840,13 +1295,34 @@ export default function AdminDashboard() {
                   <Input
                     placeholder="Search users..."
                     value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    className="flex-1"
+                    onChange={(e) => {
+                      setUserSearch(e.target.value);
+                      if (userSearchError) setUserSearchError(null); // Clear error when typing
+                    }}
+                    className={`flex-1 ${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
                   />
                 </div>
+                
+                {/* Inline User Search Error */}
+                {userSearchError && (
+                  <div className="mt-2 flex items-start space-x-2 p-2 border border-red-200 rounded bg-red-50 dark:bg-red-950/20 dark:border-red-900/30">
+                    <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-red-700 dark:text-red-400">{userSearchError}</p>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setUserSearchError(null)}
+                      className="h-6 w-6 p-0 text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                    >
+                      ×
+                    </Button>
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3">
                   {adminUsers.map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
@@ -948,6 +1424,487 @@ export default function AdminDashboard() {
             </Card>
                 </div>
               </div>
+                </div>
+              )}
+              
+              {activeTab === 'classrooms' && (
+                <div className="space-y-6">
+                  {/* Classroom Management */}
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center">
+                            <Shield className="w-5 h-5 mr-2" />
+                            Classroom Management
+                          </CardTitle>
+                          <p className="text-muted-foreground text-sm mt-1">
+                            Manage classrooms, members, and classroom-specific settings
+                          </p>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          className="shrink-0"
+                          onClick={() => setIsCreatingClassroom(!isCreatingClassroom)}
+                        >
+                          <Shield className="w-4 h-4 mr-2" />
+                          {isCreatingClassroom ? 'Cancel' : 'Create Classroom'}
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+
+                        {/* Create classroom form - collapsible */}
+                        {isCreatingClassroom && (
+                          <Card>
+                            <CardHeader>
+                              <div className="flex items-center justify-between">
+                                <CardTitle>Create New Classroom</CardTitle>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={handleCancelClassroomCreation}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                  <Label htmlFor="classroom-name">Name *</Label>
+                                  <Input
+                                    id="classroom-name"
+                                    value={newClassroom.name}
+                                    onChange={(e) => setNewClassroom(prev => ({...prev, name: e.target.value}))}
+                                    placeholder="e.g., CS101 Spring 2024"
+                                    className="mt-1"
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor="classroom-description">Description</Label>
+                                  <Input
+                                    id="classroom-description"
+                                    value={newClassroom.description}
+                                    onChange={(e) => setNewClassroom(prev => ({...prev, description: e.target.value}))}
+                                    placeholder="Brief description (optional)"
+                                    className="mt-1"
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor="max-members">Max Students</Label>
+                                  <Input
+                                    id="max-members"
+                                    type="number"
+                                    value={newClassroom.maxMembers}
+                                    onChange={(e) => setNewClassroom(prev => ({...prev, maxMembers: e.target.value}))}
+                                    placeholder="100"
+                                    min="1"
+                                    max="1000"
+                                    className="mt-1"
+                                  />
+                                </div>
+                              </div>
+                              
+                              {/* Error and Success Messages */}
+                              {classroomCreationError && (
+                                <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                                  <div className="flex items-center space-x-2">
+                                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                                    <span className="text-sm text-destructive font-medium">
+                                      {classroomCreationError}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {classroomCreationSuccess && (
+                                <div className="p-3 rounded-md bg-green-50 border border-green-200">
+                                  <div className="flex items-center space-x-2">
+                                    <Check className="h-4 w-4 text-green-600" />
+                                    <span className="text-sm text-green-700 font-medium">
+                                      {classroomCreationSuccess}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              <div className="flex items-center gap-3 pt-4">
+                                <Button 
+                                  onClick={handleCreateClassroom}
+                                  disabled={creatingClassroom || !newClassroom.name.trim()}
+                                  className="px-6"
+                                >
+                                  {creatingClassroom ? 'Creating...' : 'Create Classroom'}
+                                </Button>
+                                <Button 
+                                  variant="outline"
+                                  onClick={handleCancelClassroomCreation}
+                                  disabled={creatingClassroom}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {user?.classroom_context?.classrooms && user.classroom_context.classrooms.length > 0 ? (
+                          <div className="space-y-4">
+                            {user.classroom_context.classrooms.map((classroom) => (
+                            <div key={classroom.id} className="border rounded-lg">
+                              <div 
+                                className="p-4 hover:bg-muted/50 transition-colors cursor-pointer"
+                                onClick={() => handleClassroomClick(classroom.id)}
+                              >
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <div className="flex items-center space-x-2">
+                                        <h3 className="font-semibold">{classroom.name}</h3>
+                                        <Badge variant="outline" className="text-xs">
+                                          {classroom.role}
+                                        </Badge>
+                                        {expandedClassroom === classroom.id ? (
+                                          <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                        ) : (
+                                          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                        )}
+                                      </div>
+                                      <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        className="h-8 w-8 p-0"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteClassroomClick(classroom.id, classroom.name, classroom.member_count);
+                                        }}
+                                        title="Delete classroom"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </div>
+                                    <div className="text-sm text-muted-foreground space-y-1">
+                                      <div className="flex items-center">
+                                        <span className="font-medium">Classroom Key:</span> 
+                                        <code className="ml-1 px-2 py-1 bg-muted rounded text-xs font-mono">
+                                          {classroom.key}
+                                        </code>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="ml-2 h-6 w-6 p-0"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            copyClassroomKey(classroom.key, classroom.id);
+                                          }}
+                                          title={copiedClassroomKey === classroom.id ? "Copied!" : "Copy classroom key"}
+                                        >
+                                          {copiedClassroomKey === classroom.id ? (
+                                            <Check className="w-3 h-3 text-green-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3" />
+                                          )}
+                                        </Button>
+                                      </div>
+                                      <div>
+                                        <span className="font-medium">Members:</span> {classroom.member_count}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Copy-Paste Toggle Section - Independent of row click */}
+                              <div className="px-4 py-3 bg-muted/10 border-t border-muted/50">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-sm font-medium">Copy-Paste:</span>
+                                    <span className="text-sm text-muted-foreground">
+                                      {loadingClassroomSettings[classroom.id] ? (
+                                        'Loading...'
+                                      ) : classroomSettings[classroom.id] ? (
+                                        classroomSettings[classroom.id].copy_paste_enabled ? 'Enabled' : 'Disabled'
+                                      ) : (
+                                        'Default'
+                                      )}
+                                    </span>
+                                  </div>
+                                  <Switch
+                                    checked={classroomSettings[classroom.id]?.copy_paste_enabled ?? true}
+                                    onCheckedChange={(checked) => handleClassroomCopyPasteToggle(classroom.id, checked)}
+                                    disabled={loadingClassroomSettings[classroom.id] || classroomSettings[classroom.id]?.isLoading}
+                                    className="scale-90"
+                                  />
+                                </div>
+                                
+                                {/* Inline Notification for this classroom */}
+                                {classroomNotifications[classroom.id] && (
+                                  <div className={`mt-2 p-2 rounded text-sm ${
+                                    classroomNotifications[classroom.id]?.type === 'success' 
+                                      ? 'bg-green-50 dark:bg-green-900/50 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                                      : 'bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                                  }`}>
+                                    <div className="flex items-center">
+                                      {classroomNotifications[classroom.id]?.type === 'success' ? (
+                                        <Check className="w-4 h-4 mr-2" />
+                                      ) : (
+                                        <AlertTriangle className="w-4 h-4 mr-2" />
+                                      )}
+                                      {classroomNotifications[classroom.id]?.message}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Expanded Member List */}
+                              {expandedClassroom === classroom.id && (
+                                <div className="border-t bg-muted/20">
+                                  {loadingMembers[classroom.id] ? (
+                                    <div className="p-4 text-center">
+                                      <div className="flex items-center justify-center space-x-2">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                                        <span className="text-sm text-muted-foreground">Loading members...</span>
+                                      </div>
+                                    </div>
+                                  ) : classroomMembers[classroom.id] && classroomMembers[classroom.id].length > 0 ? (
+                                    <div className="divide-y">
+                                      {classroomMembers[classroom.id].map((member: any) => (
+                                        <div key={member.id} className="p-4 flex items-center justify-between">
+                                          <div className="flex-1">
+                                            <div className="flex items-center space-x-3">
+                                              <div className="font-medium">{member.username}</div>
+                                              <Badge variant={member.role === 'TEACHER' ? 'default' : 'secondary'} className="text-xs">
+                                                {member.role}
+                                              </Badge>
+                                            </div>
+                                            <div className="text-sm text-muted-foreground">
+                                              {member.email}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                              Joined: {new Date(member.joined_at).toLocaleDateString()}
+                                            </div>
+                                          </div>
+                                          {member.role !== 'TEACHER' && (
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => handleRemoveMemberClick(classroom.id, member.id, member.username)}
+                                              className="text-red-600 hover:text-red-700 hover:border-red-300"
+                                            >
+                                              <UserMinus className="w-3 h-3 mr-1" />
+                                              Remove
+                                            </Button>
+                                          )}
+                                        </div>
+                                      ))}
+                                      
+                                      {/* Add student by email */}
+                                      <div className="p-4 border-t bg-muted/10">
+                                        <div className="space-y-3">
+                                          <div className="font-medium text-sm">Add Student by Email</div>
+                                          <div className="flex space-x-2">
+                                            <Input
+                                              placeholder="student@example.com"
+                                              type="email"
+                                              value={studentEmails[classroom.id] || ''}
+                                              onChange={(e) => {
+                                                setStudentEmails(prev => ({ 
+                                                  ...prev, 
+                                                  [classroom.id]: e.target.value 
+                                                }));
+                                                if (userSearchError) setUserSearchError(null); // Clear error when typing
+                                              }}
+                                              className={`flex-1 ${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
+                                              disabled={addingStudent[classroom.id]}
+                                            />
+                                            <Button
+                                              onClick={() => handleAddStudentByEmail(classroom.id)}
+                                              disabled={addingStudent[classroom.id] || !studentEmails[classroom.id]?.trim()}
+                                              size="sm"
+                                            >
+                                              {addingStudent[classroom.id] ? (
+                                                <>
+                                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                                                  Adding...
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <UserPlus className="w-3 h-3 mr-1" />
+                                                  Add
+                                                </>
+                                              )}
+                                            </Button>
+                                          </div>
+                                          
+                                          {/* Error display for add student */}
+                                          {userSearchError && (
+                                            <div className="text-sm text-red-600 dark:text-red-400">
+                                              {userSearchError}
+                                            </div>
+                                          )}
+                                          
+                                          <div className="text-xs text-muted-foreground">
+                                            Add existing users to this classroom by their registered email address.
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Registration instructions */}
+                                      <div className="p-4 bg-blue-50 dark:bg-blue-950 border-t">
+                                        <div className="text-sm">
+                                          <div className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                                            For New Students
+                                          </div>
+                                          <div className="text-blue-700 dark:text-blue-200">
+                                            Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded">{classroom.key}</code> so new students can register for this classroom.
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 text-center text-muted-foreground">
+                                      <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                      <p>No members found</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                            <p>No classrooms found in user context</p>
+                            <p className="text-sm mb-4">This might be a data loading issue</p>
+                            <div className="space-x-2">
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => window.location.reload()}
+                              >
+                                Refresh Page
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const success = await refreshUser();
+                                    console.log('Manual refresh result:', success);
+                                    console.log('Updated user:', user);
+                                    console.log(`Refresh ${success ? 'succeeded' : 'failed'}. Check console for details.`);
+                                  } catch (err) {
+                                    console.error('Failed to refresh user data:', err);
+                                  }
+                                }}
+                              >
+                                Debug Refresh
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  {/* Remove Member Confirmation Modal */}
+                  <Dialog open={removeModalOpen} onOpenChange={setRemoveModalOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center text-red-600">
+                          <UserMinus className="w-5 h-5 mr-2" />
+                          Remove Student
+                        </DialogTitle>
+                      </DialogHeader>
+                      <div className="py-4">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Are you sure you want to remove <strong>{memberToRemove?.memberName}</strong> from the classroom?
+                        </p>
+                        <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                          <div className="text-sm text-yellow-800 dark:text-yellow-200">
+                            <strong>Warning:</strong> This action cannot be undone. The student will lose access to all classroom content and will need to re-register using the classroom key to rejoin.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex justify-end space-x-2">
+                        <Button variant="outline" onClick={cancelRemoveMember}>
+                          Cancel
+                        </Button>
+                        <Button 
+                          variant="destructive" 
+                          onClick={confirmRemoveMember}
+                          className="bg-red-600 hover:bg-red-700"
+                        >
+                          <UserMinus className="w-3 h-3 mr-1" />
+                          Remove Student
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                  
+                  {/* Delete Classroom Confirmation Modal */}
+                  <Dialog open={deleteClassroomModalOpen} onOpenChange={setDeleteClassroomModalOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center text-red-600">
+                          <Trash2 className="w-5 h-5 mr-2" />
+                          Delete Classroom
+                        </DialogTitle>
+                      </DialogHeader>
+                      <div className="py-4">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Are you sure you want to delete the classroom <strong>"{classroomToDelete?.name}"</strong>?
+                        </p>
+                        
+                        <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
+                          <div className="text-sm text-red-800 dark:text-red-200 space-y-2">
+                            <div className="flex items-center">
+                              <AlertTriangle className="w-4 h-4 mr-2 flex-shrink-0" />
+                              <strong>Permanent Action - Cannot be undone!</strong>
+                            </div>
+                            <ul className="ml-6 space-y-1 text-xs">
+                              <li>• All {classroomToDelete?.memberCount || 0} members will lose access to this classroom</li>
+                              <li>• Students will no longer be able to join using the classroom key</li>
+                              <li>• All classroom-specific settings and data will be permanently deleted</li>
+                              <li>• Members will need to join a new classroom to continue using the platform</li>
+                            </ul>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                          <div className="text-sm text-blue-800 dark:text-blue-200">
+                            <strong>Alternative:</strong> Consider deactivating the classroom temporarily instead of permanent deletion, or moving students to another classroom first.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex justify-end space-x-2">
+                        <Button variant="outline" onClick={cancelDeleteClassroom} disabled={deletingClassroom}>
+                          Cancel
+                        </Button>
+                        <Button 
+                          variant="destructive" 
+                          onClick={confirmDeleteClassroom}
+                          disabled={deletingClassroom}
+                          className="bg-red-600 hover:bg-red-700"
+                        >
+                          {deletingClassroom ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                              Deleting...
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="w-3 h-3 mr-1" />
+                              Delete Classroom
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               )}
               
@@ -1222,6 +2179,12 @@ export default function AdminDashboard() {
                   </Card>
                 </div>
               )}
+
+              {activeTab === 'template-submissions' && (
+                <div className="space-y-6">
+                  <TemplateSubmissions />
+                </div>
+              )}
               
               {activeTab === 'users' && (
                 <div className="space-y-6">
@@ -1243,7 +2206,7 @@ export default function AdminDashboard() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3">
                   {adminUsers.map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
@@ -1346,7 +2309,639 @@ export default function AdminDashboard() {
                 </div>
               )}
             </div>
-          </Tabs>
+            </Card>
+          </div>
+
+          {/* Mobile Content - Show below dropdown on small screens */}
+          <div className="block lg:hidden">
+            <div className="mt-6">
+              {activeTab === 'overview' && (
+                <div className="space-y-6">
+
+        {/* Stats Cards */}
+        {stats && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Users className="w-4 h-4 mr-2" />
+                  Total Users
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.total_users}</div>
+                <p className="text-xs text-muted-foreground">
+                  +{stats.new_users_today} today
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Code className="w-4 h-4 mr-2" />
+                  Code Executions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.total_code_executions}</div>
+                <p className="text-xs text-muted-foreground">
+                  +{stats.executions_today} today
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Share2 className="w-4 h-4 mr-2" />
+                  Collaboration Sessions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.total_collaboration_sessions}</div>
+                <p className="text-xs text-muted-foreground">
+                  {stats.active_sessions} active
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <AlertTriangle className="w-4 h-4 mr-2" />
+                  Error Rate
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.error_rate_percentage}%</div>
+                <p className="text-xs text-muted-foreground">
+                  of executions
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Popular Languages */}
+        {stats && stats.popular_languages.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <TrendingUp className="w-5 h-5 mr-2" />
+                Popular Languages
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {stats.popular_languages.map((lang) => (
+                  <div key={lang.language} className="text-center">
+                    <div className="text-2xl font-bold">{lang.count}</div>
+                    <div className="text-sm text-muted-foreground capitalize">
+                      {lang.language}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+            {/* Recent Activities Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span className="flex items-center">
+                    <Activity className="w-5 h-5 mr-2" />
+                    Recent Activities
+                  </span>
+                  <Badge variant="outline">{activities.length} shown</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 max-h-80 overflow-y-auto">
+                  {activities.slice(0, 5).map((activity) => (
+                    <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start space-x-3">
+                          {getActivityIcon(activity.activity_type)}
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2 mb-1">
+                              <span className="font-medium text-sm">
+                                {activity.username || 'Anonymous'}
+                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                {activity.activity_type.replace('_', ' ')}
+                              </Badge>
+                              {getStatusBadge(activity.status)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {formatDate(activity.timestamp)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+                </div>
+              )}
+              
+              {activeTab === 'classrooms' && (
+                <div className="space-y-4">
+                  {/* Mobile Classroom Management */}
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center">
+                            <Shield className="w-5 h-5 mr-2" />
+                            Classroom Management
+                          </CardTitle>
+                          <p className="text-muted-foreground text-sm mt-1">
+                            Manage classrooms and settings
+                          </p>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          onClick={() => setIsCreatingClassroom(!isCreatingClassroom)}
+                          className="text-xs"
+                        >
+                          <Shield className="w-4 h-4 mr-1" />
+                          {isCreatingClassroom ? 'Cancel' : 'Create'}
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+
+                        {/* Create classroom form - mobile optimized */}
+                        {isCreatingClassroom && (
+                          <div className="border rounded-lg p-4 bg-muted/20">
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="font-medium">Create New Classroom</h4>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={handleCancelClassroomCreation}
+                                className="h-8 w-8 p-0"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                            <div className="space-y-3">
+                              <div>
+                                <Label htmlFor="mobile-classroom-name" className="text-sm">Name *</Label>
+                                <Input
+                                  id="mobile-classroom-name"
+                                  value={newClassroom.name}
+                                  onChange={(e) => setNewClassroom(prev => ({...prev, name: e.target.value}))}
+                                  placeholder="e.g., CS101 Spring 2024"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="mobile-classroom-description" className="text-sm">Description</Label>
+                                <Input
+                                  id="mobile-classroom-description"
+                                  value={newClassroom.description}
+                                  onChange={(e) => setNewClassroom(prev => ({...prev, description: e.target.value}))}
+                                  placeholder="Brief description (optional)"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="mobile-max-members" className="text-sm">Max Students</Label>
+                                <Input
+                                  id="mobile-max-members"
+                                  type="number"
+                                  value={newClassroom.maxMembers}
+                                  onChange={(e) => setNewClassroom(prev => ({...prev, maxMembers: e.target.value}))}
+                                  placeholder="100"
+                                  min="1"
+                                  max="1000"
+                                  className="mt-1"
+                                />
+                              </div>
+                              
+                              {/* Error and Success Messages */}
+                              {classroomCreationError && (
+                                <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                                  <div className="flex items-center space-x-2">
+                                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                                    <span className="text-sm text-destructive font-medium">
+                                      {classroomCreationError}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {classroomCreationSuccess && (
+                                <div className="p-3 rounded-md bg-green-50 border border-green-200">
+                                  <div className="flex items-center space-x-2">
+                                    <Check className="h-4 w-4 text-green-600" />
+                                    <span className="text-sm text-green-700 font-medium">
+                                      {classroomCreationSuccess}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              <div className="flex items-center gap-2 pt-2">
+                                <Button 
+                                  onClick={handleCreateClassroom}
+                                  disabled={creatingClassroom || !newClassroom.name.trim()}
+                                  size="sm"
+                                  className="flex-1"
+                                >
+                                  {creatingClassroom ? 'Creating...' : 'Create Classroom'}
+                                </Button>
+                                <Button 
+                                  variant="outline"
+                                  onClick={handleCancelClassroomCreation}
+                                  disabled={creatingClassroom}
+                                  size="sm"
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {user?.classroom_context?.classrooms && user.classroom_context.classrooms.length > 0 ? (
+                          <div className="space-y-3">
+                            {user.classroom_context.classrooms.map((classroom) => (
+                            <div key={classroom.id} className="border rounded-lg">
+                              <div 
+                                className="p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                                onClick={() => handleClassroomClick(classroom.id)}
+                              >
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <div className="flex items-center space-x-2">
+                                        <h4 className="font-semibold text-sm truncate">{classroom.name}</h4>
+                                        <Badge variant="outline" className="text-xs shrink-0">
+                                          {classroom.role}
+                                        </Badge>
+                                      </div>
+                                      <div className="flex items-center space-x-1">
+                                        {expandedClassroom === classroom.id ? (
+                                          <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                        ) : (
+                                          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                        )}
+                                        <Button
+                                          variant="destructive"
+                                          size="sm"
+                                          className="h-6 w-6 p-0 ml-2"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteClassroomClick(classroom.id, classroom.name, classroom.member_count);
+                                          }}
+                                          title="Delete classroom"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground space-y-1">
+                                      <div className="flex items-center justify-between">
+                                        <span><span className="font-medium">Key:</span> 
+                                        <code className="ml-1 px-1 py-0.5 bg-muted rounded text-xs font-mono">
+                                          {classroom.key}
+                                        </code></span>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 w-6 p-0"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            copyClassroomKey(classroom.key, classroom.id);
+                                          }}
+                                          title={copiedClassroomKey === classroom.id ? "Copied!" : "Copy classroom key"}
+                                        >
+                                          {copiedClassroomKey === classroom.id ? (
+                                            <Check className="w-3 h-3 text-green-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3" />
+                                          )}
+                                        </Button>
+                                      </div>
+                                      <div>
+                                        <span className="font-medium">Members:</span> {classroom.member_count}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Copy-Paste Toggle Section */}
+                              <div className="px-3 py-2 bg-muted/10 border-t border-muted/50">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-xs font-medium">Copy-Paste:</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {loadingClassroomSettings[classroom.id] ? (
+                                        'Loading...'
+                                      ) : classroomSettings[classroom.id] ? (
+                                        classroomSettings[classroom.id].copy_paste_enabled ? 'Enabled' : 'Disabled'
+                                      ) : (
+                                        'Default'
+                                      )}
+                                    </span>
+                                  </div>
+                                  <Switch
+                                    checked={classroomSettings[classroom.id]?.copy_paste_enabled ?? true}
+                                    onCheckedChange={(checked) => handleClassroomCopyPasteToggle(classroom.id, checked)}
+                                    disabled={loadingClassroomSettings[classroom.id] || classroomSettings[classroom.id]?.isLoading}
+                                    className="scale-75"
+                                  />
+                                </div>
+                                
+                                {/* Inline Notification for this classroom */}
+                                {classroomNotifications[classroom.id] && (
+                                  <div className={`mt-2 p-2 rounded text-xs ${
+                                    classroomNotifications[classroom.id]?.type === 'success' 
+                                      ? 'bg-green-50 dark:bg-green-900/50 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                                      : 'bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                                  }`}>
+                                    <div className="flex items-center">
+                                      {classroomNotifications[classroom.id]?.type === 'success' ? (
+                                        <Check className="w-3 h-3 mr-1" />
+                                      ) : (
+                                        <AlertTriangle className="w-3 h-3 mr-1" />
+                                      )}
+                                      {classroomNotifications[classroom.id]?.message}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Expanded Member List - Mobile optimized */}
+                              {expandedClassroom === classroom.id && (
+                                <div className="border-t bg-muted/20">
+                                  {loadingMembers[classroom.id] ? (
+                                    <div className="p-4 text-center">
+                                      <div className="flex items-center justify-center space-x-2">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                                        <span className="text-sm text-muted-foreground">Loading members...</span>
+                                      </div>
+                                    </div>
+                                  ) : classroomMembers[classroom.id] && classroomMembers[classroom.id].length > 0 ? (
+                                    <div className="divide-y">
+                                      {classroomMembers[classroom.id].map((member: any) => (
+                                        <div key={member.id} className="p-3">
+                                          <div className="flex items-center justify-between">
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center space-x-2">
+                                                <div className="font-medium text-sm truncate">{member.username}</div>
+                                                <Badge variant={member.role === 'TEACHER' ? 'default' : 'secondary'} className="text-xs shrink-0">
+                                                  {member.role}
+                                                </Badge>
+                                              </div>
+                                              <div className="text-xs text-muted-foreground truncate">
+                                                {member.email}
+                                              </div>
+                                              <div className="text-xs text-muted-foreground">
+                                                Joined: {new Date(member.joined_at).toLocaleDateString()}
+                                              </div>
+                                            </div>
+                                            {member.role !== 'TEACHER' && (
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => handleRemoveMemberClick(classroom.id, member.id, member.username)}
+                                                className="text-red-600 hover:text-red-700 hover:border-red-300 h-8 text-xs"
+                                              >
+                                                <UserMinus className="w-3 h-3 mr-1" />
+                                                Remove
+                                              </Button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                      
+                                      {/* Add student by email - Mobile optimized */}
+                                      <div className="p-3 border-t bg-muted/10">
+                                        <div className="space-y-2">
+                                          <div className="font-medium text-sm">Add Student by Email</div>
+                                          <div className="space-y-2">
+                                            <Input
+                                              placeholder="student@example.com"
+                                              type="email"
+                                              value={studentEmails[classroom.id] || ''}
+                                              onChange={(e) => {
+                                                setStudentEmails(prev => ({ 
+                                                  ...prev, 
+                                                  [classroom.id]: e.target.value 
+                                                }));
+                                                if (userSearchError) setUserSearchError(null);
+                                              }}
+                                              className={`${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
+                                              disabled={addingStudent[classroom.id]}
+                                            />
+                                            <Button
+                                              onClick={() => handleAddStudentByEmail(classroom.id)}
+                                              disabled={addingStudent[classroom.id] || !studentEmails[classroom.id]?.trim()}
+                                              size="sm"
+                                              className="w-full"
+                                            >
+                                              {addingStudent[classroom.id] ? (
+                                                <>
+                                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                                                  Adding...
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <UserPlus className="w-3 h-3 mr-1" />
+                                                  Add Student
+                                                </>
+                                              )}
+                                            </Button>
+                                          </div>
+                                          
+                                          {/* Error display for add student */}
+                                          {userSearchError && (
+                                            <div className="text-xs text-red-600 dark:text-red-400">
+                                              {userSearchError}
+                                            </div>
+                                          )}
+                                          
+                                          <div className="text-xs text-muted-foreground">
+                                            Add existing users to this classroom by their registered email address.
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Registration instructions */}
+                                      <div className="p-3 bg-blue-50 dark:bg-blue-950 border-t">
+                                        <div className="text-xs">
+                                          <div className="font-medium text-blue-900 dark:text-blue-100 mb-1">
+                                            For New Students
+                                          </div>
+                                          <div className="text-blue-700 dark:text-blue-200">
+                                            Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded text-xs">{classroom.key}</code> so new students can register for this classroom.
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 text-center text-muted-foreground">
+                                      <Users className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                                      <p className="text-sm">No members found</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-muted-foreground">
+                            <Shield className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                            <p className="text-sm">No classrooms found</p>
+                            <p className="text-xs mb-3">This might be a data loading issue</p>
+                            <div className="space-y-2">
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => window.location.reload()}
+                                className="w-full"
+                              >
+                                Refresh Page
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const success = await refreshUser();
+                                    console.log('Manual refresh result:', success);
+                                  } catch (err) {
+                                    console.error('Failed to refresh user data:', err);
+                                  }
+                                }}
+                                className="w-full"
+                              >
+                                Debug Refresh
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+              
+              {activeTab === 'templates' && (
+                <div className="space-y-6">
+                  <TemplateManager />
+                </div>
+              )}
+
+              {activeTab === 'assignments' && (
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center">
+                        <FileText className="w-5 h-5 mr-2" />
+                        Assignment Management
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <AssignmentUpload onAssignmentCreated={loadAllData} />
+                      <div className="mt-6">
+                        <AssignmentReports />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {activeTab === 'template-executions' && (
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center">
+                        <Play className="w-5 h-5 mr-2" />
+                        Template Executions
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-muted-foreground text-sm">
+                        Use the desktop version for detailed execution viewing.
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {activeTab === 'template-submissions' && (
+                <div className="space-y-6">
+                  <TemplateSubmissions />
+                </div>
+              )}
+
+              {activeTab === 'users' && (
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center">
+                        <Users className="w-5 h-5 mr-2" />
+                        User Management
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex items-center space-x-2 mb-4">
+                        <Search className="w-4 h-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search users..."
+                          value={userSearch}
+                          onChange={(e) => setUserSearch(e.target.value)}
+                          className="flex-1"
+                        />
+                      </div>
+                      <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {adminUsers.slice(0, 10).map((user) => (
+                          <div key={user.id} className="border rounded-lg p-3">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <span className="font-medium text-sm">{user.username}</span>
+                                  {!user.is_active && (
+                                    <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {user.email}
+                                </div>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleUserActivation(user.id, !user.is_active)}
+                              >
+                                {user.is_active ? (
+                                  <UserX className="w-3 h-3" />
+                                ) : (
+                                  <UserCheck className="w-3 h-3" />
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
