@@ -1799,31 +1799,6 @@ export default function AdminDashboard() {
                                 <p className="text-sm mb-4">This might be a data loading issue</p>
                               </>
                             )}
-                            <div className="space-x-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => window.location.reload()}
-                              >
-                                Refresh Page
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const success = await refreshUser();
-                                    console.log('Manual refresh result:', success);
-                                    console.log('Updated user:', user);
-                                    console.log(`Refresh ${success ? 'succeeded' : 'failed'}. Check console for details.`);
-                                  } catch (err) {
-                                    console.error('Failed to refresh user data:', err);
-                                  }
-                                }}
-                              >
-                                Debug Refresh
-                              </Button>
-                            </div>
                           </div>
                         )}
                       </div>
@@ -2843,31 +2818,6 @@ export default function AdminDashboard() {
                                 <p className="text-xs mb-3">This might be a data loading issue</p>
                               </>
                             )}
-                            <div className="space-y-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => window.location.reload()}
-                                className="w-full"
-                              >
-                                Refresh Page
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const success = await refreshUser();
-                                    console.log('Manual refresh result:', success);
-                                  } catch (err) {
-                                    console.error('Failed to refresh user data:', err);
-                                  }
-                                }}
-                                className="w-full"
-                              >
-                                Debug Refresh
-                              </Button>
-                            </div>
                           </div>
                         )}
                       </div>
