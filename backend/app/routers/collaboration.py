@@ -44,7 +44,10 @@ class ParticipantResponse(BaseModel):
     username: str
     is_connected: bool
     cursor_color: Optional[str]
+    cursor_position: Optional[dict]  # Add cursor position to response
     is_owner: bool
+    role: str
+    status: str
     joined_at: str
 
 class SessionDetailsResponse(BaseModel):
@@ -62,6 +65,14 @@ class UpdateCursorRequest(BaseModel):
 class UpdateSessionStateRequest(BaseModel):
     yjs_state: Optional[str] = None
     document_content: Optional[str] = None
+
+class ManageParticipantRequest(BaseModel):
+    action: str  # "approve", "reject", "kick", "change_role"
+    role: Optional[str] = None  # For change_role action
+
+class AdmissionRequest(BaseModel):
+    participant_id: int
+    action: str  # "approve" or "reject"
 
 # Generate random cursor colors
 CURSOR_COLORS = [
@@ -117,7 +128,9 @@ async def create_session(
         user_id=current_user.id,
         username=current_user.username,
         cursor_color=get_random_cursor_color(),
-        is_connected=False
+        is_connected=False,
+        role="owner",
+        status="approved"
     )
     
     db.add(owner_participant)
@@ -183,7 +196,10 @@ async def get_session(
             username=participant.username,
             is_connected=participant.is_connected,
             cursor_color=participant.cursor_color,
+            cursor_position=participant.cursor_position,  # Include cursor position
             is_owner=is_owner,
+            role=participant.role,
+            status=participant.status,
             joined_at=participant.joined_at.isoformat()
         ))
     
@@ -251,25 +267,81 @@ async def join_session(
         ).first()
     
     if existing_participant:
+        # Check if this is the session owner rejoining
+        is_owner = current_user and session.owner_id == current_user.id
+        was_kicked = existing_participant.status == "kicked"
+        
+        # If participant was kicked, allow them to rejoin with fresh status
+        if was_kicked:
+            existing_participant.status = "approved" if is_owner else "pending"
+            existing_participant.role = "owner" if is_owner else "editor"
+            print(f"Allowing kicked participant {existing_participant.username} to rejoin with status: {existing_participant.status}")
+        
         # Update existing participant
         existing_participant.username = request.username
         existing_participant.is_connected = False  # Will be set to True by WebSocket
         db.commit()
         participant_id = existing_participant.id
+        
+        # If this was a kicked participant rejoining, broadcast the update
+        if was_kicked:
+            try:
+                import httpx
+                from app.core.config import settings
+                websocket_url = settings.websocket_service_url
+                
+                with httpx.Client(timeout=2.0) as client:
+                    client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                        "event": "participants_list_updated",
+                        "data": {
+                            "session_id": session.id,
+                            "message": "Participant rejoined after removal",
+                            "participant_id": participant_id,
+                            "username": request.username,
+                            "action": "rejoined"
+                        }
+                    })
+            except Exception as e:
+                print(f"Failed to broadcast participant rejoin: {e}")
     else:
+        # Check if this is the session owner rejoining
+        is_owner = current_user and session.owner_id == current_user.id
+        
         # Create new participant
         participant = CollaborationParticipant(
             session_id=session.id,
             user_id=current_user.id if current_user else None,
             username=request.username,
             cursor_color=get_random_cursor_color(),
-            is_connected=False
+            is_connected=False,
+            role="owner" if is_owner else "editor",
+            status="approved" if is_owner else "pending"
         )
         
         db.add(participant)
         db.commit()
         db.refresh(participant)
         participant_id = participant.id
+        
+        # Broadcast participant list update when new participant joins
+        try:
+            import httpx
+            from app.core.config import settings
+            websocket_url = settings.websocket_service_url
+            
+            with httpx.Client(timeout=2.0) as client:
+                client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                    "event": "participants_list_updated",
+                    "data": {
+                        "session_id": session.id,
+                        "message": "New participant joined",
+                        "participant_id": participant_id,
+                        "username": request.username,
+                        "action": "joined"
+                    }
+                })
+        except Exception as e:
+            print(f"Failed to broadcast participant join: {e}")
     
     return {
         "participant_id": participant_id, 
@@ -426,7 +498,10 @@ async def get_session_participants(
             username=participant.username,
             is_connected=participant.is_connected,
             cursor_color=participant.cursor_color,
+            cursor_position=participant.cursor_position,  # Include cursor position
             is_owner=is_owner,
+            role=participant.role,
+            status=participant.status,
             joined_at=participant.joined_at.isoformat()
         ))
     
@@ -483,3 +558,230 @@ async def get_session_state(
         "yjs_state": session.yjs_state,
         "last_updated": session.updated_at.isoformat() if session.updated_at else None
     }
+
+# RBAC Management Endpoints
+
+@router.post("/collaboration/sessions/{share_id}/manage-participant/{participant_id}")
+async def manage_participant(
+    share_id: str,
+    participant_id: int,
+    request: ManageParticipantRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Manage participant permissions (owner only)"""
+    
+    # Get session and verify ownership
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.share_id == share_id,
+        CollaborationSession.is_active == True,
+        CollaborationSession.owner_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or you don't have permission")
+    
+    # Get participant
+    participant = db.query(CollaborationParticipant).filter(
+        CollaborationParticipant.id == participant_id,
+        CollaborationParticipant.session_id == session.id
+    ).first()
+    
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    
+    # Don't allow owner to manage themselves
+    if participant.user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot manage your own permissions")
+    
+    if request.action == "approve":
+        participant.status = "approved"
+    elif request.action == "reject":
+        participant.status = "rejected"
+    elif request.action == "kick":
+        participant.status = "kicked"
+        participant.is_connected = False
+    elif request.action == "change_role":
+        if not request.role or request.role not in ["editor", "viewer"]:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        participant.role = request.role
+        # If changing to viewer, ensure they can't edit anymore
+        if request.role == "viewer":
+            participant.is_connected = False  # Force reconnect with new permissions
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    
+    db.commit()
+    
+    # Broadcast permission change to WebSocket service for real-time updates
+    try:
+        import httpx
+        from app.core.config import settings
+        websocket_url = settings.websocket_service_url
+        
+        with httpx.Client(timeout=2.0) as client:
+            client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                "event": "participant_permission_changed",
+                "data": {
+                    "participant_id": participant.id,
+                    "username": participant.username,
+                    "role": participant.role,
+                    "status": participant.status,
+                    "action": request.action
+                },
+                "excludeParticipant": None
+            })
+            
+            # Also broadcast participant list update for real-time UI refresh
+            client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                "event": "participants_list_updated",
+                "data": {
+                    "session_id": session.id,
+                    "message": f"Participant {request.action}",
+                    "participant_id": participant.id,
+                    "username": participant.username,
+                    "action": request.action
+                }
+            })
+    except Exception as e:
+        print(f"Failed to broadcast permission change: {e}")
+        # Continue anyway, the change was saved to database
+    
+    return {
+        "success": True,
+        "message": f"Participant {request.action} successful",
+        "participant": {
+            "id": participant.id,
+            "username": participant.username,
+            "role": participant.role,
+            "status": participant.status
+        }
+    }
+
+@router.get("/collaboration/sessions/{share_id}/pending-participants", response_model=List[ParticipantResponse])
+async def get_pending_participants(
+    share_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get pending participants for admission (owner only)"""
+    
+    # Get session and verify ownership
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.share_id == share_id,
+        CollaborationSession.is_active == True,
+        CollaborationSession.owner_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or you don't have permission")
+    
+    # Get pending participants
+    participants = db.query(CollaborationParticipant).filter(
+        CollaborationParticipant.session_id == session.id,
+        CollaborationParticipant.status == "pending"
+    ).all()
+    
+    participant_responses = []
+    for participant in participants:
+        participant_responses.append(ParticipantResponse(
+            id=participant.id,
+            username=participant.username,
+            is_connected=participant.is_connected,
+            cursor_color=participant.cursor_color,
+            cursor_position=participant.cursor_position,  # Include cursor position
+            is_owner=False,  # Pending participants can't be owners
+            role=participant.role,
+            status=participant.status,
+            joined_at=participant.joined_at.isoformat()
+        ))
+    
+    return participant_responses
+
+@router.post("/collaboration/sessions/{share_id}/batch-admission")
+async def batch_manage_admissions(
+    share_id: str,
+    requests: List[AdmissionRequest],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Batch approve/reject admission requests (owner only)"""
+    
+    # Get session and verify ownership
+    session = db.query(CollaborationSession).filter(
+        CollaborationSession.share_id == share_id,
+        CollaborationSession.is_active == True,
+        CollaborationSession.owner_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or you don't have permission")
+    
+    results = []
+    
+    for req in requests:
+        participant = db.query(CollaborationParticipant).filter(
+            CollaborationParticipant.id == req.participant_id,
+            CollaborationParticipant.session_id == session.id,
+            CollaborationParticipant.status == "pending"
+        ).first()
+        
+        if not participant:
+            results.append({
+                "participant_id": req.participant_id,
+                "success": False,
+                "message": "Participant not found or not pending"
+            })
+            continue
+        
+        if req.action == "approve":
+            participant.status = "approved"
+        elif req.action == "reject":
+            participant.status = "rejected"
+        else:
+            results.append({
+                "participant_id": req.participant_id,
+                "success": False,
+                "message": "Invalid action"
+            })
+            continue
+        
+        results.append({
+            "participant_id": req.participant_id,
+            "success": True,
+            "message": f"Participant {req.action}d",
+            "username": participant.username,
+            "action": req.action
+        })
+    
+    db.commit()
+    
+    # Broadcast batch changes to WebSocket service
+    try:
+        import httpx
+        from app.core.config import settings
+        websocket_url = settings.websocket_service_url
+        
+        with httpx.Client(timeout=2.0) as client:
+            client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                "event": "batch_admission_update",
+                "data": {
+                    "results": results,
+                    "session_id": session.id
+                }
+            })
+            
+            # Also broadcast participant list update for real-time UI refresh
+            client.post(f"{websocket_url}/api/sessions/{session.id}/broadcast", json={
+                "event": "participants_list_updated",
+                "data": {
+                    "session_id": session.id,
+                    "message": f"Batch update completed",
+                    "action": "batch_update",
+                    "results_count": len([r for r in results if r["success"]])
+                }
+            })
+    except Exception as e:
+        print(f"Failed to broadcast batch admission update: {e}")
+    
+    return {"success": True, "results": results}

@@ -21,6 +21,10 @@ class UserTemplate(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     creator = relationship("User", back_populates="user_templates")
     
+    # Classroom scope (nullable for migration compatibility)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    classroom = relationship("Classroom")
+    
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

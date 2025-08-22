@@ -44,10 +44,12 @@ export default function SignUpPage() {
     username: '',
     password: '',
     confirmPassword: '',
-    fullName: ''
+    fullName: '',
+    classroomKey: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showClassroomKey, setShowClassroomKey] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
   
   const { register, isLoading, error, clearError } = useAuthStore();
@@ -59,7 +61,7 @@ export default function SignUpPage() {
   };
 
   const validateForm = () => {
-    if (!formData.email || !formData.username || !formData.password) {
+    if (!formData.email || !formData.username || !formData.password || !formData.fullName) {
       return false;
     }
     
@@ -90,7 +92,8 @@ export default function SignUpPage() {
       formData.email,
       formData.username,
       formData.password,
-      formData.fullName || undefined
+      formData.fullName,
+      formData.classroomKey || undefined
     );
     
     if (success) {
@@ -104,7 +107,7 @@ export default function SignUpPage() {
 
   if (registrationSuccess) {
     return (
-      <div className="relative h-[calc(100vh-64px)] flex-col items-center justify-center grid px-4 sm:px-6">{/* Adjusted height to account for navbar */}
+      <div className="relative min-h-[calc(100vh-64px)] flex-col items-center justify-center grid px-4 sm:px-6">{/* Adjusted height to account for navbar */}
 
         <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[400px]">
           <Card>
@@ -132,17 +135,19 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="relative h-[calc(100vh-64px)] flex-col items-center justify-center grid lg:grid-cols-[1fr_1.2fr] px-4 sm:px-6">{/* Adjusted height and proportions */}
+    <div className="relative min-h-[calc(100vh-64px)] flex-col items-center justify-center grid lg:grid-cols-[1fr_1.2fr] px-4 sm:px-6">{/* Changed to min-height for scrolling */}
 
       {/* Left side - Typing Animation (hidden on mobile) */}
-      <div className="relative hidden lg:flex flex-col dark:border-r overflow-hidden">
-        <div className="h-full max-h-[calc(100vh-64px)]">
-          <TypingCodeAnimation />
+      <div className="relative hidden lg:flex flex-col overflow-hidden">
+        <div className="h-[calc(100vh-64px)] w-full flex items-center justify-center p-8">
+          <div className="w-full h-auto max-w-2xl">
+            <TypingCodeAnimation />
+          </div>
         </div>
       </div>
 
       {/* Right side - Signup Form */}
-      <div className="lg:p-8">
+      <div className="lg:p-8 py-8 flex items-center justify-center">
         <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[400px]">
           <div className="flex flex-col space-y-2 text-center">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -185,13 +190,14 @@ export default function SignUpPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="fullName">Full Name (Optional)</Label>
+                  <Label htmlFor="fullName">Full Name</Label>
                   <Input
                     id="fullName"
                     type="text"
                     placeholder="Your full name"
                     value={formData.fullName}
                     onChange={(e) => handleInputChange('fullName', e.target.value)}
+                    required
                     disabled={isLoading}
                   />
                 </div>
@@ -255,8 +261,56 @@ export default function SignUpPage() {
                   )}
                 </div>
 
+                {/* Classroom Key Section */}
+                {!showClassroomKey ? (
+                  <div className="text-center">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setShowClassroomKey(true)}
+                      disabled={isLoading}
+                      className="text-sm text-muted-foreground hover:text-primary"
+                    >
+                      Already have a classroom key?
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="classroomKey">
+                        Classroom Key <span className="text-muted-foreground">(Optional)</span>
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setShowClassroomKey(false);
+                          handleInputChange('classroomKey', '');
+                        }}
+                        disabled={isLoading}
+                        className="text-xs text-muted-foreground hover:text-destructive"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                    <Input
+                      id="classroomKey"
+                      type="text"
+                      placeholder="Enter your classroom key (e.g., ABC123)"
+                      value={formData.classroomKey}
+                      onChange={(e) => handleInputChange('classroomKey', e.target.value.toUpperCase())}
+                      disabled={isLoading}
+                      className="font-mono"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Get this key from your teacher to join a classroom.
+                    </p>
+                  </div>
+                )}
+
                 {error && (
-                  <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+                  <div className="rounded-md bg-destructive/15 p-2 text-sm text-destructive">
                     {error}
                   </div>
                 )}

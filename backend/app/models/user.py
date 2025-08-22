@@ -43,6 +43,8 @@ class User(Base):
     # Relationships
     created_templates = relationship("Template", back_populates="creator")
     user_templates = relationship("UserTemplate", back_populates="creator", cascade="all, delete-orphan")
+    classroom_memberships = relationship("UserClassroom", back_populates="user", cascade="all, delete-orphan")
+    created_classrooms = relationship("Classroom", back_populates="creator", cascade="all, delete-orphan")
     
     @property
     def is_admin(self) -> bool:

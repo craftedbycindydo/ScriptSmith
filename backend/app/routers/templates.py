@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from sqlalchemy.orm import Session
 from datetime import datetime
 import os
@@ -8,8 +8,9 @@ import os
 from app.database.base import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
-from app.models.template import Template
+from app.models.template import Template, TemplateSubmission
 from app.models.user_template import UserTemplate
+from app.models.classroom import Classroom, UserClassroom
 from app.services.template_service import TemplateService
 from app.services.user_template_service import UserTemplateService
 from app.services.admin_service import AdminService
@@ -26,11 +27,22 @@ class TemplateCreate(BaseModel):
     description: Optional[str] = None
     language: str
     code_content: str
+    classroom_ids: Optional[List[int]] = None
+    submission_deadline: Optional[datetime] = None  # UTC datetime
+    exclusions: Optional[List[Dict]] = None  # List of {"user_id": int, "deadline": str}
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     code_content: Optional[str] = None
+    classroom_ids: Optional[List[int]] = None
+    submission_deadline: Optional[datetime] = None  # UTC datetime
+    exclusions: Optional[List[Dict]] = None  # List of {"user_id": int, "deadline": str}
+
+class ClassroomInfo(BaseModel):
+    id: int
+    name: str
+    classroom_key: str
 
 class TemplateResponse(BaseModel):
     id: int
@@ -40,8 +52,13 @@ class TemplateResponse(BaseModel):
     code_content: str
     created_by: int
     creator_username: str
+    classrooms: List[ClassroomInfo] = []
     created_at: datetime
     updated_at: datetime
+    submission_deadline: Optional[datetime] = None
+    exclusions: Optional[List[Dict]] = None
+    can_submit: Optional[bool] = None  # Will be populated for user requests
+    user_submission: Optional[Dict] = None  # Will be populated if user has submitted
 
     class Config:
         from_attributes = True
@@ -53,6 +70,7 @@ class TemplateListResponse(BaseModel):
     language: str
     created_by: int
     creator_username: str
+    classrooms: List[ClassroomInfo] = []
     created_at: datetime
 
     class Config:
@@ -63,8 +81,96 @@ class TemplateStatsResponse(BaseModel):
     recent_templates: int
     templates_by_language: List[dict]
 
+class TemplateSubmitRequest(BaseModel):
+    code_content: str
+    execution_output: Optional[str] = None
+    execution_status: str = "pending"
+    execution_time: Optional[float] = None
+    memory_used: Optional[int] = None
+    error_message: Optional[str] = None
 
-# Helper function to check admin access
+class TemplateSubmissionResponse(BaseModel):
+    id: int
+    template_id: int
+    user_id: int
+    submitted_code: str
+    submitted_at: datetime
+    output: Optional[str] = None
+    status: str = "pending"
+    language: Optional[str] = None
+    execution_time: Optional[float] = None
+    memory_used: Optional[int] = None
+    error_message: Optional[str] = None
+    submitted_by_username: Optional[str] = None
+    template_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class UserInfo(BaseModel):
+    id: int
+    username: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+# Helper functions
+def _prepare_template_response(template: Template) -> TemplateResponse:
+    """Helper to prepare template response with classroom info"""
+    # Build classroom info
+    classroom_info = []
+    for classroom in template.classrooms:
+        classroom_info.append(ClassroomInfo(
+            id=classroom.id,
+            name=classroom.name,
+            classroom_key=classroom.classroom_key
+        ))
+    
+    # Create response object
+    response_data = {
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "language": template.language,
+        "code_content": template.code_content,
+        "created_by": template.created_by,
+        "creator_username": getattr(template, 'creator_username', 'Unknown'),
+        "classrooms": classroom_info,
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+        "submission_deadline": template.submission_deadline,
+        "exclusions": template.exclusions,
+        "can_submit": getattr(template, 'can_submit', None),
+        "user_submission": getattr(template, 'user_submission', None)
+    }
+    
+    return TemplateResponse(**response_data)
+
+def _prepare_template_list_response(template: Template) -> TemplateListResponse:
+    """Helper to prepare template list response with classroom info"""
+    # Build classroom info
+    classroom_info = []
+    for classroom in template.classrooms:
+        classroom_info.append(ClassroomInfo(
+            id=classroom.id,
+            name=classroom.name,
+            classroom_key=classroom.classroom_key
+        ))
+    
+    # Create response object
+    response_data = {
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "language": template.language,
+        "created_by": template.created_by,
+        "creator_username": getattr(template, 'creator_username', 'Unknown'),
+        "classrooms": classroom_info,
+        "created_at": template.created_at
+    }
+    
+    return TemplateListResponse(**response_data)
+
 async def get_admin_user(current_user: User = Depends(get_current_user)):
     """Verify user has admin access"""
     admin_service.verify_admin_access(current_user)
@@ -86,12 +192,15 @@ async def create_template(
             description=template.description,
             language=template.language,
             code_content=template.code_content,
-            created_by=admin_user.id
+            created_by=admin_user.id,
+            classroom_ids=template.classroom_ids,
+            submission_deadline=template.submission_deadline,
+            exclusions=template.exclusions
         )
         
-        # Add creator username for response
+        # Add creator username and classroom info for response
         db_template.creator_username = admin_user.username
-        return db_template
+        return _prepare_template_response(db_template)
         
     except HTTPException:
         raise
@@ -112,14 +221,17 @@ async def get_all_templates_admin(
     try:
         templates = TemplateService.get_all_templates(db, skip=skip, limit=limit)
         
-        # Add creator usernames safely
+        # Prepare response with creator usernames and classroom info
+        result = []
         for template in templates:
             try:
                 template.creator_username = template.creator.username if template.creator else "Unknown"
             except AttributeError:
                 template.creator_username = "Unknown"
+            
+            result.append(_prepare_template_list_response(template))
         
-        return templates
+        return result
     except Exception as e:
         # Return empty list if anything goes wrong
         return []
@@ -139,7 +251,7 @@ async def get_template_admin(
         )
     
     template.creator_username = template.creator.username
-    return template
+    return _prepare_template_response(template)
 
 @router.put("/admin/templates/{template_id}", response_model=TemplateResponse)
 async def update_template(
@@ -156,11 +268,14 @@ async def update_template(
             name=template.name,
             description=template.description,
             code_content=template.code_content,
-            updating_user_id=admin_user.id
+            classroom_ids=template.classroom_ids,
+            updating_user_id=admin_user.id,
+            submission_deadline=template.submission_deadline,
+            exclusions=template.exclusions
         )
         
         updated_template.creator_username = updated_template.creator.username
-        return updated_template
+        return _prepare_template_response(updated_template)
         
     except HTTPException:
         raise
@@ -211,12 +326,36 @@ async def get_template_stats(
             "templates_by_language": []
         }
 
+@router.get("/admin/classrooms", response_model=List[ClassroomInfo])
+async def get_available_classrooms(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get available classrooms created by the current admin for template assignment (Admin only)"""
+    try:
+        classrooms = db.query(Classroom).filter(
+            Classroom.is_active == True,
+            Classroom.created_by_id == admin_user.id
+        ).order_by(Classroom.name).all()
+        
+        return [
+            ClassroomInfo(
+                id=classroom.id,
+                name=classroom.name,
+                classroom_key=classroom.classroom_key
+            )
+            for classroom in classrooms
+        ]
+    except Exception as e:
+        return []
+
 @router.post("/admin/templates/upload", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 async def upload_template_file(
     file: UploadFile = File(...),
     name: Optional[str] = None,
     description: Optional[str] = None,
     language: Optional[str] = None,
+    classroom_ids: Optional[str] = None,  # JSON string of classroom IDs
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
@@ -274,6 +413,17 @@ async def upload_template_file(
         if not language:
             language = 'python'  # Default language
         
+        # Parse classroom IDs if provided
+        parsed_classroom_ids = None
+        if classroom_ids:
+            try:
+                import json
+                parsed_classroom_ids = json.loads(classroom_ids)
+                if not isinstance(parsed_classroom_ids, list):
+                    parsed_classroom_ids = None
+            except (json.JSONDecodeError, ValueError):
+                parsed_classroom_ids = None
+        
         # Create template
         db_template = TemplateService.create_template(
             db=db,
@@ -281,12 +431,13 @@ async def upload_template_file(
             description=description or f"Uploaded from {file.filename}",
             language=language,
             code_content=code_content,
-            created_by=admin_user.id
+            created_by=admin_user.id,
+            classroom_ids=parsed_classroom_ids
         )
         
         # Add creator username for response
         db_template.creator_username = admin_user.username
-        return db_template
+        return _prepare_template_response(db_template)
         
     except HTTPException:
         raise
@@ -304,21 +455,25 @@ async def get_templates_for_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get templates for logged-in users"""
+    """Get templates for logged-in users based on their classroom memberships"""
     try:
-        if language:
-            templates = TemplateService.get_templates_by_language(db, language)
-        else:
-            templates = TemplateService.get_all_templates(db)
+        templates = TemplateService.get_templates_for_user(
+            db=db, 
+            user_id=current_user.id,
+            language=language
+        )
         
-        # Add creator usernames safely
+        # Prepare response with creator usernames and classroom info
+        result = []
         for template in templates:
             try:
                 template.creator_username = template.creator.username if template.creator else "Unknown"
             except AttributeError:
                 template.creator_username = "Unknown"
+            
+            result.append(_prepare_template_list_response(template))
         
-        return templates
+        return result
     except Exception as e:
         # Return empty list if anything goes wrong
         return []
@@ -329,7 +484,7 @@ async def get_template_for_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get specific template for logged-in users"""
+    """Get specific template for logged-in users (with classroom access check)"""
     template = TemplateService.get_template_by_id(db, template_id)
     if not template:
         raise HTTPException(
@@ -337,8 +492,213 @@ async def get_template_for_user(
             detail="Template not found"
         )
     
+    # Check if user has access to this template
+    if template.classrooms:  # If template has classroom restrictions
+        user_classroom_ids = [
+            membership.classroom_id 
+            for membership in current_user.classroom_memberships 
+            if membership.is_active
+        ]
+        template_classroom_ids = [classroom.id for classroom in template.classrooms]
+        
+        # Check if user is in any of the template's classrooms
+        if not any(classroom_id in user_classroom_ids for classroom_id in template_classroom_ids):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this template"
+            )
+    
+    # Add submission information for user
+    can_submit, _ = TemplateService.can_user_submit(db, template_id, current_user.id)
+    user_submission = TemplateService.get_user_submission(db, template_id, current_user.id)
+    
     template.creator_username = template.creator.username
-    return template
+    template.can_submit = can_submit
+    template.user_submission = {
+        "id": user_submission.id,
+        "submitted_at": user_submission.submitted_at
+    } if user_submission else None
+    
+    return _prepare_template_response(template)
+
+
+@router.post("/templates/{template_id}/submit", response_model=TemplateSubmissionResponse)
+async def submit_template(
+    template_id: int,
+    request: TemplateSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Submit code for a template with execution results"""
+    try:
+        submission = TemplateService.submit_template(
+            db=db,
+            template_id=template_id,
+            user_id=current_user.id,
+            submitted_code=request.code_content,
+            execution_output=request.execution_output,
+            execution_status=request.execution_status,
+            execution_time=request.execution_time,
+            memory_used=request.memory_used,
+            error_message=request.error_message
+        )
+        return submission
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit template: {str(e)}"
+        )
+
+
+@router.get("/templates/{template_id}/can-submit")
+async def can_submit_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Check if user can submit template"""
+    try:
+        can_submit, deadline_info = TemplateService.can_user_submit(db, template_id, current_user.id)
+        return {
+            "can_submit": can_submit,
+            "deadline_info": deadline_info
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check submission status: {str(e)}"
+        )
+
+
+@router.get("/admin/classrooms/{classroom_id}/users", response_model=List[UserInfo])
+async def get_classroom_users(
+    classroom_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get all users in a classroom for exclusion list (Admin only)"""
+    try:
+        # First verify that the classroom belongs to the current admin
+        classroom = db.query(Classroom).filter(
+            Classroom.id == classroom_id,
+            Classroom.created_by_id == admin_user.id,
+            Classroom.is_active == True
+        ).first()
+        
+        if not classroom:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classroom not found or access denied"
+            )
+        
+        # Get classroom members
+        user_classrooms = db.query(UserClassroom).filter(
+            UserClassroom.classroom_id == classroom_id,
+            UserClassroom.is_active == True
+        ).all()
+        
+        # Get user information
+        user_ids = [uc.user_id for uc in user_classrooms]
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        
+        return [
+            UserInfo(
+                id=user.id,
+                username=user.username,
+                first_name=user.full_name.split(' ', 1)[0] if user.full_name else None,
+                last_name=user.full_name.split(' ', 1)[1] if user.full_name and len(user.full_name.split(' ', 1)) > 1 else None
+            )
+            for user in users
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get classroom users: {str(e)}"
+        )
+
+
+@router.get("/admin/submissions", response_model=List[TemplateSubmissionResponse])
+async def get_all_submissions(
+    template_name: Optional[str] = Query(None, description="Filter by template name"),
+    user: Optional[str] = Query(None, description="Filter by username"),
+    language: Optional[str] = Query(None, description="Filter by language"), 
+    status: Optional[str] = Query(None, description="Filter by status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get all template submissions with filters (Admin only)"""
+    try:
+        # Convert user filter to user_id if provided
+        user_id = None
+        if user:
+            from app.models.user import User as UserModel
+            user_obj = db.query(UserModel).filter(UserModel.username == user).first()
+            user_id = user_obj.id if user_obj else -1  # Use -1 to return no results if user not found
+        
+        submissions = TemplateService.get_template_submissions(
+            db=db,
+            user_id=user_id,
+            status=status,
+            language=language,
+            skip=skip,
+            limit=limit
+        )
+        
+        # Filter by template name if provided (since we can't easily do this in SQL with current structure)
+        if template_name:
+            submissions = [s for s in submissions if s.template_name and template_name.lower() in s.template_name.lower()]
+        
+        return submissions
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get submissions: {str(e)}"
+        )
+
+@router.get("/admin/submissions/stats")
+async def get_submissions_stats(
+    template_id: Optional[int] = Query(None, description="Filter stats by template ID"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get submission statistics (Admin only)"""
+    try:
+        stats = TemplateService.get_submissions_stats(db, template_id)
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get submission stats: {str(e)}"
+        )
+
+@router.get("/admin/templates/{template_id}/submissions", response_model=List[TemplateSubmissionResponse])
+async def get_template_submissions(
+    template_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get all submissions for a specific template (Admin only)"""
+    try:
+        submissions = TemplateService.get_template_submissions(
+            db=db, 
+            template_id=template_id,
+            skip=skip,
+            limit=limit
+        )
+        return submissions
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get template submissions: {str(e)}"
+        )
 
 
 # User Template Endpoints (Personal Templates)

@@ -3,19 +3,24 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { useAuthStore } from '@/store/authStore';
+
 import CodeEditor from './CodeEditor';
 import OutputConsole from './OutputConsole';
 import ResizablePanels from './ResizablePanels';
+import ParticipantManager from './ParticipantManager';
 import { useCollaboration } from '@/hooks/useCollaboration';
 import type { ExecutionResult } from '@/hooks/useCollaboration';
 import { apiService } from '@/services/api';
+import { config } from '@/config/env';
 import { 
-  Users, 
   Share2, 
   Play, 
   UserPlus, 
-  ArrowLeft
+  ArrowLeft,
+  Eye,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +32,9 @@ interface Participant {
   cursor_color?: string;
   cursor_position?: any;
   is_owner: boolean;
+  role: string;
+  status: string;
+  joined_at: string;
 }
 
 interface SessionDetails {
@@ -53,6 +61,7 @@ interface SessionDetails {
 export default function CollaborativeIDE() {
   const { shareId } = useParams<{ shareId: string }>();
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuthStore();
   
   const [sessionDetails, setSessionDetails] = useState<SessionDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,6 +81,7 @@ export default function CollaborativeIDE() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [participantId, setParticipantId] = useState<number | undefined>(undefined);
+  const [autoJoinAttempted, setAutoJoinAttempted] = useState(false);
 
   // Update participant ID when session details or storage changes
   useEffect(() => {
@@ -94,8 +104,9 @@ export default function CollaborativeIDE() {
     updateParticipantId();
   }, [sessionDetails?.user_participant_id, shareId, hasJoinedSession]); // React to hasJoinedSession changes
 
-  // Handle execution results from other participants
+  // Handle execution results from all participants (including self)
   const handleExecutionResult = (result: ExecutionResult) => {
+    console.log('📺 Displaying execution result from:', result.participant_username);
     setOutput(result.output);
     setExecutionError(result.error);
     setExecutionTime(result.execution_time);
@@ -104,6 +115,9 @@ export default function CollaborativeIDE() {
 
   const {
     error: collaborationError,
+    permissionStatus,
+    canEdit,
+    userRole,
     sendExecutionResult
   } = useCollaboration({
     sessionId: sessionDetails?.session.id,
@@ -119,20 +133,89 @@ export default function CollaborativeIDE() {
   const loadSession = async () => {
     if (!shareId) return;
     
+    console.log('🔄 Loading session:', shareId);
     setLoading(true);
     try {
       const details = await apiService.getSessionDetails(shareId);
+      console.log('✅ Session loaded:', details);
       setSessionDetails(details);
       setCode(details.session.code_content || '');
       setError(null);
     } catch (err: any) {
+      console.error('❌ Session load failed:', err);
       setError(err.response?.data?.detail || 'Failed to load session');
     } finally {
       setLoading(false);
     }
   };
 
-  // Join session
+  // Check if current user is owner
+  const isOwner = isAuthenticated 
+    ? sessionDetails?.session.owner_username === user?.username
+    : sessionDetails?.session.owner_username === sessionStorage.getItem(`session_${shareId}_username`);
+
+  // Handle participants update - refresh participant list without reloading entire session
+  const handleParticipantsUpdate = async () => {
+    if (!shareId || !sessionDetails) return;
+    
+    try {
+      console.log('🔄 Refreshing participant list for session:', shareId);
+      const response = await fetch(`${config.apiBaseUrl}/collaboration/sessions/${shareId}/participants`);
+      if (response.ok) {
+        const freshParticipants = await response.json();
+        console.log('✅ Fresh participants loaded:', freshParticipants);
+        setParticipants(freshParticipants);
+      } else {
+        console.error('❌ Failed to refresh participants:', response.status);
+        // Fallback to full session reload only if participant refresh fails
+        loadSession();
+      }
+    } catch (error) {
+      console.error('❌ Error refreshing participants:', error);
+      // Fallback to full session reload on error
+      loadSession();
+    }
+  };
+
+  // Auto-join session for authenticated users
+  const autoJoinSession = async () => {
+    if (!shareId || !isAuthenticated || !user?.username || joining || autoJoinAttempted) return;
+    
+    console.log('Attempting auto-join for:', user.username);
+    setAutoJoinAttempted(true);
+    setJoining(true);
+    try {
+      const joinResponse = await apiService.joinSession(shareId, { username: user.username });
+      
+      // Store join status and participant info in session storage
+      sessionStorage.setItem(`session_${shareId}_joined`, 'true');
+      sessionStorage.setItem(`session_${shareId}_participant_id`, joinResponse.participant_id?.toString() || '');
+      sessionStorage.setItem(`session_${shareId}_username`, user.username);
+      
+      // Update local state to show editor
+      setHasJoinedSession(true);
+      setSessionDetails(prev => prev ? {
+        ...prev,
+        is_participant: true,
+        user_participant_id: joinResponse.participant_id
+      } : null);
+      
+      // Trigger participant ID update
+      setParticipantId(joinResponse.participant_id);
+      
+      setError(null);
+      console.log('Auto-join successful for user:', user.username);
+    } catch (err: any) {
+      console.error('Auto-join failed:', err);
+      setError(err.response?.data?.detail || 'Failed to join session');
+      // Reset the flag so user can try manual join
+      setAutoJoinAttempted(false);
+    } finally {
+      setJoining(false);
+    }
+  };
+
+  // Join session for anonymous users
   const handleJoinSession = async () => {
     if (!shareId || !newUsername.trim()) return;
     
@@ -172,12 +255,10 @@ export default function CollaborativeIDE() {
     if (!sessionDetails) return;
     
     setIsExecuting(true);
+    // Clear previous output for all participants
     setOutput('');
     setExecutionError('');
-    
-    // Get current user's username
-    const currentUsername = sessionStorage.getItem(`session_${shareId}_username`) || 'You';
-    setLastExecutedBy(currentUsername);
+    setExecutionTime(0);
     
     try {
       const result = await apiService.executeCode({
@@ -186,11 +267,8 @@ export default function CollaborativeIDE() {
         input_data: ''
       });
       
-      setOutput(result.output);
-      setExecutionError(result.error);
-      setExecutionTime(result.execution_time);
-      
-      // Share execution result with other participants
+      // Share execution result with ALL participants (including self) via WebSocket
+      // This ensures everyone sees the same result at the same time
       if (sendExecutionResult) {
         sendExecutionResult({
           output: result.output,
@@ -201,9 +279,8 @@ export default function CollaborativeIDE() {
       
     } catch (err: any) {
       const errorMessage = err.response?.data?.detail || 'Failed to execute code';
-      setExecutionError(errorMessage);
       
-      // Share error result with other participants
+      // Share error result with ALL participants via WebSocket
       if (sendExecutionResult) {
         sendExecutionResult({
           output: '',
@@ -241,17 +318,24 @@ export default function CollaborativeIDE() {
 
   useEffect(() => {
     loadSession();
-    
-    // Check if user has already joined this session
-    if (shareId) {
-      const hasJoined = sessionStorage.getItem(`session_${shareId}_joined`) === 'true';
-      const participantId = sessionStorage.getItem(`session_${shareId}_participant_id`);
-      
-      if (hasJoined && participantId) {
-        setHasJoinedSession(true);
-      }
-    }
+    setAutoJoinAttempted(false); // Reset auto-join flag for new sessions
   }, [shareId]);
+
+  // Separate effect for auto-join logic to prevent infinite loops
+  useEffect(() => {
+    if (!shareId || !sessionDetails) return;
+    
+    const hasJoined = sessionStorage.getItem(`session_${shareId}_joined`) === 'true';
+    const participantId = sessionStorage.getItem(`session_${shareId}_participant_id`);
+    
+    if (hasJoined && participantId) {
+      setHasJoinedSession(true);
+    } else if (isAuthenticated && user?.username && !sessionDetails.is_participant && !joining && !autoJoinAttempted) {
+      // Auto-join authenticated users who haven't joined yet
+      console.log('Auto-joining session for authenticated user:', user.username);
+      autoJoinSession();
+    }
+  }, [shareId, isAuthenticated, user?.username, sessionDetails?.is_participant, autoJoinAttempted]);
 
   if (loading) {
     return (
@@ -259,6 +343,11 @@ export default function CollaborativeIDE() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
           <p>Loading collaboration session...</p>
+          {process.env.NODE_ENV === 'development' && (
+            <p className="text-xs text-gray-500 mt-2">
+              Debug: shareId={shareId}, joining={joining.toString()}, autoJoinAttempted={autoJoinAttempted.toString()}
+            </p>
+          )}
         </div>
       </div>
     );
@@ -336,6 +425,50 @@ export default function CollaborativeIDE() {
     );
   }
 
+  // Show permission status message if not approved
+  if (permissionStatus !== 'approved' && sessionDetails?.is_participant) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              {permissionStatus === 'pending' && <Clock className="w-5 h-5 text-yellow-500" />}
+              {permissionStatus === 'rejected' && <AlertTriangle className="w-5 h-5 text-red-500" />}
+              {permissionStatus === 'kicked' && <AlertTriangle className="w-5 h-5 text-red-500" />}
+              <span>
+                {permissionStatus === 'pending' && 'Waiting for Approval'}
+                {permissionStatus === 'rejected' && 'Access Denied'}
+                {permissionStatus === 'kicked' && 'Removed from Session'}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <h3 className="font-semibold">{sessionDetails?.session.title}</h3>
+              <p className="text-sm text-muted-foreground">
+                by {sessionDetails?.session.owner_username}
+              </p>
+            </div>
+            
+            <p className="text-sm">
+              {permissionStatus === 'pending' && 
+                'The session owner needs to approve your request to join this collaboration.'}
+              {permissionStatus === 'rejected' && 
+                'Your request to join this session was rejected by the owner.'}
+              {permissionStatus === 'kicked' && 
+                'You have been removed from this collaboration session.'}
+            </p>
+            
+            <Button onClick={() => navigate('/')} className="w-full">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to IDE
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Toolbar */}
@@ -353,11 +486,21 @@ export default function CollaborativeIDE() {
                 Back
               </Button>
               
-                              <div>
-                  <h1 className="text-lg font-bold">{sessionDetails?.session.title}</h1>
-                  <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                    <Badge variant="outline">{sessionDetails?.session.language}</Badge>
-                    <span>by {sessionDetails?.session.owner_username}</span>
+              <div>
+                <h1 className="text-lg font-bold">{sessionDetails?.session.title}</h1>
+                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                  <Badge variant="outline">{sessionDetails?.session.language}</Badge>
+                  <span>by {sessionDetails?.session.owner_username}</span>
+                  {/* Permission Status */}
+                  {userRole && (
+                    <Badge 
+                      variant={userRole === 'owner' ? 'default' : userRole === 'editor' ? 'secondary' : 'outline'}
+                      className="flex items-center space-x-1"
+                    >
+                      {userRole === 'viewer' && <Eye className="w-3 h-3" />}
+                      <span>{userRole}</span>
+                    </Badge>
+                  )}
                   <div className="flex items-center space-x-1">
                     <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
                     <span className={isConnected ? 'text-green-600' : 'text-red-600'}>
@@ -370,47 +513,16 @@ export default function CollaborativeIDE() {
             
             {/* Right side - Actions and participants */}
             <div className="flex items-center space-x-2 flex-wrap gap-1 sm:gap-0">
-              {/* Participants */}
-              <div className="flex items-center space-x-2 sm:space-x-3">
-                <Users className="w-4 h-4" />
-                <span className="text-sm hidden sm:inline">{participants.length}</span>
-                
-                {/* Participant avatars */}
-                <div className="flex -space-x-1 sm:-space-x-2">
-                  {participants.slice(0, 4).map((participant) => (
-                    <Avatar
-                      key={participant.id}
-                      className={`w-7 h-7 sm:w-8 sm:h-8 ring-2 ${
-                        participant.is_connected 
-                          ? participant.is_owner 
-                            ? 'ring-yellow-500' // Owner: yellow ring
-                            : 'ring-green-500'  // Online: green ring
-                          : 'ring-gray-400'     // Offline: gray ring
-                      } ring-offset-2 ring-offset-background`}
-                      title={`${participant.username}${participant.is_owner ? ' (Owner)' : ''}${participant.is_connected ? ' • Online' : ' • Offline'}`}
-                    >
-                      <AvatarFallback 
-                        className="text-xs sm:text-sm font-medium text-white"
-                        style={{ backgroundColor: participant.cursor_color || '#666' }}
-                      >
-                        {participant.username.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                  ))}
-                  
-                  {/* Show overflow count */}
-                  {participants.length > 4 && (
-                    <Avatar className="w-7 h-7 sm:w-8 sm:h-8 ring-2 ring-muted ring-offset-2 ring-offset-background">
-                      <AvatarFallback className="bg-muted text-xs sm:text-sm font-medium">
-                        +{participants.length - 4}
-                      </AvatarFallback>
-                    </Avatar>
-                  )}
-                </div>
-                
-                {/* Mobile participant count */}
-                <span className="text-sm sm:hidden">({participants.length})</span>
-              </div>
+              {/* Participant Manager */}
+              {shareId && (
+                <ParticipantManager
+                  shareId={shareId}
+                  participants={participants}
+                  currentUserParticipantId={participantId}
+                  isOwner={isOwner}
+                  onParticipantsUpdate={handleParticipantsUpdate}
+                />
+              )}
 
               <Button
                 variant="outline"
@@ -421,16 +533,19 @@ export default function CollaborativeIDE() {
                 <span className="hidden sm:inline">Share</span>
               </Button>
 
-              <Button
-                onClick={handleExecuteCode}
-                disabled={isExecuting}
-                className="btn-success flex-1 sm:flex-none"
-                size="sm"
-              >
-                <Play className="w-4 h-4 mr-1 lg:mr-2" />
-                <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
-                <span className="sm:hidden">{isExecuting ? '...' : 'Run'}</span>
-              </Button>
+              {/* Only show Run button if user can edit or is owner */}
+              {canEdit && (
+                <Button
+                  onClick={handleExecuteCode}
+                  disabled={isExecuting}
+                  className="btn-success flex-1 sm:flex-none"
+                  size="sm"
+                >
+                  <Play className="w-4 h-4 mr-1 lg:mr-2" />
+                  <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
+                  <span className="sm:hidden">{isExecuting ? '...' : 'Run'}</span>
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -473,6 +588,7 @@ export default function CollaborativeIDE() {
                   value={code}
                   onChange={(value) => setCode(value || '')}
                   onMount={handleEditorDidMount}
+                  readOnly={!canEdit}
                 />
               </div>
             </div>
@@ -495,6 +611,7 @@ export default function CollaborativeIDE() {
                   error={executionError}
                   isLoading={isExecuting}
                   executionTime={executionTime}
+                  lastExecutedBy={lastExecutedBy}
                 />
               </div>
             </div>

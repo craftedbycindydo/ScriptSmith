@@ -43,11 +43,19 @@ export interface CodeExecutionRequest {
   template_id?: number;
 }
 
+export interface ComplexityAnalysis {
+  time_complexity: string;
+  space_complexity: string;
+  explanation: string;
+  available: boolean;
+}
+
 export interface CodeExecutionResponse {
   output: string;
   error: string;
   execution_time: number;
   status: string;
+  complexity?: ComplexityAnalysis;
 }
 
 export interface CodeValidationRequest {
@@ -93,6 +101,13 @@ export interface User {
   created_at: string;
 }
 
+// Classroom interfaces
+export interface ClassroomInfo {
+  id: number;
+  name: string;
+  classroom_key: string;
+}
+
 // Template interfaces
 export interface Template {
   id: number;
@@ -102,8 +117,13 @@ export interface Template {
   code_content: string;
   created_by: number;
   creator_username: string;
+  classrooms: ClassroomInfo[];
   created_at: string;
   updated_at: string;
+  submission_deadline?: string;
+  exclusions?: Array<{ user_id: number; deadline: string }>;
+  can_submit?: boolean;
+  user_submission?: { id: number; submitted_at: string };
 }
 
 export interface TemplateListItem {
@@ -113,6 +133,7 @@ export interface TemplateListItem {
   language: string;
   created_by: number;
   creator_username: string;
+  classrooms: ClassroomInfo[];
   created_at: string;
 }
 
@@ -121,18 +142,56 @@ export interface TemplateCreate {
   description?: string;
   language: string;
   code_content: string;
+  classroom_ids?: number[];
+  submission_deadline?: string;
+  exclusions?: Array<{ user_id: number; deadline: string }>;
 }
 
 export interface TemplateUpdate {
   name?: string;
   description?: string;
   code_content?: string;
+  classroom_ids?: number[];
+  submission_deadline?: string;
+  exclusions?: Array<{ user_id: number; deadline: string }>;
 }
 
 export interface TemplateStats {
   total_templates: number;
   recent_templates: number;
   templates_by_language: Array<{ language: string; count: number }>;
+}
+
+export interface TemplateSubmissionRequest {
+  code_content: string;
+  execution_output?: string;
+  execution_status?: string;
+  execution_time?: number;
+  memory_used?: number;
+  error_message?: string;
+}
+
+export interface TemplateSubmission {
+  id: number;
+  template_id: number;
+  user_id: number;
+  submitted_code: string;
+  submitted_at: string;
+  output?: string;
+  status: string;
+  language?: string;
+  execution_time?: number;
+  memory_used?: number;
+  error_message?: string;
+  submitted_by_username?: string;
+  template_name?: string;
+}
+
+export interface UserInfo {
+  id: number;
+  username: string;
+  first_name?: string;
+  last_name?: string;
 }
 
 export interface AuthToken {
@@ -147,6 +206,7 @@ export interface RegisterRequest {
   username: string;
   password: string;
   full_name?: string;
+  classroom_key: string; // Required for students to join classroom
 }
 
 // Collaboration interfaces
@@ -181,6 +241,8 @@ export interface ParticipantResponse {
   is_connected: boolean;
   cursor_color?: string;
   is_owner: boolean;
+  role: string;
+  status: string;
   joined_at: string;
 }
 
@@ -395,6 +457,68 @@ export const apiService = {
     return response.data;
   },
 
+  async getAvailableClassrooms(): Promise<ClassroomInfo[]> {
+    const response = await api.get('/admin/classrooms');
+    return response.data;
+  },
+
+  // Template submission endpoints
+  async submitTemplate(templateId: number, request: TemplateSubmissionRequest): Promise<TemplateSubmission> {
+    const response = await api.post(`/templates/${templateId}/submit`, request);
+    return response.data;
+  },
+
+  async canSubmitTemplate(templateId: number): Promise<{ can_submit: boolean; deadline_info?: string }> {
+    const response = await api.get(`/templates/${templateId}/can-submit`);
+    return response.data;
+  },
+
+  async getClassroomUsers(classroomId: number): Promise<UserInfo[]> {
+    const response = await api.get(`/admin/classrooms/${classroomId}/users`);
+    return response.data;
+  },
+
+  async getTemplateSubmissions(
+    templateId: number, 
+    skip: number = 0, 
+    limit: number = 100
+  ): Promise<TemplateSubmission[]> {
+    const response = await api.get(`/admin/templates/${templateId}/submissions?skip=${skip}&limit=${limit}`);
+    return response.data;
+  },
+
+  async getAllSubmissions(
+    templateName?: string,
+    user?: string, 
+    language?: string,
+    status?: string,
+    skip: number = 0,
+    limit: number = 100
+  ): Promise<TemplateSubmission[]> {
+    const params = new URLSearchParams();
+    if (templateName) params.append('template_name', templateName);
+    if (user) params.append('user', user);
+    if (language) params.append('language', language);
+    if (status) params.append('status', status);
+    params.append('skip', skip.toString());
+    params.append('limit', limit.toString());
+    
+    const response = await api.get(`/admin/submissions?${params.toString()}`);
+    return response.data;
+  },
+
+  async getSubmissionsStats(templateId?: number): Promise<{
+    total_submissions: number;
+    success_submissions: number;
+    error_submissions: number;
+    success_rate: number;
+    submissions_by_language: Array<{ language: string; count: number }>;
+  }> {
+    const params = templateId ? `?template_id=${templateId}` : '';
+    const response = await api.get(`/admin/submissions/stats${params}`);
+    return response.data;
+  },
+
   // Note: Direct file upload endpoint available but not used in current flow
   // Templates are now created through the regular create endpoint after file content is loaded in UI
   async uploadTemplateFile(file: File, name?: string, description?: string, language?: string): Promise<Template> {
@@ -509,8 +633,24 @@ export const apiService = {
     return response.data;
   },
 
+  // Per-classroom admin settings
+  async getClassroomAdminSettings(classroomId: number): Promise<any> {
+    const response = await api.get(`/admin/classrooms/${classroomId}/settings`);
+    return response.data;
+  },
+
+  async updateClassroomAdminSettings(classroomId: number, settings: any): Promise<any> {
+    const response = await api.put(`/admin/classrooms/${classroomId}/settings`, settings);
+    return response.data;
+  },
+
   async getPublicAdminSettings(): Promise<any> {
     const response = await api.get('/admin/settings/public');
+    return response.data;
+  },
+
+  async getUserAdminSettings(): Promise<any> {
+    const response = await api.get('/admin/settings/user');
     return response.data;
   },
 
@@ -547,6 +687,98 @@ export const apiService = {
 
   async deleteUserTemplate(templateId: number): Promise<void> {
     await api.delete(`/user-templates/${templateId}`);
+  },
+
+  // Classroom endpoints
+  async getMyClassrooms(): Promise<any[]> {
+    const response = await api.get('/classrooms/my');
+    return response.data;
+  },
+
+  async createClassroom(classroomData: {
+    name: string;
+    description?: string;
+    classroom_key?: string;
+    max_members?: number;
+    allow_collaboration?: boolean;
+  }): Promise<any> {
+    const response = await api.post('/classrooms', classroomData);
+    return response.data;
+  },
+
+  async getClassroom(classroomId: number): Promise<any> {
+    const response = await api.get(`/classrooms/${classroomId}`);
+    return response.data;
+  },
+
+  async updateClassroom(classroomId: number, updateData: {
+    name?: string;
+    description?: string;
+    max_members?: number;
+    allow_collaboration?: boolean;
+  }): Promise<any> {
+    const response = await api.put(`/classrooms/${classroomId}`, updateData);
+    return response.data;
+  },
+
+  async joinClassroom(classroomKey: string): Promise<any> {
+    const response = await api.post('/classrooms/join', { classroom_key: classroomKey });
+    return response.data;
+  },
+
+  async getClassroomMembers(classroomId: number): Promise<any[]> {
+    const response = await api.get(`/classrooms/${classroomId}/members`);
+    return response.data;
+  },
+
+  async leaveClassroom(classroomId: number): Promise<void> {
+    await api.delete(`/classrooms/${classroomId}/leave`);
+  },
+
+  async getClassroomStats(classroomId: number): Promise<any> {
+    const response = await api.get(`/classrooms/${classroomId}/stats`);
+    return response.data;
+  },
+
+  async removeClassroomMember(classroomId: number, memberId: number): Promise<void> {
+    await api.delete(`/classrooms/${classroomId}/members/${memberId}`);
+  },
+
+  async inviteToClassroom(classroomId: number, email: string): Promise<any> {
+    const response = await api.post(`/classrooms/${classroomId}/invite`, { email });
+    return response.data;
+  },
+
+  async addStudentToClassroom(classroomId: number, email: string): Promise<any> {
+    const response = await api.post(`/classrooms/${classroomId}/add-student`, { email });
+    return response.data;
+  },
+
+  async deleteClassroom(classroomId: number): Promise<any> {
+    const response = await api.delete(`/classrooms/${classroomId}`);
+    return response.data;
+  },
+
+  // RBAC Management
+  async manageParticipant(shareId: string, participantId: number, action: {
+    action: string;
+    role?: string;
+  }): Promise<any> {
+    const response = await api.post(`/collaboration/sessions/${shareId}/manage-participant/${participantId}`, action);
+    return response.data;
+  },
+
+  async getPendingParticipants(shareId: string): Promise<ParticipantResponse[]> {
+    const response = await api.get(`/collaboration/sessions/${shareId}/pending-participants`);
+    return response.data;
+  },
+
+  async batchManageAdmissions(shareId: string, requests: Array<{
+    participant_id: number;
+    action: string;
+  }>): Promise<any> {
+    const response = await api.post(`/collaboration/sessions/${shareId}/batch-admission`, requests);
+    return response.data;
   },
 };
 

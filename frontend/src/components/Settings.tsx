@@ -1,24 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import CodeHistory from './CodeHistory';
 import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
 import { useTheme } from '@/contexts/ThemeContext';
-import { apiService } from '@/services/api';
 import { 
   Settings as SettingsIcon, 
   History, 
   User, 
-  Shield, 
   Bell,
   Moon,
   Sun,
   Monitor,
-
+  PanelLeft,
+  PanelLeftOpen,
+  Menu,
+  ChevronDown
 } from 'lucide-react';
 
 export default function Settings() {
@@ -28,33 +29,15 @@ export default function Settings() {
   const { theme, setTheme } = useTheme();
   const [notifications, setNotifications] = useState(true);
 
-  // Use backend API to verify admin status instead of hardcoded email
-  const [isAdmin, setIsAdmin] = useState(false);
-  
-  useEffect(() => {
-    if (user) {
-      // Check admin status via backend API
-      const checkAdminStatus = async () => {
-        try {
-          await apiService.getAdminStats();
-          setIsAdmin(true);
-        } catch (error) {
-          setIsAdmin(false);
-        }
-      };
-      checkAdminStatus();
-    }
-  }, [user]);
+  // Tab state and sidebar collapse
+  const [activeTab, setActiveTab] = useState('history');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const handleLoadCode = (historyCode: string, historyLanguage: string) => {
     setCode(historyCode);
     setLanguage(historyLanguage);
     // Navigate back to IDE after loading code
     navigate('/');
-  };
-
-  const handleAdminDashboard = () => {
-    navigate('/admin');
   };
 
 
@@ -87,41 +70,114 @@ export default function Settings() {
 
         {/* Main Content */}
         <div className="flex-1 overflow-auto p-4 md:p-6">
+          {/* Mobile Dropdown */}
+          <div className="block lg:hidden mb-6">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-between">
+                  <span className="flex items-center">
+                    <Menu className="w-4 h-4 mr-2" />
+                    {activeTab === 'history' && 'Code History'}
+                    {activeTab === 'profile' && 'Profile'}
+                    {activeTab === 'preferences' && 'Preferences'}
+                  </span>
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-full">
+                <DropdownMenuItem onClick={() => setActiveTab('history')}>
+                  <History className="w-4 h-4 mr-2" />
+                  Code History
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('profile')}>
+                  <User className="w-4 h-4 mr-2" />
+                  Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('preferences')}>
+                  <Bell className="w-4 h-4 mr-2" />
+                  Preferences
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
-      <Tabs defaultValue="history" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="history" className="flex items-center space-x-2">
+          {/* Desktop Layout: Left Panel + Right Panel */}
+          <div className={`hidden lg:grid lg:gap-6 lg:h-[calc(100vh-160px)] ${
+            sidebarCollapsed ? 'lg:grid-cols-[80px_1fr]' : 'lg:grid-cols-[280px_1fr]'
+          }`}>
+            {/* Left Navigation Panel */}
+            <Card className="h-full flex flex-col">
+              <CardHeader className="pb-3 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  {!sidebarCollapsed && (
+                    <CardTitle className="text-lg">Settings Menu</CardTitle>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                    className="h-8 w-8 p-0"
+                    title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                  >
+                    {sidebarCollapsed ? (
+                      <PanelLeftOpen className="w-4 h-4" />
+                    ) : (
+                      <PanelLeft className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0 flex-1 overflow-hidden">
+                <nav className="space-y-1 p-4 h-full">
+                  <Button
+                    variant={activeTab === 'history' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('history')}
+                    title={sidebarCollapsed ? 'Code History' : ''}
+                  >
             <History className="w-4 h-4" />
-            <span>History</span>
-          </TabsTrigger>
-          <TabsTrigger value="profile" className="flex items-center space-x-2">
+                    {!sidebarCollapsed && <span className="ml-3">Code History</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'profile' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('profile')}
+                    title={sidebarCollapsed ? 'Profile' : ''}
+                  >
             <User className="w-4 h-4" />
-            <span>Profile</span>
-          </TabsTrigger>
-          <TabsTrigger value="preferences" className="flex items-center space-x-2">
+                    {!sidebarCollapsed && <span className="ml-3">Profile</span>}
+                  </Button>
+                                    <Button
+                    variant={activeTab === 'preferences' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('preferences')}
+                    title={sidebarCollapsed ? 'Preferences' : ''}
+                  >
             <Bell className="w-4 h-4" />
-            <span>Preferences</span>
-          </TabsTrigger>
-          {isAdmin && (
-            <TabsTrigger value="admin" className="flex items-center space-x-2">
-              <Shield className="w-4 h-4" />
-              <span>Admin</span>
-            </TabsTrigger>
-          )}
-        </TabsList>
-
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Code Execution History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CodeHistory onLoadCode={handleLoadCode} />
+                    {!sidebarCollapsed && <span className="ml-3">Preferences</span>}
+                  </Button>
+                </nav>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="profile" className="space-y-4">
+                        {/* Right Content Panel */}
+            <Card className="h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6">
+
+                {activeTab === 'history' && (
+                  <div className="space-y-4">
+                    <CodeHistory onLoadCode={handleLoadCode} />
+                  </div>
+                )}
+
+                {activeTab === 'profile' && (
+                  <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Profile Information</CardTitle>
@@ -153,9 +209,7 @@ export default function Settings() {
                     ) : (
                       <Badge variant="outline">Unverified</Badge>
                     )}
-                    {isAdmin && (
-                      <Badge className="bg-purple-100 text-purple-800">Admin</Badge>
-                    )}
+
                   </div>
                 </div>
               </div>
@@ -165,9 +219,11 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+                  </div>
+                )}
 
-        <TabsContent value="preferences" className="space-y-4">
+                {activeTab === 'preferences' && (
+                  <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Editor Preferences</CardTitle>
@@ -235,58 +291,144 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {isAdmin && (
-          <TabsContent value="admin" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Shield className="w-5 h-5" />
-                  <span>Administrator Controls</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="bg-info/10 border border-info/20 rounded-lg p-4">
-                  <h4 className="font-medium text-info-foreground mb-2">Admin Dashboard</h4>
-                  <p className="text-sm text-info-foreground/80 mb-3">
-                    Access the full administrative dashboard to manage users, monitor system activity, and view detailed analytics.
-                  </p>
-                  <Button onClick={handleAdminDashboard} className="btn-info">
-                    Open Admin Dashboard
-                  </Button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-info">Admin</div>
-                    <div className="text-sm text-muted-foreground">Access Level</div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-success">Full</div>
-                    <div className="text-sm text-muted-foreground">Permissions</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-purple-600">System</div>
-                    <div className="text-sm text-muted-foreground">Management</div>
-                  </div>
-                </div>
+                )}
 
-                <div className="pt-4 border-t">
-                  <h5 className="font-medium mb-2">Admin Capabilities:</h5>
-                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                    <li>View all user activities and code executions</li>
-                    <li>Monitor system statistics and performance</li>
-                    <li>Manage user accounts (activate/deactivate)</li>
-                    <li>Access collaboration session details</li>
-                    <li>View error logs and system health</li>
-                  </ul>
-                </div>
-              </CardContent>
+                
+              </div>
             </Card>
-          </TabsContent>
-        )}
-      </Tabs>
+          </div>
+
+          {/* Mobile Content - Show below dropdown on small screens */}
+          <div className="block lg:hidden">
+            <div className="mt-6">
+              {activeTab === 'history' && (
+                <div className="space-y-4">
+                  <CodeHistory onLoadCode={handleLoadCode} />
+                </div>
+              )}
+
+              {activeTab === 'profile' && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Profile Information</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Username</label>
+                          <p className="text-lg">{user?.username}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Email</label>
+                          <p className="text-lg">{user?.email}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Full Name</label>
+                          <p className="text-lg">{user?.full_name || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Account Status</label>
+                          <div className="flex items-center space-x-2 mt-1 flex-wrap">
+                            {user?.is_active ? (
+                              <Badge className="badge-success">Active</Badge>
+                            ) : (
+                              <Badge variant="destructive">Inactive</Badge>
+                            )}
+                            {user?.is_verified ? (
+                              <Badge className="badge-info">Verified</Badge>
+                            ) : (
+                              <Badge variant="outline">Unverified</Badge>
+                            )}
+
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Member Since</label>
+                          <p className="text-lg">{new Date(user?.created_at || '').toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {activeTab === 'preferences' && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Editor Preferences</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div>
+                        <label className="text-sm font-medium mb-3 block">Theme</label>
+                        <div className="flex space-x-2 flex-wrap gap-2">
+                          <Button
+                            variant={theme === 'light' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setTheme('light')}
+                            className="flex items-center space-x-2"
+                          >
+                            <Sun className="w-4 h-4" />
+                            <span>Light</span>
+                          </Button>
+                          <Button
+                            variant={theme === 'dark' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setTheme('dark')}
+                            className="flex items-center space-x-2"
+                          >
+                            <Moon className="w-4 h-4" />
+                            <span>Dark</span>
+                          </Button>
+                          <Button
+                            variant={theme === 'system' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setTheme('system')}
+                            className="flex items-center space-x-2"
+                          >
+                            <Monitor className="w-4 h-4" />
+                            <span>System</span>
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="text-sm font-medium">Notifications</label>
+                          <p className="text-sm text-muted-foreground">Receive notifications about code execution results</p>
+                        </div>
+                        <Button
+                          variant={notifications ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setNotifications(!notifications)}
+                        >
+                          {notifications ? 'Enabled' : 'Disabled'}
+                        </Button>
+                      </div>
+
+                      <div className="pt-4 border-t">
+                        <h4 className="font-medium mb-2">Editor Settings</h4>
+                        <div className="text-sm text-muted-foreground space-y-1">
+                          <p>• Font size: 14px</p>
+                          <p>• Tab size: 2 spaces</p>
+                          <p>• Word wrap: Enabled</p>
+                          <p>• Line numbers: Enabled</p>
+                          <p>• Minimap: Disabled</p>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          More editor customization options coming soon!
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -15,6 +15,10 @@ class Assignment(Base):
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_by = relationship("User", foreign_keys=[created_by_id])
     
+    # Classroom scope (nullable for migration compatibility)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    classroom = relationship("Classroom", back_populates="assignments")
+    
     # File storage information
     zip_file_path = Column(String(500), nullable=True)  # Path to original ZIP file
     extracted_path = Column(String(500), nullable=True)  # Path to extracted directory

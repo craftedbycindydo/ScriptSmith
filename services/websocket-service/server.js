@@ -24,7 +24,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// Configure Socket.IO with CORS and production optimizations
+// Configure Socket.IO with CORS and enhanced stability
 const io = socketIo(server, {
   cors: {
     origin: CORS_ORIGINS,
@@ -34,12 +34,23 @@ const io = socketIo(server, {
   transports: ['websocket', 'polling'],
   pingTimeout: SOCKET_PING_TIMEOUT,
   pingInterval: SOCKET_PING_INTERVAL,
-  allowEIO3: true
+  allowEIO3: true,
+  // Enhanced connection management
+  connectTimeout: 60000, // 1 minute connection timeout
+  perMessageDeflate: false, // Disable compression for stability
+  httpCompression: false,
+  maxHttpBufferSize: 1e6, // 1MB max buffer
+  allowRequest: (req, callback) => {
+    // Allow all connections but log them
+    console.log(`🔗 New connection request from: ${req.headers.origin || req.connection.remoteAddress}`);
+    callback(null, true);
+  }
 });
 
 // SERVER-MANAGED SESSION PERSISTENCE
 const activeConnections = new Map(); // sessionId -> Map(participantId -> socketId)
 const sessionDocuments = new Map(); // sessionId -> document content (string)  
+const sessionCursorPositions = new Map(); // sessionId -> Map(participantId -> cursor position)
 const socketToSession = new Map(); // socketId -> {sessionId, participantId}
 const sessionLastActivity = new Map(); // sessionId -> timestamp
 const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
@@ -91,28 +102,54 @@ app.post('/api/sessions/:sessionId/broadcast', (req, res) => {
   const { event, data, excludeParticipant } = req.body;
   
   try {
-    broadcastToSession(sessionId, event, data, excludeParticipant);
+
+    
+    // Handle special RBAC events
+    if (event === 'participant_permission_changed') {
+      handleParticipantPermissionChanged(sessionId, data);
+    } else if (event === 'batch_admission_update') {
+      handleBatchAdmissionUpdate(sessionId, data);
+    } else {
+      // Regular broadcast for other events
+      broadcastToSession(sessionId, event, data, excludeParticipant);
+    }
+    
     res.json({ success: true, message: 'Event broadcasted successfully' });
   } catch (error) {
+    console.error(`❌ Broadcast failed for session ${sessionId}:`, error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// API endpoint to broadcast admin settings changes to all connected clients
+// API endpoint to broadcast admin settings changes to classroom-specific clients
 app.post('/api/broadcast/admin-settings', (req, res) => {
-  const { event, data } = req.body;
+  const { event, data, classroom_id } = req.body;
   
   try {
-    // Broadcast to all connected sockets
-    io.emit(event, data);
+    if (!classroom_id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'classroom_id is required for admin settings broadcast' 
+      });
+    }
     
-    const connectedSockets = io.sockets.sockets.size;
-    console.log(`📢 Broadcasted ${event} to ${connectedSockets} connected clients`);
+    // Broadcast to classroom-specific room
+    const roomName = `classroom_${classroom_id}`;
+    const socketsInRoom = io.sockets.adapter.rooms.get(roomName);
+    const clientCount = socketsInRoom ? socketsInRoom.size : 0;
+    
+    io.to(roomName).emit(event, {
+      ...data,
+      classroom_id: classroom_id
+    });
+    
+    
     
     res.json({ 
       success: true, 
       message: 'Admin settings broadcasted successfully',
-      connectedClients: connectedSockets
+      classroom_id: classroom_id,
+      connectedClients: clientCount
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -142,11 +179,40 @@ async function makeBackendRequest(endpoint, method = 'GET', data = null) {
   }
 }
 
+// Check if participant has permission to perform action
+async function checkParticipantPermission(sessionId, participantId, action) {
+  try {
+    const participants = await makeBackendRequest(`/collaboration/sessions/${sessionId}/participants`);
+    const participant = participants.find(p => p.id === participantId);
+    
+    if (!participant) {
+      return { allowed: false, reason: 'Participant not found' };
+    }
+    
+    if (participant.status !== 'approved') {
+      return { allowed: false, reason: `Participant status is ${participant.status}` };
+    }
+    
+    if (action === 'edit' && !['owner', 'editor'].includes(participant.role)) {
+      return { allowed: false, reason: `Role ${participant.role} cannot edit` };
+    }
+    
+    if (action === 'view' && !['owner', 'editor', 'viewer'].includes(participant.role)) {
+      return { allowed: false, reason: `Role ${participant.role} cannot view` };
+    }
+    
+    return { allowed: true, participant };
+  } catch (error) {
+    console.error('Permission check failed:', error.message);
+    return { allowed: false, reason: 'Permission check failed' };
+  }
+}
+
 // Utility function to broadcast to all participants in a session
 function broadcastToSession(sessionId, event, data, excludeParticipantId = null) {
   const connections = activeConnections.get(sessionId);
   if (!connections) {
-    console.log('❌ No connections found for session:', sessionId);
+    
     return 0;
   }
   
@@ -158,18 +224,109 @@ function broadcastToSession(sessionId, event, data, excludeParticipantId = null)
     if (socket) {
       socket.emit(event, data);
       broadcastCount++;
-      console.log(`📤 Sent ${event} to participant ${participantId} (socket: ${socketId})`);
+
     } else {
-      console.log(`❌ Socket not found for participant ${participantId}`);
+
     }
   });
   
   return broadcastCount;
 }
 
+// Handle participant permission changes (RBAC events)
+function handleParticipantPermissionChanged(sessionId, data) {
+  const { participant_id, username, role, status, action } = data;
+  
+
+  
+  // If participant was kicked, disconnect them
+  if (action === 'kick' || status === 'kicked') {
+
+    
+    const connections = activeConnections.get(sessionId);
+    if (connections && connections.has(participant_id)) {
+      const socketId = connections.get(participant_id);
+      const targetSocket = io.sockets.sockets.get(socketId);
+      
+      if (targetSocket) {
+
+        
+        // Send kick notification before disconnecting
+        targetSocket.emit('kicked_from_session', {
+          message: 'You have been removed from this collaboration session',
+          reason: 'Kicked by session owner'
+        });
+        
+        // Give time for the message to be received, then disconnect
+        setTimeout(() => {
+          targetSocket.disconnect(true);
+        }, 100);
+        
+        // Remove from connections immediately
+        connections.delete(participant_id);
+        socketToSession.delete(socketId);
+      }
+    }
+  }
+  
+  // Broadcast permission change to all participants (exclude kicked participant)
+  broadcastToSession(sessionId, 'participant_permission_changed', data, action === 'kick' ? participant_id : null);
+}
+
+// Handle batch admission updates
+function handleBatchAdmissionUpdate(sessionId, data) {
+
+  
+  // Broadcast to all participants in the session
+  broadcastToSession(sessionId, 'batch_admission_update', data);
+}
+
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  console.log(`🔌 Client connected: ${socket.id}`);
+  
+  // Handle joining a classroom room for admin settings
+  socket.on('join_classroom', async (data) => {
+    try {
+      const { classroom_id, user_id } = data;
+      
+      if (!classroom_id || !user_id) {
+        socket.emit('error', { message: 'Missing classroom_id or user_id' });
+        return;
+      }
+      
+      const roomName = `classroom_${classroom_id}`;
+      socket.join(roomName);
+      
+
+      socket.emit('classroom_joined', { classroom_id, room: roomName });
+      
+    } catch (error) {
+      console.error('Error in join_classroom:', error);
+      socket.emit('error', { message: 'Failed to join classroom' });
+    }
+  });
+  
+  // Handle leaving a classroom room
+  socket.on('leave_classroom', async (data) => {
+    try {
+      const { classroom_id, user_id } = data;
+      
+      if (!classroom_id || !user_id) {
+        socket.emit('error', { message: 'Missing classroom_id or user_id' });
+        return;
+      }
+      
+      const roomName = `classroom_${classroom_id}`;
+      socket.leave(roomName);
+      
+
+      socket.emit('classroom_left', { classroom_id, room: roomName });
+      
+    } catch (error) {
+      console.error('Error in leave_classroom:', error);
+      socket.emit('error', { message: 'Failed to leave classroom' });
+    }
+  });
   
   // Handle joining a collaboration session
   socket.on('join_session', async (data) => {
@@ -217,12 +374,28 @@ io.on('connection', (socket) => {
       const sessionConnections = activeConnections.get(sessionId);
       const isFirstParticipant = !sessionConnections || sessionConnections.size === 0;
       
-      // Send session joined confirmation
-      socket.emit('session_joined', { 
+      // Check participant permission to join
+      const permissionCheck = await checkParticipantPermission(sessionId, participantId, 'view');
+      const canJoin = permissionCheck.allowed;
+      
+      // Send session joined confirmation with permission status
+      const joinData = { 
         session_id: sessionId, 
         participant_id: participantId,
-        is_first_participant: isFirstParticipant
+        is_first_participant: isFirstParticipant,
+        permission_status: permissionCheck.allowed ? 'approved' : 'pending',
+        role: permissionCheck.participant?.role || 'editor',
+        can_edit: permissionCheck.participant?.role && ['owner', 'editor'].includes(permissionCheck.participant.role),
+        message: permissionCheck.allowed ? 'Joined successfully' : 'Waiting for owner approval'
+      };
+      
+      console.log(`✅ Participant ${participantId} joined session ${sessionId} with permissions:`, {
+        permission_status: joinData.permission_status,
+        role: joinData.role,
+        can_edit: joinData.can_edit
       });
+      
+      socket.emit('session_joined', joinData);
 
       // Send current document content to the new participant
       let currentContent = sessionDocuments.get(sessionId);
@@ -235,7 +408,7 @@ io.on('connection', (socket) => {
             currentContent = stateResponse.document_content;
             // Cache it in memory for future use
             sessionDocuments.set(sessionId, currentContent);
-            console.log(`📄 Retrieved session ${sessionId} content from backend`);
+  
           } else {
             // Initialize empty document for new session
             currentContent = '';
@@ -254,6 +427,21 @@ io.on('connection', (socket) => {
         session_id: sessionId,
         content: currentContent
       });
+      
+      // Send persisted cursor positions of other participants to the new participant
+      const cursorsForSession = sessionCursorPositions.get(sessionId);
+      if (cursorsForSession && cursorsForSession.size > 0) {
+        console.log(`📍 Sending ${cursorsForSession.size} persisted cursor positions to participant ${participantId}`);
+        cursorsForSession.forEach((cursorPosition, otherParticipantId) => {
+          if (otherParticipantId !== participantId) { // Don't send their own cursor
+            socket.emit('cursor_update', {
+              participant_id: otherParticipantId,
+              cursor: cursorPosition
+            });
+            console.log(`📍 Sent persisted cursor for participant ${otherParticipantId}:`, cursorPosition);
+          }
+        });
+      }
       
       // Notify other participants about new connection
       broadcastToSession(sessionId, 'participant_connected', {
@@ -289,6 +477,17 @@ io.on('connection', (socket) => {
       const sessionId = parseInt(session_id);
       const participantId = parseInt(participant_id);
       
+      // Check if participant has edit permissions
+      const permissionCheck = await checkParticipantPermission(sessionId, participantId, 'edit');
+      if (!permissionCheck.allowed) {
+        console.log(`❌ Permission denied for participant ${participantId}: ${permissionCheck.reason}`);
+        socket.emit('permission_denied', { 
+          message: `Edit permission denied: ${permissionCheck.reason}`,
+          action: 'document_change'
+        });
+        return;
+      }
+      
       // Update session last activity
       sessionLastActivity.set(sessionId, Date.now());
       
@@ -303,6 +502,19 @@ io.on('connection', (socket) => {
       }, participantId);
       
       console.log('📤 Broadcasted document_changed to:', broadcastResult, 'participants');
+      
+      // After document change, re-broadcast all cursor positions to keep them synchronized
+      // This ensures cursors are properly displayed after content changes
+      const cursorsForSession = sessionCursorPositions.get(sessionId);
+      if (cursorsForSession && cursorsForSession.size > 0) {
+        console.log(`📍 Re-broadcasting ${cursorsForSession.size} cursor positions after document change`);
+        cursorsForSession.forEach((cursorPosition, participantIdWithCursor) => {
+          broadcastToSession(sessionId, 'cursor_update', {
+            participant_id: participantIdWithCursor,
+            cursor: cursorPosition
+          }, -1); // Send to everyone (including the cursor owner for consistency)
+        });
+      }
       
       // Periodically save content to backend (debounced)
       const timeoutKey = `${sessionId}_timeout`;
@@ -345,6 +557,7 @@ io.on('connection', (socket) => {
     }
   });
   
+
   // Handle cursor position updates
   socket.on('cursor_update', async (data) => {
     try {
@@ -357,6 +570,13 @@ io.on('connection', (socket) => {
       
       const sessionId = parseInt(session_id);
       const participantId = parseInt(participant_id);
+      
+      // Persist cursor position in WebSocket server memory
+      if (!sessionCursorPositions.has(sessionId)) {
+        sessionCursorPositions.set(sessionId, new Map());
+      }
+      sessionCursorPositions.get(sessionId).set(participantId, cursor);
+      console.log(`💾 Persisted cursor position for participant ${participantId} in session ${sessionId}:`, cursor);
       
       // Update cursor position in backend
       try {
@@ -435,6 +655,8 @@ io.on('connection', (socket) => {
       console.error('Error in leave_session:', error);
     }
   });
+  
+
   
   // Handle disconnection
   socket.on('disconnect', async () => {

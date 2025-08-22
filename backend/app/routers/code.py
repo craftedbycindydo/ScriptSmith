@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 import time
+import asyncio
 
 from app.core.config import settings
 from app.database.base import get_db
@@ -10,6 +11,8 @@ from app.services.microservice_executor import microservice_executor
 from app.routers.auth import get_current_user, get_current_user_optional
 from typing import Union
 from app.models.code_submission import CodeSubmission
+from app.services.openai_service import openai_service
+from app.services.cache_service import cache_service
 from sqlalchemy import desc
 
 router = APIRouter()
@@ -20,11 +23,18 @@ class CodeExecutionRequest(BaseModel):
     input_data: Optional[str] = ""
     template_id: Optional[int] = None  # Track which template was used
 
+class ComplexityAnalysis(BaseModel):
+    time_complexity: str
+    space_complexity: str
+    explanation: str
+    available: bool
+
 class CodeExecutionResponse(BaseModel):
     output: str
     error: str
     execution_time: float
     status: str  # "success", "error", "timeout"
+    complexity: Optional[ComplexityAnalysis] = None
 
 class CodeValidationRequest(BaseModel):
     code: str
@@ -78,6 +88,34 @@ async def execute_code(
             detail=f"Code size ({code_size_kb:.1f}KB) exceeds maximum allowed size ({settings.max_code_size_kb}KB)"
         )
     
+    # Check cache first to avoid redundant execution
+    input_data = request.input_data or ""
+    cached_result = await cache_service.get_cached_result(
+        request.code, 
+        request.language, 
+        input_data
+    )
+    
+    if cached_result:
+        # Return cached result - convert complexity back to object if present
+        complexity_data = cached_result.get("complexity")
+        complexity_analysis = None
+        if complexity_data:
+            complexity_analysis = ComplexityAnalysis(
+                time_complexity=complexity_data.get("time_complexity", "Not Available"),
+                space_complexity=complexity_data.get("space_complexity", "Not Available"),
+                explanation=complexity_data.get("explanation", "Not Available"),
+                available=complexity_data.get("available", False)
+            )
+        
+        return CodeExecutionResponse(
+            output=cached_result.get("output", ""),
+            error=cached_result.get("error", ""),
+            execution_time=cached_result.get("execution_time", 0.0),
+            status=cached_result.get("status", "error"),
+            complexity=complexity_analysis
+        )
+    
     start_time = time.time()
     
     try:
@@ -85,10 +123,35 @@ async def execute_code(
         result = await microservice_executor.execute_code(
             code=request.code,
             language=request.language,
-            input_data=request.input_data or ""
+            input_data=input_data
         )
         
         execution_time = time.time() - start_time
+        
+        # Perform complexity analysis ONLY if execution was successful - saves OpenAI calls
+        complexity_analysis = None
+        if result["status"] == "success":
+            try:
+                # Use asyncio.wait_for to enforce timeout and prevent blocking
+                analysis_result = await asyncio.wait_for(
+                    openai_service.analyze_code_complexity(request.code, request.language),
+                    timeout=4.0  # Maximum 4 seconds total for complexity analysis
+                )
+                complexity_analysis = ComplexityAnalysis(
+                    time_complexity=analysis_result["time_complexity"],
+                    space_complexity=analysis_result["space_complexity"], 
+                    explanation=analysis_result["explanation"],
+                    available=analysis_result["available"]
+                )
+            except asyncio.TimeoutError:
+                # Timeout - return response without complexity to avoid delays
+                complexity_analysis = None
+            except Exception:
+                # Any other error - return response without complexity, no error details
+                complexity_analysis = None
+        else:
+            # Code execution failed - skip OpenAI call to save API costs
+            print(f"⏭️  Skipping OpenAI complexity analysis - code execution failed ({result['status']})")
         
         # Save execution to database if user is authenticated
         if current_user:
@@ -108,12 +171,36 @@ async def execute_code(
             db.add(code_submission)
             db.commit()
         
-        return CodeExecutionResponse(
+        # Prepare response
+        response = CodeExecutionResponse(
             output=result["output"],
             error=result["error"],
             execution_time=execution_time,
-            status=result["status"]
+            status=result["status"],
+            complexity=complexity_analysis
         )
+        
+        # Cache the result asynchronously (don't wait for it to complete)
+        try:
+            asyncio.create_task(
+                cache_service.cache_result(
+                    request.code,
+                    request.language, 
+                    input_data,
+                    {
+                        "output": result["output"],
+                        "error": result["error"],
+                        "execution_time": execution_time,
+                        "status": result["status"],
+                        "complexity": complexity_analysis.dict() if complexity_analysis else None
+                    }
+                )
+            )
+        except Exception:
+            # Cache errors should not affect the response
+            pass
+            
+        return response
     
     except Exception as e:
         return CodeExecutionResponse(
@@ -233,4 +320,81 @@ async def get_microservice_info(language: str):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get service info: {str(e)}"
+        )
+
+
+@router.get("/cache/stats")
+async def get_cache_stats():
+    """Get code execution cache statistics"""
+    try:
+        stats = await cache_service.get_cache_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cache stats: {str(e)}"
+        )
+
+
+@router.post("/cache/ttl")
+async def get_cache_ttl(
+    request: CodeExecutionRequest
+):
+    """Get remaining TTL for cached code execution result"""
+    try:
+        ttl_seconds = await cache_service.get_cache_ttl(
+            request.code,
+            request.language,
+            request.input_data or ""
+        )
+        
+        if ttl_seconds == -1:
+            return {
+                "cached": False,
+                "message": "Code not found in cache"
+            }
+        elif ttl_seconds == -2:
+            return {
+                "cached": True,
+                "ttl_seconds": -2,
+                "message": "Cached but no TTL set (permanent)"
+            }
+        else:
+            ttl_hours = ttl_seconds / 3600
+            return {
+                "cached": True,
+                "ttl_seconds": ttl_seconds,
+                "ttl_hours": round(ttl_hours, 2),
+                "message": f"Cache expires in {ttl_hours:.2f} hours"
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to check cache TTL: {str(e)}"
+        )
+
+
+@router.delete("/cache/clear")
+async def clear_cache(
+    current_user = Depends(get_current_user)  # Require authentication
+):
+    """Clear code execution cache (admin only)"""
+    # Check if user has admin privileges
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required to clear cache"
+        )
+    
+    try:
+        deleted_count = await cache_service.clear_cache()
+        return {
+            "message": f"Successfully cleared {deleted_count} cache entries",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear cache: {str(e)}"
         )

@@ -11,6 +11,28 @@ export interface User {
   is_verified: boolean;
   is_admin: boolean;
   created_at: string;
+  classroom_context?: {
+    has_classroom: boolean;
+    classrooms: Array<{
+      id: number;
+      name: string;
+      key: string;
+      role: string;
+      is_teacher: boolean;
+      member_count: number;
+    }>;
+    current_classroom?: {
+      id: number;
+      name: string;
+      key: string;
+      role: string;
+      is_teacher: boolean;
+      member_count: number;
+    };
+    roles: string[];
+    is_teacher: boolean;
+    is_student: boolean;
+  };
 }
 
 export interface AuthToken {
@@ -29,7 +51,8 @@ interface AuthState {
   
   // Actions
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, username: string, password: string, fullName?: string) => Promise<boolean>;
+  register: (email: string, username: string, password: string, fullName?: string, classroomKey?: string) => Promise<boolean>;
+  refreshUser: () => Promise<boolean>;
   logout: () => void;
   refreshToken: () => Promise<boolean>;
   clearError: () => void;
@@ -80,7 +103,7 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      register: async (email: string, username: string, password: string, fullName?: string) => {
+      register: async (email: string, username: string, password: string, fullName?: string, classroomKey?: string) => {
         set({ isLoading: true, error: null });
         
         try {
@@ -88,7 +111,8 @@ export const useAuthStore = create<AuthState>()(
             email,
             username,
             password,
-            full_name: fullName
+            full_name: fullName,
+            classroom_key: classroomKey || ''
           });
           
           set({
@@ -101,6 +125,28 @@ export const useAuthStore = create<AuthState>()(
           set({
             error: error.response?.data?.detail || error.message || 'Registration failed',
             isLoading: false
+          });
+          return false;
+        }
+      },
+
+      refreshUser: async () => {
+        const { token } = get();
+        if (!token) return false;
+        
+        try {
+          const userResponse = await apiService.getCurrentUser();
+          
+          set({
+            user: userResponse,
+            error: null
+          });
+          
+          return true;
+        } catch (error: any) {
+          console.error('Failed to refresh user data:', error);
+          set({
+            error: error.response?.data?.detail || error.message || 'Failed to refresh user data'
           });
           return false;
         }
