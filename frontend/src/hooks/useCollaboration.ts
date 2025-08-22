@@ -194,32 +194,51 @@ export const useCollaboration = ({
     }
 
     const disposable = monacoEditor.onDidChangeModelContent(() => {
-      // Send changes immediately - no debouncing to prevent conflicts
+      // Send changes with light client-side debouncing for performance
       const content = monacoEditor.getValue();
       if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
-        socketRef.current.emit('document_change', {
-          session_id: sessionId,
-          participant_id: participantId,
-          content: content
-        });
+        // Clear existing timeout to implement debouncing
+        if ((window as any).documentChangeTimeout) {
+          clearTimeout((window as any).documentChangeTimeout);
+        }
+        
+        // Light debouncing (50ms) - server handles the heavy debouncing
+        (window as any).documentChangeTimeout = setTimeout(() => {
+          if (socketRef.current && !isUpdatingFromServer.current) {
+            socketRef.current.emit('document_change', {
+              session_id: sessionId,
+              participant_id: participantId,
+              content: content
+            });
+          }
+        }, 50);
       }
     });
 
-    // Set up cursor change listener - send immediately like document changes
+    // Set up cursor change listener with throttling for performance
     // Listen to BOTH cursor selection changes AND cursor position changes
     const cursorDisposable = monacoEditor.onDidChangeCursorPosition((e: any) => {
       const position = {
         lineNumber: e.position.lineNumber,
         column: e.position.column
       };
-      // Send cursor position immediately - no throttling, no position checking
-      // Don't send cursor updates while updating from server to avoid loops
+      // Throttle cursor updates to reduce network traffic
       if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
-        socketRef.current.emit('cursor_update', {
-          session_id: sessionId,
-          participant_id: participantId,
-          cursor: position
-        });
+        // Clear existing timeout to implement throttling
+        if ((window as any).cursorUpdateTimeout) {
+          clearTimeout((window as any).cursorUpdateTimeout);
+        }
+        
+        // Light throttling (100ms) - matches server throttling
+        (window as any).cursorUpdateTimeout = setTimeout(() => {
+          if (socketRef.current && !isUpdatingFromServer.current) {
+            socketRef.current.emit('cursor_update', {
+              session_id: sessionId,
+              participant_id: participantId,
+              cursor: position
+            });
+          }
+        }, 100);
       }
     });
 
@@ -229,14 +248,23 @@ export const useCollaboration = ({
         lineNumber: e.selection.startLineNumber,
         column: e.selection.startColumn
       };
-      // Send cursor position immediately 
-      // Don't send cursor updates while updating from server to avoid loops
+      // Use same throttling logic as cursor position changes
       if (socketRef.current && sessionId && participantId && !isUpdatingFromServer.current) {
-        socketRef.current.emit('cursor_update', {
-          session_id: sessionId,
-          participant_id: participantId,
-          cursor: position
-        });
+        // Clear existing timeout to implement throttling
+        if ((window as any).cursorUpdateTimeout) {
+          clearTimeout((window as any).cursorUpdateTimeout);
+        }
+        
+        // Light throttling (100ms) - matches server throttling
+        (window as any).cursorUpdateTimeout = setTimeout(() => {
+          if (socketRef.current && !isUpdatingFromServer.current) {
+            socketRef.current.emit('cursor_update', {
+              session_id: sessionId,
+              participant_id: participantId,
+              cursor: position
+            });
+          }
+        }, 100);
       }
     });
 
@@ -273,14 +301,19 @@ export const useCollaboration = ({
       socketRef.current = null;
     }
 
-    // Create WebSocket connection to dedicated service
+    // Create WebSocket connection to dedicated service with performance optimization
     socketRef.current = io(config.websocketUrl, {
-      transports: ['websocket', 'polling'],
-      timeout: 20000,
+      transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
+      timeout: 15000, // Reduced timeout for faster error detection
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      forceNew: true
+      reconnectionDelayMax: 5000,
+      forceNew: true,
+      // Performance optimizations
+      upgrade: true,
+      rememberUpgrade: true,
+      autoConnect: true
     });
 
     const socket = socketRef.current;
