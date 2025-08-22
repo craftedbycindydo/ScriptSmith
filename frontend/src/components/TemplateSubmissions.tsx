@@ -14,10 +14,7 @@ import {
   Eye,
   CheckCircle,
   XCircle,
-  Clock,
-  Code,
-  User,
-  Calendar
+  Clock
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
 
