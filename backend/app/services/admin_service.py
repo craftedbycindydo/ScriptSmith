@@ -132,13 +132,40 @@ class AdminService:
     
     def ensure_initial_admin_access(self, db: Session) -> None:
         """
-        Ensure users with initial admin emails have admin access
+        Ensure users with initial admin emails have admin access and classroom memberships
         This should be called during app startup or user login
         """
+        from app.models.classroom import Classroom, UserClassroom
+        
         for admin_email in self.settings.admin_emails:
             user = db.query(User).filter(User.email == admin_email.lower().strip()).first()
-            if user and not user.is_admin:
-                # Grant admin access to initial admin emails
-                if user.role != UserRole.ADMIN:
+            if user:
+                # Ensure admin role is set
+                if not user.is_admin:
                     user.role = UserRole.ADMIN
                     db.commit()
+                
+                # Ensure admin is a teacher in all active classrooms
+                all_classrooms = db.query(Classroom).filter(Classroom.is_active == True).all()
+                
+                for classroom in all_classrooms:
+                    # Check if admin is already a member of this classroom
+                    existing_membership = db.query(UserClassroom).filter(
+                        UserClassroom.user_id == user.id,
+                        UserClassroom.classroom_id == classroom.id,
+                        UserClassroom.is_active == True
+                    ).first()
+                    
+                    if not existing_membership:
+                        # Add admin as teacher to this classroom
+                        from app.services.classroom_service import ClassroomService
+                        try:
+                            ClassroomService.add_user_to_classroom(
+                                db=db,
+                                user=user,
+                                classroom=classroom,
+                                role="TEACHER"
+                            )
+                        except Exception as e:
+                            # Don't fail the whole process if one classroom addition fails
+                            print(f"Warning: Could not add admin {user.username} to classroom {classroom.name}: {e}")
