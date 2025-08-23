@@ -138,65 +138,86 @@ class TemplateService:
     ) -> List[Template]:
         """Get templates accessible to a specific user based on their classroom memberships"""
         try:
-            # Get user's classroom IDs - more explicit query
-            user_classrooms = db.query(UserClassroom).filter(
+            # Get user's classroom IDs
+            user_classroom_ids = db.query(UserClassroom.classroom_id).filter(
                 UserClassroom.user_id == user_id,
                 UserClassroom.is_active == True
             ).all()
             
-            user_classroom_ids = [uc.classroom_id for uc in user_classrooms]
+            user_classroom_ids = [row[0] for row in user_classroom_ids]
             
-            # Build the base query with explicit joins
-            query = db.query(Template).filter(Template.is_active == True)
-            
+            # Use simple, safe query approach to avoid JSON DISTINCT issues
             if user_classroom_ids:
-                # More explicit approach: Use EXISTS subquery for better database compatibility
-                from app.models.template import template_classroom_association
-                from sqlalchemy import exists
+                # Query templates that are either global OR in user's classrooms
+                # Use UNION approach to avoid complex joins that cause DISTINCT issues
+                from sqlalchemy import text
                 
-                # Templates that either:
-                # 1. Have no classroom associations (global templates), OR  
-                # 2. Are associated with user's classrooms via the association table
-                query = query.filter(
-                    or_(
-                        # Global templates (no associations)
-                        ~exists().where(
-                            template_classroom_association.c.template_id == Template.id
-                        ),
-                        # Templates in user's classrooms
-                        exists().where(
-                            and_(
-                                template_classroom_association.c.template_id == Template.id,
-                                template_classroom_association.c.classroom_id.in_(user_classroom_ids)
-                            )
-                        )
+                # First get global templates (no classroom associations)
+                global_templates_query = """
+                    SELECT DISTINCT t.id
+                    FROM templates t
+                    WHERE t.is_active = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM template_classrooms tc WHERE tc.template_id = t.id
                     )
-                )
+                """
+                
+                # Then get classroom-specific templates
+                classroom_templates_query = """
+                    SELECT DISTINCT t.id  
+                    FROM templates t
+                    INNER JOIN template_classrooms tc ON t.id = tc.template_id
+                    WHERE t.is_active = true
+                    AND tc.classroom_id = ANY(%(classroom_ids)s)
+                """
+                
+                # Execute both queries and combine IDs
+                global_result = db.execute(text(global_templates_query)).fetchall()
+                classroom_result = db.execute(text(classroom_templates_query), 
+                                            {"classroom_ids": user_classroom_ids}).fetchall()
+                
+                all_template_ids = list(set([row[0] for row in global_result + classroom_result]))
+                
+                if all_template_ids:
+                    # Get templates by IDs (safe, no DISTINCT on JSON)
+                    query = db.query(Template).filter(
+                        Template.id.in_(all_template_ids),
+                        Template.is_active == True
+                    )
+                    
+                    if language:
+                        query = query.filter(Template.language == language)
+                    
+                    templates = query.order_by(Template.language, Template.name).all()
+                else:
+                    templates = []
             else:
-                # User not in any classroom - only show global templates
-                from app.models.template import template_classroom_association
-                from sqlalchemy import exists
+                # User not in any classroom - only global templates
+                from sqlalchemy import text
                 
-                query = query.filter(
-                    ~exists().where(
-                        template_classroom_association.c.template_id == Template.id
+                global_template_ids = db.execute(text("""
+                    SELECT DISTINCT t.id
+                    FROM templates t
+                    WHERE t.is_active = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM template_classrooms tc WHERE tc.template_id = t.id
                     )
-                )
-            
-            # Filter by language if specified
-            if language:
-                query = query.filter(Template.language == language)
-            
-            # Apply ordering and pagination
-            templates = query.distinct().order_by(
-                Template.language, Template.name
-            ).offset(skip).limit(limit).all()
-            
-            # Manually load classroom relationships for better compatibility
-            for template in templates:
-                if not hasattr(template, '_classrooms_loaded'):
-                    template.classrooms  # This triggers lazy loading
-                    template._classrooms_loaded = True
+                """)).fetchall()
+                
+                template_ids = [row[0] for row in global_template_ids]
+                
+                if template_ids:
+                    query = db.query(Template).filter(
+                        Template.id.in_(template_ids),
+                        Template.is_active == True
+                    )
+                    
+                    if language:
+                        query = query.filter(Template.language == language)
+                    
+                    templates = query.order_by(Template.language, Template.name).all()
+                else:
+                    templates = []
             
             return templates
             
