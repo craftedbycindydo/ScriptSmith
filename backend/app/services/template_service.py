@@ -146,78 +146,55 @@ class TemplateService:
             
             user_classroom_ids = [row[0] for row in user_classroom_ids]
             
-            # Use simple, safe query approach to avoid JSON DISTINCT issues
+            # Use simple ORM approach to completely avoid DISTINCT and JSON issues
             if user_classroom_ids:
-                # Query templates that are either global OR in user's classrooms
-                # Use UNION approach to avoid complex joins that cause DISTINCT issues
-                from sqlalchemy import text
+                # Get all templates that match criteria - separate queries to avoid complex joins
                 
-                # First get global templates (no classroom associations)
-                global_templates_query = """
-                    SELECT DISTINCT t.id
-                    FROM templates t
-                    WHERE t.is_active = true
-                    AND NOT EXISTS (
-                        SELECT 1 FROM template_classrooms tc WHERE tc.template_id = t.id
-                    )
-                """
+                # 1. Get global templates (no classroom associations) 
+                from app.models.template import template_classroom_association
+                from sqlalchemy import exists
                 
-                # Then get classroom-specific templates
-                classroom_templates_query = """
-                    SELECT DISTINCT t.id  
-                    FROM templates t
-                    INNER JOIN template_classrooms tc ON t.id = tc.template_id
-                    WHERE t.is_active = true
-                    AND tc.classroom_id = ANY(%(classroom_ids)s)
-                """
+                global_templates = db.query(Template).filter(
+                    Template.is_active == True,
+                    ~exists().where(template_classroom_association.c.template_id == Template.id)
+                ).all()
                 
-                # Execute both queries and combine IDs
-                global_result = db.execute(text(global_templates_query)).fetchall()
-                classroom_result = db.execute(text(classroom_templates_query), 
-                                            {"classroom_ids": user_classroom_ids}).fetchall()
+                # 2. Get classroom-specific templates 
+                classroom_templates = db.query(Template).join(
+                    template_classroom_association,
+                    Template.id == template_classroom_association.c.template_id
+                ).filter(
+                    Template.is_active == True,
+                    template_classroom_association.c.classroom_id.in_(user_classroom_ids)
+                ).all()
                 
-                all_template_ids = list(set([row[0] for row in global_result + classroom_result]))
+                # 3. Combine and deduplicate manually (safe approach)
+                all_templates = {}
+                for template in global_templates + classroom_templates:
+                    all_templates[template.id] = template
                 
-                if all_template_ids:
-                    # Get templates by IDs (safe, no DISTINCT on JSON)
-                    query = db.query(Template).filter(
-                        Template.id.in_(all_template_ids),
-                        Template.is_active == True
-                    )
-                    
-                    if language:
-                        query = query.filter(Template.language == language)
-                    
-                    templates = query.order_by(Template.language, Template.name).all()
-                else:
-                    templates = []
+                templates = list(all_templates.values())
+                
+                # 4. Apply language filter and sorting manually
+                if language:
+                    templates = [t for t in templates if t.language == language]
+                
+                templates.sort(key=lambda t: (t.language, t.name))
+                
             else:
                 # User not in any classroom - only global templates
-                from sqlalchemy import text
+                from app.models.template import template_classroom_association
+                from sqlalchemy import exists
                 
-                global_template_ids = db.execute(text("""
-                    SELECT DISTINCT t.id
-                    FROM templates t
-                    WHERE t.is_active = true
-                    AND NOT EXISTS (
-                        SELECT 1 FROM template_classrooms tc WHERE tc.template_id = t.id
-                    )
-                """)).fetchall()
+                templates = db.query(Template).filter(
+                    Template.is_active == True,
+                    ~exists().where(template_classroom_association.c.template_id == Template.id)
+                ).all()
                 
-                template_ids = [row[0] for row in global_template_ids]
+                if language:
+                    templates = [t for t in templates if t.language == language]
                 
-                if template_ids:
-                    query = db.query(Template).filter(
-                        Template.id.in_(template_ids),
-                        Template.is_active == True
-                    )
-                    
-                    if language:
-                        query = query.filter(Template.language == language)
-                    
-                    templates = query.order_by(Template.language, Template.name).all()
-                else:
-                    templates = []
+                templates.sort(key=lambda t: (t.language, t.name))
             
             return templates
             
