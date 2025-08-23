@@ -719,7 +719,7 @@ export default function AdminDashboard() {
   }, [templateNameFilter, templateUserFilter, templateLanguageFilter, templateStatusFilter, isAuthenticated, isAdmin, activeTab]);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString + (dateString.endsWith('Z') ? '' : 'Z')).toLocaleString();
   };
 
   const getActivityIcon = (type: string) => {
@@ -1684,7 +1684,7 @@ export default function AdminDashboard() {
                                               {member.email}
                                             </div>
                                             <div className="text-xs text-muted-foreground">
-                                              Joined: {new Date(member.joined_at).toLocaleDateString()}
+                                              Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
                                             </div>
                                           </div>
                                           {member.role !== 'TEACHER' && (
@@ -2702,7 +2702,7 @@ export default function AdminDashboard() {
                                                 {member.email}
                                               </div>
                                               <div className="text-xs text-muted-foreground">
-                                                Joined: {new Date(member.joined_at).toLocaleDateString()}
+                                                Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
                                               </div>
                                             </div>
                                             {member.role !== 'TEACHER' && (

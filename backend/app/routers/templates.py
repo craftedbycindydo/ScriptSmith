@@ -236,6 +236,23 @@ async def get_all_templates_admin(
         # Return empty list if anything goes wrong
         return []
 
+@router.get("/admin/templates/stats", response_model=TemplateStatsResponse)
+async def get_template_stats(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get template statistics (Admin only)"""
+    try:
+        stats = TemplateService.get_template_stats(db)
+        return stats
+    except Exception as e:
+        # Return safe default if anything goes wrong
+        return {
+            "total_templates": 0,
+            "recent_templates": 0,
+            "templates_by_language": []
+        }
+
 @router.get("/admin/templates/{template_id}", response_model=TemplateResponse)
 async def get_template_admin(
     template_id: int,
@@ -308,23 +325,6 @@ async def delete_template(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete template: {str(e)}"
         )
-
-@router.get("/admin/templates/stats", response_model=TemplateStatsResponse)
-async def get_template_stats(
-    db: Session = Depends(get_db),
-    admin_user: User = Depends(get_admin_user)
-):
-    """Get template statistics (Admin only)"""
-    try:
-        stats = TemplateService.get_template_stats(db)
-        return stats
-    except Exception as e:
-        # Return safe default if anything goes wrong
-        return {
-            "total_templates": 0,
-            "recent_templates": 0,
-            "templates_by_language": []
-        }
 
 @router.get("/admin/classrooms", response_model=List[ClassroomInfo])
 async def get_available_classrooms(

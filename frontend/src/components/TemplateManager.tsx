@@ -161,7 +161,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         submission_deadline: fullTemplate.submission_deadline ? 
-          new Date(fullTemplate.submission_deadline) : undefined,
+          new Date(fullTemplate.submission_deadline + (fullTemplate.submission_deadline.endsWith('Z') ? '' : 'Z')) : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
           .map(exclusion => ({
@@ -325,7 +325,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         submission_deadline: fullTemplate.submission_deadline ? 
-          new Date(fullTemplate.submission_deadline) : undefined,
+          new Date(fullTemplate.submission_deadline + (fullTemplate.submission_deadline.endsWith('Z') ? '' : 'Z')) : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
           .map(exclusion => ({
@@ -733,7 +733,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                             </div>
                             <div className="flex-shrink-0">
                               <DateTimePicker
-                                value={new Date(exclusion.deadline)}
+                                value={new Date(exclusion.deadline + (exclusion.deadline.endsWith('Z') ? '' : 'Z'))}
                                 onChange={(date) => date && updateExclusionDeadline(exclusion.user_id, date)}
                                 placeholder="Custom deadline"
                               />
