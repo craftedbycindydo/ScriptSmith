@@ -55,7 +55,7 @@ export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    return new Date(dateString + (dateString.endsWith('Z') ? '' : 'Z')).toLocaleString();
   };
 
   const formatDuration = (seconds?: number) => {

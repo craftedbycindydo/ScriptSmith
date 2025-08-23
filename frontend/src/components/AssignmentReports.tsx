@@ -305,7 +305,7 @@ export default function AssignmentReports() {
                     
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>{assignment.total_students} students</span>
-                      <span>{new Date(assignment.created_at).toLocaleDateString()}</span>
+                      <span>{new Date(assignment.created_at + (assignment.created_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</span>
                     </div>
                     
                     {assignment.status === 'processing' && (

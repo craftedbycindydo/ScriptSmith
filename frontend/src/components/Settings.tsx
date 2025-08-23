@@ -215,7 +215,7 @@ export default function Settings() {
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Member Since</label>
-                <p className="text-lg">{new Date(user?.created_at || '').toLocaleDateString()}</p>
+                <p className="text-lg">{new Date((user?.created_at || '') + ((user?.created_at && user.created_at.endsWith('Z')) ? '' : 'Z')).toLocaleDateString()}</p>
               </div>
             </CardContent>
           </Card>
@@ -346,7 +346,7 @@ export default function Settings() {
                         </div>
                         <div>
                           <label className="text-sm font-medium text-muted-foreground">Member Since</label>
-                          <p className="text-lg">{new Date(user?.created_at || '').toLocaleDateString()}</p>
+                          <p className="text-lg">{new Date((user?.created_at || '') + ((user?.created_at && user.created_at.endsWith('Z')) ? '' : 'Z')).toLocaleDateString()}</p>
                         </div>
                       </div>
                     </CardContent>
