@@ -199,6 +199,13 @@ async def register_user(
             full_name=user.full_name
         )
         
+        # Check if user email is in admin emails and promote to admin if needed
+        if admin_service.is_initial_admin_email(user.email):
+            from app.models.user import UserRole
+            db_user.role = UserRole.ADMIN
+            db.commit()
+            db.refresh(db_user)
+        
         # Join classroom if a key is provided
         if user.classroom_key:
             try:
@@ -334,6 +341,9 @@ async def login_user(
                 detail="Incorrect email/username or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        
+        # Ensure admin access for users with admin emails (fixes existing users)
+        admin_service.ensure_initial_admin_access(db)
         
         # Check if email verification is required
         if settings.require_email_verification and not user.is_verified:
