@@ -331,12 +331,24 @@ async def get_available_classrooms(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get available classrooms created by the current admin for template assignment (Admin only)"""
+    """Get available classrooms where admin is a teacher for template assignment (Admin only)"""
     try:
-        classrooms = db.query(Classroom).filter(
+        # Get classrooms where admin is a teacher (includes ones they created)
+        classrooms = db.query(Classroom).join(UserClassroom).filter(
+            Classroom.is_active == True,
+            UserClassroom.user_id == admin_user.id,
+            UserClassroom.is_active == True,
+            UserClassroom.role == "TEACHER"
+        ).order_by(Classroom.name).all()
+        
+        # Also include classrooms they created (in case they're not explicitly a member)
+        created_classrooms = db.query(Classroom).filter(
             Classroom.is_active == True,
             Classroom.created_by_id == admin_user.id
-        ).order_by(Classroom.name).all()
+        ).all()
+        
+        # Combine and deduplicate
+        all_classrooms = {c.id: c for c in classrooms + created_classrooms}
         
         return [
             ClassroomInfo(
@@ -344,9 +356,10 @@ async def get_available_classrooms(
                 name=classroom.name,
                 classroom_key=classroom.classroom_key
             )
-            for classroom in classrooms
+            for classroom in all_classrooms.values()
         ]
     except Exception as e:
+        print(f"Error getting available classrooms: {e}")
         return []
 
 @router.post("/admin/templates/upload", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)

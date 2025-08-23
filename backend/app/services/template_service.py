@@ -70,14 +70,27 @@ class TemplateService:
         db.add(template)
         db.flush()  # Get the template ID
         
-        # Associate with classrooms if specified (only classrooms created by this admin)
+        # Associate with classrooms if specified (only classrooms where admin is a member/teacher)
         if classroom_ids:
-            classrooms = db.query(Classroom).filter(
+            # Check which classrooms the admin has access to
+            accessible_classrooms = db.query(Classroom).join(UserClassroom).filter(
+                Classroom.id.in_(classroom_ids),
+                Classroom.is_active == True,
+                UserClassroom.user_id == created_by,
+                UserClassroom.is_active == True,
+                UserClassroom.role == "TEACHER"  # Admin must be a teacher in the classroom
+            ).all()
+            
+            # If admin created the classroom, they should also have access even if not explicitly a member
+            created_classrooms = db.query(Classroom).filter(
                 Classroom.id.in_(classroom_ids),
                 Classroom.is_active == True,
                 Classroom.created_by_id == created_by
             ).all()
-            template.classrooms = classrooms
+            
+            # Combine both sets of accessible classrooms
+            all_accessible = {c.id: c for c in accessible_classrooms + created_classrooms}
+            template.classrooms = list(all_accessible.values())
         
         db.commit()
         db.refresh(template)
@@ -125,26 +138,50 @@ class TemplateService:
     ) -> List[Template]:
         """Get templates accessible to a specific user based on their classroom memberships"""
         try:
-            # Get user's classroom IDs
-            user_classroom_ids = db.query(UserClassroom.classroom_id).filter(
+            # Get user's classroom IDs - more explicit query
+            user_classrooms = db.query(UserClassroom).filter(
                 UserClassroom.user_id == user_id,
                 UserClassroom.is_active == True
-            ).subquery()
+            ).all()
             
-            # Build the base query
+            user_classroom_ids = [uc.classroom_id for uc in user_classrooms]
+            
+            # Build the base query with explicit joins
             query = db.query(Template).filter(Template.is_active == True)
             
-            # Filter by templates that:
-            # 1. Have no classroom associations (global templates), OR
-            # 2. Are associated with user's classrooms
-            query = query.outerjoin(Template.classrooms).filter(
-                or_(
-                    # Templates with no classroom associations (global)
-                    ~Template.classrooms.any(),
-                    # Templates associated with user's classrooms
-                    Classroom.id.in_(user_classroom_ids)
+            if user_classroom_ids:
+                # More explicit approach: Use EXISTS subquery for better database compatibility
+                from app.models.template import template_classroom_association
+                from sqlalchemy import exists
+                
+                # Templates that either:
+                # 1. Have no classroom associations (global templates), OR  
+                # 2. Are associated with user's classrooms via the association table
+                query = query.filter(
+                    or_(
+                        # Global templates (no associations)
+                        ~exists().where(
+                            template_classroom_association.c.template_id == Template.id
+                        ),
+                        # Templates in user's classrooms
+                        exists().where(
+                            and_(
+                                template_classroom_association.c.template_id == Template.id,
+                                template_classroom_association.c.classroom_id.in_(user_classroom_ids)
+                            )
+                        )
+                    )
                 )
-            )
+            else:
+                # User not in any classroom - only show global templates
+                from app.models.template import template_classroom_association
+                from sqlalchemy import exists
+                
+                query = query.filter(
+                    ~exists().where(
+                        template_classroom_association.c.template_id == Template.id
+                    )
+                )
             
             # Filter by language if specified
             if language:
@@ -155,10 +192,18 @@ class TemplateService:
                 Template.language, Template.name
             ).offset(skip).limit(limit).all()
             
+            # Manually load classroom relationships for better compatibility
+            for template in templates:
+                if not hasattr(template, '_classrooms_loaded'):
+                    template.classrooms  # This triggers lazy loading
+                    template._classrooms_loaded = True
+            
             return templates
             
         except Exception as e:
             print(f"Error getting templates for user {user_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
     
     @staticmethod
@@ -238,15 +283,28 @@ class TemplateService:
                 enriched_exclusions.append(enriched_exclusion)
             template.exclusions = enriched_exclusions
         
-        # Update classroom associations if specified (only classrooms created by this admin)
+        # Update classroom associations if specified (only classrooms where admin is a member/teacher)
         if classroom_ids is not None:
             if classroom_ids:
-                classrooms = db.query(Classroom).filter(
+                # Check which classrooms the admin has access to
+                accessible_classrooms = db.query(Classroom).join(UserClassroom).filter(
+                    Classroom.id.in_(classroom_ids),
+                    Classroom.is_active == True,
+                    UserClassroom.user_id == updating_user_id,
+                    UserClassroom.is_active == True,
+                    UserClassroom.role == "TEACHER"  # Admin must be a teacher in the classroom
+                ).all()
+                
+                # If admin created the classroom, they should also have access even if not explicitly a member
+                created_classrooms = db.query(Classroom).filter(
                     Classroom.id.in_(classroom_ids),
                     Classroom.is_active == True,
                     Classroom.created_by_id == updating_user_id
                 ).all()
-                template.classrooms = classrooms
+                
+                # Combine both sets of accessible classrooms
+                all_accessible = {c.id: c for c in accessible_classrooms + created_classrooms}
+                template.classrooms = list(all_accessible.values())
             else:
                 # Clear all classroom associations (make it global)
                 template.classrooms = []
