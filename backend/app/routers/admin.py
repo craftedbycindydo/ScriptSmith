@@ -1103,3 +1103,28 @@ async def get_users_list(
         "usernames": sorted(usernames),
         "emails": sorted(emails)
     }
+
+@router.get("/admin/migration-status")
+async def get_migration_status(
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get database migration and optimization status"""
+    try:
+        from app.services.database_migration_service import migration_service
+        status = migration_service.get_migration_status()
+        
+        return {
+            "success": True,
+            "migration_status": status,
+            "performance_optimizations": {
+                "applied": any(m.get("name") == "v1_performance_optimization" for m in status.get("migrations", [])),
+                "description": "Database indexes and performance optimizations for Railway.app deployment"
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "migration_status": {"migrations": []},
+            "performance_optimizations": {"applied": False, "error": str(e)}
+        }
