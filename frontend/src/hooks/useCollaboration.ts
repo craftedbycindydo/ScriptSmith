@@ -202,7 +202,7 @@ export const useCollaboration = ({
           clearTimeout((window as any).documentChangeTimeout);
         }
         
-        // Light debouncing (50ms) - server handles the heavy debouncing
+        // Cloudflare-optimized debouncing (200ms) - matches server-side optimizations
         (window as any).documentChangeTimeout = setTimeout(() => {
           if (socketRef.current && !isUpdatingFromServer.current) {
             socketRef.current.emit('document_change', {
@@ -211,7 +211,7 @@ export const useCollaboration = ({
               content: content
             });
           }
-        }, 50);
+        }, 200);
       }
     });
 
@@ -229,7 +229,7 @@ export const useCollaboration = ({
           clearTimeout((window as any).cursorUpdateTimeout);
         }
         
-        // Light throttling (100ms) - matches server throttling
+        // Cloudflare-optimized throttling (200ms) - matches server throttling for proxy
         (window as any).cursorUpdateTimeout = setTimeout(() => {
           if (socketRef.current && !isUpdatingFromServer.current) {
             socketRef.current.emit('cursor_update', {
@@ -238,7 +238,7 @@ export const useCollaboration = ({
               cursor: position
             });
           }
-        }, 100);
+        }, 200);
       }
     });
 
@@ -255,7 +255,7 @@ export const useCollaboration = ({
           clearTimeout((window as any).cursorUpdateTimeout);
         }
         
-        // Light throttling (100ms) - matches server throttling
+        // Cloudflare-optimized throttling (200ms) - matches server throttling for proxy
         (window as any).cursorUpdateTimeout = setTimeout(() => {
           if (socketRef.current && !isUpdatingFromServer.current) {
             socketRef.current.emit('cursor_update', {
@@ -264,7 +264,7 @@ export const useCollaboration = ({
               cursor: position
             });
           }
-        }, 100);
+        }, 200);
       }
     });
 
@@ -301,19 +301,21 @@ export const useCollaboration = ({
       socketRef.current = null;
     }
 
-    // Create WebSocket connection to dedicated service with performance optimization
+    // Create WebSocket connection optimized for Cloudflare proxy
     socketRef.current = io(config.websocketUrl, {
       transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
-      timeout: 15000, // Reduced timeout for faster error detection
+      timeout: 30000, // Increased timeout for Cloudflare proxy delays
       reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 8, // More attempts for proxy instability
+      reconnectionDelay: 2000, // Longer delays for proxy
+      reconnectionDelayMax: 10000, // Increased max delay for proxy
       forceNew: true,
-      // Performance optimizations
+      // Cloudflare optimizations
       upgrade: true,
       rememberUpgrade: true,
-      autoConnect: true
+      autoConnect: true,
+      // Additional proxy-friendly settings
+      forceBase64: false // Let proxy handle binary encoding
     });
 
     const socket = socketRef.current;

@@ -12,8 +12,10 @@ const PORT = process.env.PORT || 8007;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8082';
 const CORS_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:5173'];
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const SOCKET_PING_TIMEOUT = parseInt(process.env.SOCKET_PING_TIMEOUT || '60000');
-const SOCKET_PING_INTERVAL = parseInt(process.env.SOCKET_PING_INTERVAL || '25000');
+
+// Cloudflare-optimized timeouts (increased for proxy latency)
+const SOCKET_PING_TIMEOUT = parseInt(process.env.SOCKET_PING_TIMEOUT || '120000'); // 2 minutes for Cloudflare
+const SOCKET_PING_INTERVAL = parseInt(process.env.SOCKET_PING_INTERVAL || '45000'); // 45s intervals
 const SESSION_CLEANUP_INTERVAL = parseInt(process.env.SESSION_CLEANUP_INTERVAL || '3600000');
 
 // Configure CORS for Express
@@ -35,15 +37,15 @@ const io = socketIo(server, {
   pingTimeout: SOCKET_PING_TIMEOUT,
   pingInterval: SOCKET_PING_INTERVAL,
   allowEIO3: true,
-  // Enhanced connection management and performance
-  connectTimeout: 30000, // Reduced to 30s for faster failover
+  // Cloudflare-optimized connection management
+  connectTimeout: 60000, // Increased to 60s for Cloudflare proxy delays
   perMessageDeflate: {
-    threshold: 1024, // Only compress messages > 1KB
-    concurrencyLimit: 10,
+    threshold: 2048, // Only compress messages > 2KB (reduce CPU for small messages)
+    concurrencyLimit: 5, // Reduced for better stability through proxy
     windowBits: 13
   },
   httpCompression: true, // Enable HTTP compression for better performance
-  maxHttpBufferSize: 5e6, // Increased to 5MB for larger documents
+  maxHttpBufferSize: 3e6, // Reduced to 3MB for better proxy compatibility
   allowRequest: (req, callback) => {
     // Reduced logging for better performance
     if (process.env.NODE_ENV === 'development') {
@@ -73,10 +75,10 @@ const cursorUpdateTimeouts = new Map(); // sessionId_participantId -> timeoutId
 const lastDocumentChange = new Map(); // sessionId_participantId -> timestamp
 const lastCursorUpdate = new Map(); // sessionId_participantId -> timestamp
 
-// Configurable thresholds for performance tuning
-const DOCUMENT_CHANGE_DEBOUNCE_MS = 150; // Wait 150ms after last keystroke
-const CURSOR_UPDATE_THROTTLE_MS = 100; // Max one cursor update per 100ms
-const BACKEND_SAVE_DEBOUNCE_MS = 1000; // Save to backend after 1s of inactivity
+// Cloudflare-optimized thresholds (increased for proxy latency)
+const DOCUMENT_CHANGE_DEBOUNCE_MS = 300; // Wait 300ms after last keystroke (increased for proxy)
+const CURSOR_UPDATE_THROTTLE_MS = 200; // Max one cursor update per 200ms (increased for proxy)
+const BACKEND_SAVE_DEBOUNCE_MS = 2000; // Save to backend after 2s of inactivity (increased)
 
 console.log(`🔌 WebSocket Service starting on port ${PORT}`);
 console.log(`🔗 Backend URL: ${BACKEND_URL}`);

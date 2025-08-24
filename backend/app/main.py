@@ -195,6 +195,16 @@ async def startup_event():
             else:
                 print("✅ No migration needed - database is up to date")
             
+            # Run performance optimizations (indexes, etc.)
+            print("🔄 Applying database performance optimizations...")
+            try:
+                from app.services.database_migration_service import migration_service
+                migration_service.apply_performance_optimizations()
+                print("✅ Performance optimizations applied successfully!")
+            except Exception as perf_error:
+                print(f"⚠️  Performance optimization failed (non-critical): {perf_error}")
+                # Don't fail startup for performance optimizations
+            
             db.close()
         except Exception as db_error:
             print(f"⚠️  Database connection/migration failed: {db_error}")
