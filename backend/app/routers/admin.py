@@ -262,10 +262,16 @@ async def get_user_activities(
         'page_size': page_size
     }
     
-    # Try cache first
-    cached_activities = admin_cache.get_cached_user_activities(filter_params)
+    # Temporarily disable cache for activities to prevent Pydantic errors
+    # TODO: Re-enable after cache serialization is confirmed working
+    cached_activities = None  # admin_cache.get_cached_user_activities(filter_params)
     if cached_activities:
-        return UserActivityResponse(**cached_activities)
+        # Ensure cached data is in the correct format
+        try:
+            return UserActivityResponse(**cached_activities)
+        except Exception as cache_error:
+            logger.warning(f"Cache data format error, ignoring cache: {cache_error}")
+            # Continue with fresh query if cached data is invalid
     
     # Simplified approach: Get classroom users first, then fetch activities separately
     # This is more likely to use indexes properly
@@ -367,8 +373,9 @@ async def get_user_activities(
         "page_size": page_size
     }
     
-    # Cache the results
-    admin_cache.cache_user_activities(filter_params, result)
+    # Temporarily disable caching to prevent serialization issues
+    # TODO: Re-enable after cache serialization is confirmed working
+    # admin_cache.cache_user_activities(filter_params, result)
     
     return UserActivityResponse(**result)
 
@@ -1287,4 +1294,44 @@ async def debug_performance(
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat(),
             "recommendations": ["Debug endpoint failed - check application logs"]
+        }
+
+@router.post("/admin/clear-cache")
+async def clear_admin_cache(
+    admin_user: User = Depends(get_admin_user)
+):
+    """Clear all admin cache data to fix serialization issues"""
+    try:
+        from app.services.admin_cache_service import AdminCacheService
+        cache_service = AdminCacheService()
+        
+        if not cache_service.redis_available:
+            return {
+                "success": False,
+                "message": "Redis cache not available"
+            }
+        
+        # Clear all admin cache keys
+        patterns_to_clear = [
+            "admin_cache:*",
+        ]
+        
+        total_cleared = 0
+        for pattern in patterns_to_clear:
+            cleared = cache_service.delete(pattern)
+            total_cleared += cleared
+            logger.info(f"Cleared {cleared} keys matching pattern: {pattern}")
+        
+        return {
+            "success": True,
+            "message": f"Successfully cleared {total_cleared} cache entries",
+            "patterns_cleared": patterns_to_clear
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to clear cache"
         }

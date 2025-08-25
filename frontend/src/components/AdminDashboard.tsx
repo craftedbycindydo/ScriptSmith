@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -134,7 +134,6 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   
   const [stats, setStats] = useState<AdminStats | null>(null);
-  const [activities, setActivities] = useState<UserActivity[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -149,11 +148,17 @@ export default function AdminDashboard() {
   const [userSearch, setUserSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalActivities, setTotalActivities] = useState(0);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   
   // Activity filters
   const [activityUserFilter, setActivityUserFilter] = useState('all');
+  
+  // Store ALL data locally for client-side filtering (2025 best practice)
+  const [allActivities, setAllActivities] = useState<UserActivity[]>([]);
+  const [allTemplateExecutions, setAllTemplateExecutions] = useState<TemplateExecution[]>([]);
+  
+  // Prevent duplicate API calls
+  const loadingRefs = useRef<{[key: string]: boolean}>({});
   
   // Tab state
   const [activeTab, setActiveTab] = useState('overview');
@@ -162,8 +167,6 @@ export default function AdminDashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   
   // Template execution states
-  const [templateExecutions, setTemplateExecutions] = useState<TemplateExecution[]>([]);
-  const [templateExecutionsTotal, setTemplateExecutionsTotal] = useState(0);
   const [templateExecutionsPage, setTemplateExecutionsPage] = useState(1);
   const [expandedExecution, setExpandedExecution] = useState<number | null>(null);
   
@@ -211,6 +214,66 @@ export default function AdminDashboard() {
   
   // Per-classroom admin settings
   const [classroomSettings, setClassroomSettings] = useState<{[key: number]: {copy_paste_enabled: boolean, isLoading: boolean}}>({});
+  
+  // Client-side filtering functions (2025 best practice - no more API calls per filter)
+  const getFilteredActivities = useCallback(() => {
+    let filtered = [...allActivities];
+    
+    if (activityType !== 'all') {
+      filtered = filtered.filter(activity => activity.activity_type === activityType);
+    }
+    
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(activity => activity.status === statusFilter);
+    }
+    
+    if (activityUserFilter !== 'all') {
+      const filterValue = activityUserFilter.toLowerCase();
+      filtered = filtered.filter(activity => 
+        activity.username?.toLowerCase().includes(filterValue) ||
+        activity.email?.toLowerCase().includes(filterValue)
+      );
+    }
+    
+    return filtered;
+  }, [allActivities, activityType, statusFilter, activityUserFilter]);
+  
+  const getFilteredUsers = useCallback(() => {
+    if (!userSearch) return adminUsers;
+    
+    const searchTerm = userSearch.toLowerCase();
+    return adminUsers.filter(user =>
+      user.username?.toLowerCase().includes(searchTerm) ||
+      user.email?.toLowerCase().includes(searchTerm) ||
+      user.full_name?.toLowerCase().includes(searchTerm)
+    );
+  }, [adminUsers, userSearch]);
+  
+  const getFilteredTemplateExecutions = useCallback(() => {
+    let filtered = [...allTemplateExecutions];
+    
+    if (templateNameFilter !== 'all') {
+      filtered = filtered.filter(exec => exec.template_name === templateNameFilter);
+    }
+    
+    if (templateLanguageFilter !== 'all') {
+      filtered = filtered.filter(exec => exec.language === templateLanguageFilter);
+    }
+    
+    if (templateStatusFilter !== 'all') {
+      filtered = filtered.filter(exec => exec.status === templateStatusFilter);
+    }
+    
+    if (templateUserFilter && templateUserFilter !== 'all') {
+      const filterValue = templateUserFilter.toLowerCase();
+      filtered = filtered.filter(exec => 
+        exec.username?.toLowerCase().includes(filterValue) ||
+        exec.email?.toLowerCase().includes(filterValue)
+      );
+    }
+    
+    return filtered;
+  }, [allTemplateExecutions, templateNameFilter, templateLanguageFilter, templateStatusFilter, templateUserFilter]);
   const [loadingClassroomSettings, setLoadingClassroomSettings] = useState<{[key: number]: boolean}>({});
   const [classroomNotifications, setClassroomNotifications] = useState<{[key: number]: {message: string, type: 'success' | 'error'} | null}>({});
 
@@ -227,41 +290,44 @@ export default function AdminDashboard() {
     }
   };
 
-  // Load user activities
-  const loadActivities = async (page: number = 1) => {
+  // Load ALL activities once (no more pagination API calls)
+  const loadAllActivities = async () => {
+    if (loadingRefs.current['activities']) return;
+    loadingRefs.current['activities'] = true;
+    
     try {
-      const { username, email } = extractUserInfo(activityUserFilter);
-      
+      // Load larger batch to minimize API calls (200 items)
       const data: UserActivitiesResponse = await apiService.getAdminActivities(
-        page, 
-        pageSize, 
-        activityType === 'all' ? undefined : activityType || undefined, 
-        statusFilter === 'all' ? undefined : statusFilter || undefined,
-        email,
-        username
+        1, 
+        200, // Larger page size to get most data in one call
+        undefined, // No filtering on server - do it client-side
+        undefined,
+        undefined,
+        undefined
       );
-      setActivities(data.activities);
-      setTotalActivities(data.total);
-      setCurrentPage(data.page);
+      setAllActivities(data.activities);
     } catch (err: any) {
-      console.error('Failed to load activities:', err);
+      console.error('Failed to load all activities:', err);
+    } finally {
+      loadingRefs.current['activities'] = false;
     }
   };
 
-  // Load users
-  const loadUsers = async () => {
+  // Load ALL users once (no more search API calls)
+  const loadAllUsers = async () => {
+    if (loadingRefs.current['users']) return;
+    loadingRefs.current['users'] = true;
+    
     try {
       setUserSearchError(null);
-      const data = await apiService.getAdminUsers(1, 50, userSearch || undefined);
+      // Load all users without search filter - filter client-side
+      const data = await apiService.getAdminUsers(1, 100, undefined);
       setAdminUsers(data);
     } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to load users';
-      // Show user search errors inline, not as global errors
-      if (userSearch && (errorMessage.includes('No user found') || errorMessage.includes('not found'))) {
-        setUserSearchError(errorMessage);
-      } else {
-        console.error('Failed to load users:', err);
-      }
+      console.error('Failed to load all users:', err);
+      setUserSearchError('Failed to load users');
+    } finally {
+      loadingRefs.current['users'] = false;
     }
   };
 
@@ -274,45 +340,40 @@ export default function AdminDashboard() {
         await apiService.deactivateUser(userId);
       }
       
-      await loadUsers(); // Reload users list
+      await loadAllUsers(); // Reload users list
     } catch (err: any) {
       console.error(`Failed to ${activate ? 'activate' : 'deactivate'} user:`, err);
     }
   };
 
   // Load template executions
-  const loadTemplateExecutions = async (page: number = 1) => {
+  // Load ALL template executions once (no more filter API calls)
+  const loadAllTemplateExecutions = async () => {
+    if (loadingRefs.current['templateExecutions']) return;
+    loadingRefs.current['templateExecutions'] = true;
+    
     try {
-      const { username, email } = extractUserInfo(templateUserFilter);
-      
+      // Load larger batch to minimize API calls (200 items)
       const data: TemplateExecutionsResponse = await apiService.getTemplateExecutions(
-        page,
-        pageSize,
-        undefined, // template_id
-        templateNameFilter === 'all' ? undefined : templateNameFilter,
-        email,
-        username,
-        templateLanguageFilter === 'all' ? undefined : templateLanguageFilter,
-        templateStatusFilter === 'all' ? undefined : templateStatusFilter
+        1,
+        200, // Larger page size
+        undefined, // No server-side filtering
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined
       );
-      setTemplateExecutions(data.executions);
-      setTemplateExecutionsTotal(data.total);
-      setTemplateExecutionsPage(data.page);
+      
+      setAllTemplateExecutions(data.executions);
     } catch (err: any) {
-      console.error('Failed to load template executions:', err);
+      console.error('Failed to load all template executions:', err);
+    } finally {
+      loadingRefs.current['templateExecutions'] = false;
     }
   };
 
-  // Helper function to extract user info from combined filter
-  const extractUserInfo = (userFilter: string) => {
-    if (userFilter === 'all') return { username: undefined, email: undefined };
-    
-    const selectedUser = combinedUsers.find(user => user.display === userFilter);
-    return {
-      username: selectedUser?.username,
-      email: selectedUser?.email
-    };
-  };
+  // Removed extractUserInfo - no longer needed with client-side filtering
 
   // Load classroom-specific admin settings
   const loadClassroomSettings = async (classroomId: number) => {
@@ -432,15 +493,16 @@ export default function AdminDashboard() {
 
 
 
-  // Load all data
+  // Load all data ONCE - no more multiple API calls per filter change
   const loadAllData = async () => {
     setLoading(true);
     try {
+      // Load all data in parallel - single API call per data type
       await Promise.all([
         loadStats(),
-        loadActivities(),
-        loadUsers(),
-        loadTemplateExecutions(),
+        loadAllActivities(),  // Load ALL activities at once
+        loadAllUsers(),       // Load ALL users at once
+        loadAllTemplateExecutions(), // Load ALL template executions at once
         loadDropdownOptions()
       ]);
       
@@ -665,8 +727,10 @@ export default function AdminDashboard() {
     setClassroomToDelete(null);
   };
 
+  // SINGLE useEffect for initial data load - NO MORE FILTER-TRIGGERED API CALLS
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
+      // Load ALL data once on page load - filters work client-side
       loadAllData();
       loadAdminSettings(isAuthenticated);
       
@@ -698,25 +762,9 @@ export default function AdminDashboard() {
     return () => {
       disconnectWebSocket();
     };
-  }, [isAuthenticated, isAdmin]);
-
-  useEffect(() => {
-    if (isAuthenticated && isAdmin) {
-      loadActivities(1);
-    }
-  }, [activityType, statusFilter, activityUserFilter, isAuthenticated, isAdmin]);
-
-  useEffect(() => {
-    if (isAuthenticated && isAdmin) {
-      loadUsers();
-    }
-  }, [userSearch, isAuthenticated, isAdmin]);
-
-  useEffect(() => {
-    if (isAuthenticated && isAdmin && activeTab === 'template-executions') {
-      loadTemplateExecutions(1);
-    }
-  }, [templateNameFilter, templateUserFilter, templateLanguageFilter, templateStatusFilter, isAuthenticated, isAdmin, activeTab]);
+  }, [isAuthenticated, isAdmin]); // Only trigger on auth/admin change, NOT filter changes
+  
+  // REMOVED: No more useEffect hooks for filter changes - all filtering is now client-side!
 
   const formatDate = (dateString: string) => {
     return new Date(dateString + (dateString.endsWith('Z') ? '' : 'Z')).toLocaleString();
@@ -751,7 +799,9 @@ export default function AdminDashboard() {
     }
   };
 
-  const totalPages = Math.ceil(totalActivities / pageSize);
+  // Client-side pagination based on filtered data
+  const filteredActivities = getFilteredActivities();
+  const totalPages = Math.ceil(filteredActivities.length / pageSize);
 
   // Authentication check
   if (!isAuthenticated) {
@@ -1156,7 +1206,7 @@ export default function AdminDashboard() {
                         <Activity className="w-5 h-5 mr-2" />
                         User Activities
                       </span>
-                      <Badge variant="outline">{totalActivities} total</Badge>
+                      <Badge variant="outline">{filteredActivities.length} shown</Badge>
                     </CardTitle>
                 
                 {/* Filters */}
@@ -1203,7 +1253,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {activities.map((activity) => (
+                                          {getFilteredActivities().slice((currentPage - 1) * pageSize, currentPage * pageSize).map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3">
@@ -1257,13 +1307,13 @@ export default function AdminDashboard() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between pt-4 border-t">
                     <div className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalActivities)} of {totalActivities} activities
+                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, filteredActivities.length)} of {filteredActivities.length} activities
                     </div>
                     <div className="flex space-x-2">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => loadActivities(currentPage - 1)}
+                        onClick={() => setCurrentPage(currentPage - 1)}
                         disabled={currentPage <= 1}
                       >
                         <ChevronLeft className="w-4 h-4" />
@@ -1271,7 +1321,7 @@ export default function AdminDashboard() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => loadActivities(currentPage + 1)}
+                        onClick={() => setCurrentPage(currentPage + 1)}
                         disabled={currentPage >= totalPages}
                       >
                         <ChevronRight className="w-4 h-4" />
@@ -1324,7 +1374,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {adminUsers.map((user) => (
+                  {getFilteredUsers().map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1946,7 +1996,7 @@ export default function AdminDashboard() {
                           <Play className="w-5 h-5 mr-2" />
                           Template Executions
                         </span>
-                        <Badge variant="outline">{templateExecutionsTotal} total</Badge>
+                        <Badge variant="outline">{getFilteredTemplateExecutions().length} shown</Badge>
                       </CardTitle>
                       
                       {/* Filters */}
@@ -2008,7 +2058,7 @@ export default function AdminDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {templateExecutions.map((execution) => (
+                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * pageSize, templateExecutionsPage * pageSize).map((execution) => (
                           <div key={execution.id} className="border rounded-lg overflow-hidden">
                             {/* Clickable Row */}
                             <div 
@@ -2145,16 +2195,16 @@ export default function AdminDashboard() {
                       </div>
                       
                       {/* Pagination */}
-                      {Math.ceil(templateExecutionsTotal / pageSize) > 1 && (
+                      {Math.ceil(getFilteredTemplateExecutions().length / pageSize) > 1 && (
                         <div className="flex items-center justify-between pt-4 border-t">
                           <div className="text-sm text-muted-foreground">
-                            Showing {((templateExecutionsPage - 1) * pageSize) + 1} to {Math.min(templateExecutionsPage * pageSize, templateExecutionsTotal)} of {templateExecutionsTotal} executions
+                            Showing {((templateExecutionsPage - 1) * pageSize) + 1} to {Math.min(templateExecutionsPage * pageSize, getFilteredTemplateExecutions().length)} of {getFilteredTemplateExecutions().length} executions
                           </div>
                           <div className="flex space-x-2">
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => loadTemplateExecutions(templateExecutionsPage - 1)}
+                              onClick={() => setTemplateExecutionsPage(templateExecutionsPage - 1)}
                               disabled={templateExecutionsPage <= 1}
                             >
                               <ChevronLeft className="w-4 h-4" />
@@ -2162,8 +2212,8 @@ export default function AdminDashboard() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => loadTemplateExecutions(templateExecutionsPage + 1)}
-                              disabled={templateExecutionsPage >= Math.ceil(templateExecutionsTotal / pageSize)}
+                              onClick={() => setTemplateExecutionsPage(templateExecutionsPage + 1)}
+                              disabled={templateExecutionsPage >= Math.ceil(getFilteredTemplateExecutions().length / pageSize)}
                             >
                               <ChevronRight className="w-4 h-4" />
                             </Button>
@@ -2202,7 +2252,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {adminUsers.map((user) => (
+                  {getFilteredUsers().map((user) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -2410,12 +2460,12 @@ export default function AdminDashboard() {
                     <Activity className="w-5 h-5 mr-2" />
                     Recent Activities
                   </span>
-                  <Badge variant="outline">{activities.length} shown</Badge>
+                  <Badge variant="outline">{getFilteredActivities().length} shown</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-80 overflow-y-auto">
-                  {activities.slice(0, 5).map((activity) => (
+                  {getFilteredActivities().slice(0, 5).map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3">

@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
 
+// ⚠️  ADMIN ONLY COMPONENT - This component calls admin endpoints
+// Only use within AdminDashboard or other admin-protected routes
 const TemplateSubmissions: React.FC = () => {
   const [submissions, setSubmissions] = useState<TemplateSubmission[]>([]);
   const [filteredSubmissions, setFilteredSubmissions] = useState<TemplateSubmission[]>([]);
@@ -88,9 +90,10 @@ const TemplateSubmissions: React.FC = () => {
 
   const fetchTemplates = async () => {
     try {
-      const response = await apiService.getTemplatesList();
-      // API returns { "templates": [...] }, so we need to extract the templates array
-      setTemplates(response.templates || []);
+      // Use user endpoint instead of admin endpoint
+      const response = await apiService.getUserTemplatesList();
+      // /templates endpoint returns array directly (not wrapped in object)
+      setTemplates(response || []);
     } catch (error) {
       console.error('Failed to fetch templates:', error);
       setTemplates([]); // Fallback to empty array

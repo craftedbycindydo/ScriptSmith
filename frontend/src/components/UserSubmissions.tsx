@@ -18,13 +18,27 @@ import {
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
 
-const UserSubmissions: React.FC = () => {
-  const [submissions, setSubmissions] = useState<TemplateSubmission[]>([]);
+interface UserSubmissionsProps {
+  allUserSubmissions?: TemplateSubmission[]; // 2025 Best Practice: Receive data as props
+  submissionStats?: {
+    total_submissions: number;
+    success_submissions: number;
+    error_submissions: number;
+    success_rate: number;
+    submissions_by_language: Array<{ language: string; count: number }>;
+  };
+  templates?: any[];
+  loading?: boolean;
+}
+
+function UserSubmissions({ 
+  allUserSubmissions = [], 
+  submissionStats,
+  templates = [],
+  loading: parentLoading = false 
+}: UserSubmissionsProps) {
+  // 2025 Best Practice: Use props data instead of local state  
   const [filteredSubmissions, setFilteredSubmissions] = useState<TemplateSubmission[]>([]);
-  const [loading, setLoading] = useState(false);
-  
-  // Data for dropdowns
-  const [templates, setTemplates] = useState<any[]>([]);
   
   // Filter states (removed user filter since it's only current user's submissions)
   const [templateFilter, setTemplateFilter] = useState('all');
@@ -34,68 +48,26 @@ const UserSubmissions: React.FC = () => {
   // Expanded submission for detailed view
   const [expandedSubmission, setExpandedSubmission] = useState<number | null>(null);
   
-  // Stats
-  const [stats, setStats] = useState<{
-    total_submissions: number;
-    success_submissions: number;
-    error_submissions: number;
-    success_rate: number;
-    submissions_by_language: Array<{ language: string; count: number }>;
-  }>({
+  // Use props data with fallbacks
+  const stats = submissionStats || {
     total_submissions: 0,
     success_submissions: 0,
     error_submissions: 0,
     success_rate: 0,
     submissions_by_language: []
-  });
+  };
 
   const languages = ['python', 'javascript', 'java', 'cpp', 'go', 'rust'];
   const statuses = ['success', 'error', 'pending'];
 
-  useEffect(() => {
-    fetchSubmissions();
-    fetchStats();
-    fetchTemplates();
-  }, []);
-
+  // 2025 Best Practice: Only filter when props data or filters change
   useEffect(() => {
     applyFilters();
-  }, [submissions, templateFilter, languageFilter, statusFilter]);
+  }, [allUserSubmissions, templateFilter, languageFilter, statusFilter]);
 
-  const fetchSubmissions = async () => {
-    setLoading(true);
-    try {
-      const response = await apiService.getUserSubmissions();
-      setSubmissions(response);
-    } catch (error) {
-      console.error('Failed to fetch user submissions:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const response = await apiService.getUserSubmissionsStats();
-      setStats(response);
-    } catch (error) {
-      console.error('Failed to fetch user submission stats:', error);
-    }
-  };
-
-  const fetchTemplates = async () => {
-    try {
-      const response = await apiService.getTemplatesList();
-      // API returns { "templates": [...] }, so we need to extract the templates array
-      setTemplates(response.templates || []);
-    } catch (error) {
-      console.error('Failed to fetch templates:', error);
-      setTemplates([]); // Fallback to empty array
-    }
-  };
-
+  // 2025 Best Practice: Client-side filtering only (no more API calls)
   const applyFilters = () => {
-    let filtered = submissions;
+    let filtered = allUserSubmissions;
 
     if (templateFilter !== 'all') {
       filtered = filtered.filter(s => s.template_name === templateFilter);
@@ -186,8 +158,8 @@ const UserSubmissions: React.FC = () => {
             View your template submission history
           </p>
         </div>
-        <Button onClick={fetchSubmissions} disabled={loading} className="flex items-center gap-2">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        <Button onClick={() => window.location.reload()} disabled={parentLoading} className="flex items-center gap-2">
+          <RefreshCw className={`w-4 h-4 ${parentLoading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
       </div>
@@ -309,14 +281,14 @@ const UserSubmissions: React.FC = () => {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {loading ? (
+            {parentLoading ? (
               <div className="flex justify-center items-center py-8">
                 <RefreshCw className="w-6 h-6 animate-spin mr-2" />
                 Loading submissions...
               </div>
             ) : filteredSubmissions.length === 0 ? (
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                {submissions.length === 0 
+                {allUserSubmissions.length === 0 
                   ? "You haven't submitted any templates yet." 
                   : "No submissions found matching your criteria."
                 }
@@ -447,6 +419,6 @@ const UserSubmissions: React.FC = () => {
 
     </div>
   );
-};
+}
 
 export default UserSubmissions;

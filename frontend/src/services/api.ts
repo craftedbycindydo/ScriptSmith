@@ -640,13 +640,22 @@ export const apiService = {
     return response.data;
   },
 
-  // Get templates for dropdown filter
+  // Get templates for dropdown filter (ADMIN ONLY)
+  // ⚠️  SECURITY: This calls /admin/templates-list - only use in admin components!
   async getTemplatesList(): Promise<any> {
     const response = await api.get('/admin/templates-list');
     return response.data;
   },
 
-  // Get users for dropdown filters
+  // Get templates for regular users (safe for all authenticated users)
+  // ✅ SECURITY: This calls /templates - use this for non-admin components
+  async getUserTemplatesList(): Promise<any> {
+    const response = await api.get('/templates');
+    return response.data;
+  },
+
+  // Get users for dropdown filters (ADMIN ONLY)
+  // ⚠️  SECURITY: This calls /admin/users-list - only use in admin components!
   async getUsersList(): Promise<any> {
     const response = await api.get('/admin/users-list');
     return response.data;

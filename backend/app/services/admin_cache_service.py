@@ -47,6 +47,21 @@ class AdminCacheService:
         key_hash = hashlib.md5(key_data.encode()).hexdigest()
         return f"admin_cache:{prefix}:{key_hash}"
     
+    def _make_json_serializable(self, obj) -> Any:
+        """Convert complex objects to JSON-serializable format"""
+        if hasattr(obj, 'model_dump'):  # Pydantic v2 models
+            return obj.model_dump()
+        elif hasattr(obj, 'dict'):  # Pydantic v1 models
+            return obj.dict()
+        elif isinstance(obj, dict):
+            return {k: self._make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif hasattr(obj, '__dict__'):
+            return {k: self._make_json_serializable(v) for k, v in obj.__dict__.items()}
+        else:
+            return obj
+    
     def get(self, key: str) -> Optional[Any]:
         """Get cached data with error handling"""
         if not self.redis_available or not self.redis_client:
@@ -55,11 +70,8 @@ class AdminCacheService:
         try:
             cached_data = self.redis_client.get(key)
             if cached_data:
-                # Try JSON first, fallback to pickle for complex objects
-                try:
-                    return json.loads(cached_data)
-                except (json.JSONDecodeError, TypeError):
-                    return pickle.loads(cached_data.encode('latin1'))
+                # Data is stored as JSON, so parse it back
+                return json.loads(cached_data)
             return None
         except Exception as e:
             logger.warning(f"Cache get error for key {key}: {e}")
@@ -73,12 +85,11 @@ class AdminCacheService:
         try:
             ttl = ttl or self.default_ttl
             
-            # Try JSON first for simple data structures
-            try:
-                serialized_value = json.dumps(value, default=str)
-            except (TypeError, ValueError):
-                # Fallback to pickle for complex objects
-                serialized_value = pickle.dumps(value).decode('latin1')
+            # Convert Pydantic models and complex objects to JSON-serializable format
+            serializable_value = self._make_json_serializable(value)
+            
+            # Use JSON for caching to ensure proper deserialization
+            serialized_value = json.dumps(serializable_value, default=str)
             
             return self.redis_client.setex(key, ttl, serialized_value)
         except Exception as e:
