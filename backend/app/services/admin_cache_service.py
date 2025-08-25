@@ -18,14 +18,24 @@ class AdminCacheService:
     """Redis-based caching service for admin API performance optimization"""
     
     def __init__(self):
-        self.redis_client = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-            max_connections=20  # Connection pooling for performance
-        )
+        try:
+            self.redis_client = redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                max_connections=20  # Connection pooling for performance
+            )
+            # Test connection immediately
+            self.redis_client.ping()
+            self.redis_available = True
+            logger.info("✅ Redis cache connected successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Redis cache not available: {e}")
+            self.redis_client = None
+            self.redis_available = False
+            
         self.default_ttl = 300  # 5 minutes default cache
         self.stats_ttl = 60     # 1 minute for stats (frequently changing)
         self.user_list_ttl = 180 # 3 minutes for user lists
@@ -39,6 +49,9 @@ class AdminCacheService:
     
     def get(self, key: str) -> Optional[Any]:
         """Get cached data with error handling"""
+        if not self.redis_available or not self.redis_client:
+            return None
+            
         try:
             cached_data = self.redis_client.get(key)
             if cached_data:
@@ -54,6 +67,9 @@ class AdminCacheService:
     
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Set cached data with error handling"""
+        if not self.redis_available or not self.redis_client:
+            return False
+            
         try:
             ttl = ttl or self.default_ttl
             

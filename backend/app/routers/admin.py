@@ -87,6 +87,10 @@ async def get_admin_stats(
     admin_user: User = Depends(get_admin_user)
 ):
     """Get classroom-scoped system statistics - Optimized for Railway PostgreSQL"""
+    import time
+    start_time = time.time()
+    logger.info(f"Admin stats request started for user {admin_user.id}")
+    
     from app.services.admin_cache_service import admin_cache
     
     # Get user's classroom IDs
@@ -200,6 +204,9 @@ async def get_admin_stats(
     # Cache the results
     admin_cache.cache_admin_stats(classroom_ids, stats_data)
     
+    total_time = time.time() - start_time
+    logger.info(f"Admin stats request completed in {total_time:.3f}s for user {admin_user.id}")
+    
     return AdminStatsResponse(**stats_data)
 
 @router.get("/admin/activities", response_model=UserActivityResponse)
@@ -260,148 +267,97 @@ async def get_user_activities(
     if cached_activities:
         return UserActivityResponse(**cached_activities)
     
-    # Optimized single query using UNION ALL for different activity types
-    offset = (page - 1) * page_size
+    # Simplified approach: Get classroom users first, then fetch activities separately
+    # This is more likely to use indexes properly
     
-    # Build WHERE conditions for the query
-    where_conditions = []
-    query_params = {'classroom_ids': classroom_ids, 'offset': offset, 'page_size': page_size}
+    # First, get the user IDs in classrooms for filtering
+    classroom_user_ids = db.query(User.id).join(UserClassroom).filter(
+        UserClassroom.classroom_id.in_(classroom_ids),
+        UserClassroom.is_active == True
+    ).distinct().subquery()
     
-    if user_id:
-        where_conditions.append("u.id = :user_id")
-        query_params['user_id'] = user_id
-    if user_email:
-        where_conditions.append("u.email = :user_email")
-        query_params['user_email'] = user_email
-    if user_name:
-        where_conditions.append("u.username = :user_name")
-        query_params['user_name'] = user_name
-    if date_from_dt:
-        where_conditions.append("activity_timestamp >= :date_from")
-        query_params['date_from'] = date_from_dt
-    if date_to_dt:
-        where_conditions.append("activity_timestamp <= :date_to")
-        query_params['date_to'] = date_to_dt
-    if status and activity_type == "code_execution":
-        where_conditions.append("activity_status = :status")
-        query_params['status'] = status
+    # Use simplified individual queries that can leverage indexes
+    all_activities = []
     
-    where_clause = " AND " + " AND ".join(where_conditions) if where_conditions else ""
-    
-    # Optimized unified query for all activity types
-    activities_query = text(f"""
-        WITH classroom_users AS (
-            SELECT DISTINCT u.id as user_id
-            FROM users u 
-            INNER JOIN user_classrooms uc ON u.id = uc.user_id 
-            WHERE uc.classroom_id = ANY(:classroom_ids) AND uc.is_active = true
-        ),
-        all_activities AS (
-            -- Code executions
-            SELECT 
-                cs.id,
-                cs.user_id,
-                u.username,
-                u.email,
-                'code_execution' as activity_type,
-                json_build_object(
-                    'language', cs.language,
-                    'code_size', CASE WHEN cs.code IS NOT NULL THEN length(cs.code) ELSE 0 END,
-                    'execution_time', cs.execution_time,
-                    'input_data', cs.input_data IS NOT NULL
-                ) as activity_data,
-                cs.created_at as activity_timestamp,
-                cs.status as activity_status,
-                cs.error_message
-            FROM code_submissions cs
-            LEFT JOIN users u ON cs.user_id = u.id
-            LEFT JOIN classroom_users cu ON cs.user_id = cu.user_id
-            WHERE (cs.classroom_id = ANY(:classroom_ids) OR 
-                  (cs.classroom_id IS NULL AND cu.user_id IS NOT NULL))
-              AND (:activity_type IS NULL OR :activity_type = 'code_execution')
-            
-            UNION ALL
-            
-            -- Session creations
-            SELECT 
-                col.id,
-                col.owner_id as user_id,
-                u.username,
-                u.email,
-                'session_creation' as activity_type,
-                json_build_object(
-                    'share_id', col.share_id,
-                    'title', col.title,
-                    'language', col.language,
-                    'is_public', col.is_public,
-                    'max_collaborators', col.max_collaborators
-                ) as activity_data,
-                col.created_at as activity_timestamp,
-                CASE WHEN col.is_active THEN 'active' ELSE 'inactive' END as activity_status,
-                NULL as error_message
-            FROM collaboration_sessions col
-            LEFT JOIN users u ON col.owner_id = u.id
-            LEFT JOIN classroom_users cu ON col.owner_id = cu.user_id
-            WHERE (col.classroom_id = ANY(:classroom_ids) OR 
-                  (col.classroom_id IS NULL AND cu.user_id IS NOT NULL))
-              AND (:activity_type IS NULL OR :activity_type = 'session_creation')
-            
-            UNION ALL
-            
-            -- Session joins
-            SELECT 
-                cp.id,
-                cp.user_id,
-                cp.username,
-                u.email,
-                'session_join' as activity_type,
-                json_build_object(
-                    'session_share_id', col.share_id,
-                    'session_title', col.title,
-                    'cursor_color', cp.cursor_color,
-                    'is_connected', cp.is_connected
-                ) as activity_data,
-                cp.joined_at as activity_timestamp,
-                CASE WHEN cp.is_connected THEN 'connected' ELSE 'disconnected' END as activity_status,
-                NULL as error_message
-            FROM collaboration_participants cp
-            LEFT JOIN collaboration_sessions col ON cp.session_id = col.id
-            LEFT JOIN users u ON cp.user_id = u.id
-            WHERE (:activity_type IS NULL OR :activity_type = 'session_join')
-        ),
-        filtered_activities AS (
-            SELECT * FROM all_activities
-            WHERE 1=1 {where_clause}
-        ),
-        paginated_activities AS (
-            SELECT *, COUNT(*) OVER() as total_count
-            FROM filtered_activities
-            ORDER BY activity_timestamp DESC
-            LIMIT :page_size OFFSET :offset
+    # Get code executions if requested
+    if not activity_type or activity_type == "code_execution":
+        exec_query = db.query(
+            CodeSubmission.id,
+            CodeSubmission.user_id,
+            User.username,
+            User.email,
+            CodeSubmission.language,
+            CodeSubmission.code,
+            CodeSubmission.execution_time,
+            CodeSubmission.input_data,
+            CodeSubmission.created_at,
+            CodeSubmission.status,
+            CodeSubmission.error_message
+        ).join(User, CodeSubmission.user_id == User.id, isouter=True).filter(
+            or_(
+                CodeSubmission.classroom_id.in_(classroom_ids),
+                and_(
+                    CodeSubmission.classroom_id.is_(None),
+                    CodeSubmission.user_id.in_(classroom_user_ids)
+                )
+            )
         )
-        SELECT * FROM paginated_activities
-    """)
+        
+        # Apply filters
+        if user_id:
+            exec_query = exec_query.filter(CodeSubmission.user_id == user_id)
+        if user_email:
+            exec_query = exec_query.filter(User.email == user_email)
+        if user_name:
+            exec_query = exec_query.filter(User.username == user_name)
+        if status:
+            exec_query = exec_query.filter(CodeSubmission.status == status)
+        if date_from_dt:
+            exec_query = exec_query.filter(CodeSubmission.created_at >= date_from_dt)
+        if date_to_dt:
+            exec_query = exec_query.filter(CodeSubmission.created_at <= date_to_dt)
+        
+        executions = exec_query.order_by(desc(CodeSubmission.created_at)).all()
+        
+        for exec_row in executions:
+            all_activities.append({
+                "id": exec_row.id,
+                "user_id": exec_row.user_id,
+                "username": exec_row.username or "Anonymous",
+                "email": exec_row.email,
+                "activity_type": "code_execution",
+                "activity_data": {
+                    "language": exec_row.language,
+                    "code_size": len(exec_row.code) if exec_row.code else 0,
+                    "execution_time": exec_row.execution_time,
+                    "input_data": bool(exec_row.input_data)
+                },
+                "timestamp": exec_row.created_at,
+                "status": exec_row.status,
+                "error_message": exec_row.error_message
+            })
     
-    # Add activity_type to query params
-    query_params['activity_type'] = activity_type
+    # Sort all activities by timestamp and paginate
+    all_activities.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
     
-    results = db.execute(activities_query, query_params).fetchall()
+    total = len(all_activities)
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    paginated_activities = all_activities[start_idx:end_idx]
     
+    # Convert to UserActivityItem objects
     activities = []
-    total = 0
-    
-    for row in results:
-        total = row.total_count if hasattr(row, 'total_count') else 0
+    for activity in paginated_activities:
         activities.append(UserActivityItem(
-            id=row.id,
-            user_id=row.user_id,
-            username=row.username or "Anonymous",
-            email=row.email,
-            activity_type=row.activity_type,
-            activity_data=row.activity_data,
-            timestamp=row.activity_timestamp.isoformat() if row.activity_timestamp else "",
-            status=row.activity_status,
-            error_message=row.error_message
+            id=activity["id"],
+            user_id=activity["user_id"],
+            username=activity["username"],
+            email=activity["email"],
+            activity_type=activity["activity_type"],
+            activity_data=activity["activity_data"],
+            timestamp=activity["timestamp"].isoformat() if activity["timestamp"] else "",
+            status=activity["status"],
+            error_message=activity["error_message"]
         ))
     
     result = {
@@ -1207,4 +1163,128 @@ async def apply_railway_optimizations(
             "success": False,
             "error": str(e),
             "message": "Failed to apply optimizations"
+        }
+
+@router.get("/admin/debug-performance")
+async def debug_performance(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Debug endpoint to check performance and optimization status"""
+    import time
+    
+    debug_info = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "tests": {},
+        "database_info": {},
+        "cache_info": {},
+        "recommendations": []
+    }
+    
+    try:
+        # Test 1: Simple database connection
+        start_time = time.time()
+        result = db.execute(text("SELECT COUNT(*) as count FROM users")).fetchone()
+        db_connection_time = time.time() - start_time
+        debug_info["tests"]["db_connection"] = {
+            "time_ms": round(db_connection_time * 1000, 2),
+            "status": "ok" if db_connection_time < 0.1 else "slow",
+            "user_count": result.count if result else 0
+        }
+        
+        # Test 2: Check if indexes exist
+        start_time = time.time()
+        index_check = db.execute(text("""
+            SELECT indexname, tablename 
+            FROM pg_indexes 
+            WHERE indexname LIKE 'idx_%' 
+            AND schemaname = 'public'
+            ORDER BY tablename, indexname
+        """)).fetchall()
+        index_check_time = time.time() - start_time
+        
+        debug_info["database_info"]["indexes"] = {
+            "count": len(index_check),
+            "time_ms": round(index_check_time * 1000, 2),
+            "indexes": [f"{row.tablename}.{row.indexname}" for row in index_check[:10]]
+        }
+        
+        # Test 3: Admin stats query performance
+        classroom_ids = get_user_classroom_ids(admin_user)
+        if classroom_ids:
+            start_time = time.time()
+            user_count = db.query(User).join(UserClassroom).filter(
+                UserClassroom.classroom_id.in_(classroom_ids),
+                UserClassroom.is_active == True
+            ).count()
+            admin_query_time = time.time() - start_time
+            
+            debug_info["tests"]["admin_user_count"] = {
+                "time_ms": round(admin_query_time * 1000, 2),
+                "status": "ok" if admin_query_time < 0.5 else "slow",
+                "count": user_count
+            }
+        
+        # Test 4: Redis cache connection
+        try:
+            from app.services.admin_cache_service import AdminCacheService
+            cache_service = AdminCacheService()
+            start_time = time.time()
+            cache_service.redis_client.ping()
+            cache_ping_time = time.time() - start_time
+            
+            debug_info["cache_info"] = {
+                "connected": True,
+                "ping_ms": round(cache_ping_time * 1000, 2)
+            }
+        except Exception as cache_error:
+            debug_info["cache_info"] = {
+                "connected": False,
+                "error": str(cache_error)
+            }
+            debug_info["recommendations"].append("Redis cache not available - this will cause slow performance")
+        
+        # Test 5: Check migration status
+        try:
+            from app.services.database_migration_service import migration_service
+            migration_status = migration_service.get_migration_status()
+            
+            performance_applied = any(
+                m.get("name") == "v1_performance_optimization" 
+                for m in migration_status.get("migrations", [])
+            )
+            
+            debug_info["database_info"]["migrations"] = {
+                "performance_optimization_applied": performance_applied,
+                "total_migrations": len(migration_status.get("migrations", []))
+            }
+            
+            if not performance_applied:
+                debug_info["recommendations"].append(
+                    "Performance optimization migration not applied - run POST /admin/apply-optimizations"
+                )
+                
+        except Exception as migration_error:
+            debug_info["database_info"]["migrations"] = {
+                "error": str(migration_error)
+            }
+        
+        # Generate recommendations
+        if debug_info["tests"].get("db_connection", {}).get("time_ms", 0) > 100:
+            debug_info["recommendations"].append("Database connection is slow - check Railway PostgreSQL performance")
+        
+        if debug_info["database_info"].get("indexes", {}).get("count", 0) < 10:
+            debug_info["recommendations"].append("Few performance indexes found - run optimization migration")
+        
+        if not debug_info["cache_info"].get("connected", False):
+            debug_info["recommendations"].append("Redis cache not connected - admin APIs will be very slow")
+        
+        return debug_info
+        
+    except Exception as e:
+        logger.error(f"Debug performance error: {e}")
+        return {
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+            "recommendations": ["Debug endpoint failed - check application logs"]
         }
