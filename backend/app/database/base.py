@@ -14,8 +14,8 @@ engine = create_engine(
     pool_timeout=30,       # Wait 30s for connection from pool
     # Performance optimizations
     echo=settings.debug,
-    # PostgreSQL encoding fix - prevents Unicode decode errors
-    client_encoding='utf8',
+    # PostgreSQL-specific optimizations (only for PostgreSQL)
+    **({"client_encoding": "utf8"} if "postgresql" in settings.database_url else {}),
     # Additional production settings for Railway.app PostgreSQL
     connect_args={
         "connect_timeout": 10,

@@ -118,7 +118,7 @@ async def get_admin_stats(
     
     # POSTGRESQL OPTIMIZED: Single query with FILTER and proper array casting
     stats_query = text("""
-        WITH user_stats AS (
+        WITH         user_stats AS (
             -- Get classroom users efficiently
             SELECT 
                 u.id,
@@ -126,7 +126,7 @@ async def get_admin_stats(
                 CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
             FROM users u
             INNER JOIN user_classrooms uc ON u.id = uc.user_id
-            WHERE uc.classroom_id = ANY(:classroom_ids::int[])
+            WHERE uc.classroom_id IN :classroom_ids
               AND uc.is_active = true
         ),
         submission_stats AS (
@@ -141,7 +141,7 @@ async def get_admin_stats(
                     COUNT(cs.id)
                 ) FILTER (WHERE language IS NOT NULL) as language_counts
             FROM code_submissions cs
-            WHERE (cs.classroom_id = ANY(:classroom_ids::int[]) 
+            WHERE (cs.classroom_id IN :classroom_ids 
                    OR cs.user_id IN (SELECT id FROM user_stats))
         ),
         session_stats AS (
@@ -150,7 +150,7 @@ async def get_admin_stats(
                 COUNT(col.id) as total_sessions,
                 COUNT(col.id) FILTER (WHERE col.is_active = true) as active_sessions
             FROM collaboration_sessions col
-            WHERE (col.classroom_id = ANY(:classroom_ids::int[])
+            WHERE (col.classroom_id IN :classroom_ids
                    OR col.owner_id IN (SELECT id FROM user_stats))
         )
         SELECT 
@@ -166,9 +166,9 @@ async def get_admin_stats(
         FROM submission_stats ss, session_stats cs
     """)
     
-    # Execute with proper array formatting for PostgreSQL
+    # Execute with tuple for PostgreSQL IN clause compatibility
     result = db.execute(stats_query, {
-        'classroom_ids': classroom_ids,
+        'classroom_ids': tuple(classroom_ids) if classroom_ids else (0,),
         'today_start': today_start
     }).fetchone()
     
@@ -391,7 +391,7 @@ async def get_all_users(
     # Build PostgreSQL-optimized query with window functions
     offset = (page - 1) * page_size
     
-    # POSTGRESQL OPTIMIZED: Simple query without complex subqueries
+    # POSTGRESQL OPTIMIZED: Simple query with IN clause for better compatibility
     user_query = text("""
         SELECT DISTINCT
             u.id,
@@ -407,7 +407,7 @@ async def get_all_users(
             0 as collaboration_sessions
         FROM users u
         INNER JOIN user_classrooms uc ON u.id = uc.user_id
-        WHERE uc.classroom_id = ANY(:classroom_ids::int[])
+        WHERE uc.classroom_id IN :classroom_ids
           AND uc.is_active = true
           AND (:search IS NULL OR 
                u.username ILIKE :search_pattern OR 
@@ -419,8 +419,9 @@ async def get_all_users(
     
     search_pattern = f"%{search}%" if search else None
     
+    # Convert to tuple for PostgreSQL IN clause compatibility
     results = db.execute(user_query, {
-        'classroom_ids': classroom_ids,
+        'classroom_ids': tuple(classroom_ids) if classroom_ids else (0,),
         'search': search,
         'search_pattern': search_pattern,
         'page_size': page_size,
