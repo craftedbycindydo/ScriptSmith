@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,9 +11,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 
 import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { apiService } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
+import { 
+  useAdminStats, 
+  useAdminActivities, 
+  useAdminUsers, 
+  useTemplateExecutions,
+  useTemplatesOptions,
+  useUsersOptions,
+  useClassroomMembers,
+  useClassroomSettings,
+  useToggleUserActivation,
+  useCreateClassroom,
+  useDeleteClassroom,
+  useAddStudentToClassroom,
+  useRemoveClassroomMember,
+  useUpdateClassroomSettings
+} from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
 import AssignmentUpload from './AssignmentUpload';
 import AssignmentReports from './AssignmentReports';
@@ -53,35 +68,7 @@ import {
   Trash2
 } from 'lucide-react';
 
-interface AdminStats {
-  total_users: number;
-  total_code_executions: number;
-  total_collaboration_sessions: number;
-  active_sessions: number;
-  executions_today: number;
-  new_users_today: number;
-  error_rate_percentage: number;
-  popular_languages: Array<{ language: string; count: number }>;
-}
 
-interface UserActivity {
-  id: number;
-  user_id?: number;
-  username?: string;
-  email?: string;
-  activity_type: string;
-  activity_data: any;
-  timestamp: string;
-  status?: string;
-  error_message?: string;
-}
-
-interface UserActivitiesResponse {
-  activities: UserActivity[];
-  total: number;
-  page: number;
-  page_size: number;
-}
 
 interface AdminUser {
   id: number;
@@ -115,17 +102,9 @@ interface TemplateExecution {
   executed_at?: string;
 }
 
-interface TemplateExecutionsResponse {
-  executions: TemplateExecution[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
 export default function AdminDashboard() {
   const { user, isAuthenticated, refreshUser } = useAuthStore();
   const { 
-    updateClassroomSettings: updateClassroomAdminSettings,
     loadSettings: loadAdminSettings,
     initializeWebSocket,
     disconnectWebSocket,
@@ -133,9 +112,24 @@ export default function AdminDashboard() {
   } = useAdminSettingsStore();
   const navigate = useNavigate();
   
-  const [stats, setStats] = useState<AdminStats | null>(null);
-  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [loading, setLoading] = useState(true);
+  // React Query hooks - replaces direct API calls
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminStats();
+  const { data: adminUsers = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers();
+  const { data: activities = [], isLoading: activitiesLoading } = useAdminActivities();
+  const { data: templateExecutions = [], isLoading: templateExecutionsLoading } = useTemplateExecutions();
+  const { data: templatesOptions = [] } = useTemplatesOptions();
+  const { data: usersOptions = [] } = useUsersOptions();
+  
+  // Mutations for user actions
+  const toggleUserMutation = useToggleUserActivation();
+  const createClassroomMutation = useCreateClassroom();
+  const deleteClassroomMutation = useDeleteClassroom();
+  const addStudentMutation = useAddStudentToClassroom();
+  const removeStudentMutation = useRemoveClassroomMember();
+  const updateSettingsMutation = useUpdateClassroomSettings();
+  
+  // Combined loading state for initial load
+  const loading = statsLoading || usersLoading || activitiesLoading || templateExecutionsLoading;
   
   // User search error state
   const [userSearchError, setUserSearchError] = useState<string | null>(null);
@@ -153,12 +147,9 @@ export default function AdminDashboard() {
   // Activity filters
   const [activityUserFilter, setActivityUserFilter] = useState('all');
   
-  // Store ALL data locally for client-side filtering (2025 best practice)
-  const [allActivities, setAllActivities] = useState<UserActivity[]>([]);
-  const [allTemplateExecutions, setAllTemplateExecutions] = useState<TemplateExecution[]>([]);
-  
-  // Prevent duplicate API calls
-  const loadingRefs = useRef<{[key: string]: boolean}>({});
+  // Use React Query data directly for client-side filtering (2025 best practice)
+  const allActivities = activities?.activities || [];
+  const allTemplateExecutions = templateExecutions?.executions || [];
   
   // Tab state
   const [activeTab, setActiveTab] = useState('overview');
@@ -172,8 +163,6 @@ export default function AdminDashboard() {
   
   // Member management states
   const [expandedClassroom, setExpandedClassroom] = useState<number | null>(null);
-  const [classroomMembers, setClassroomMembers] = useState<{[key: number]: any[]}>({});
-  const [loadingMembers, setLoadingMembers] = useState<{[key: number]: boolean}>({});
   
   // Classroom creation states
   const [isCreatingClassroom, setIsCreatingClassroom] = useState(false);
@@ -208,12 +197,9 @@ export default function AdminDashboard() {
   const [templateLanguageFilter, setTemplateLanguageFilter] = useState('all');
   const [templateStatusFilter, setTemplateStatusFilter] = useState('all');
   
-  // Dropdown options
-  const [templates, setTemplates] = useState<Array<{id: number, name: string, language: string}>>([]);
-  const [combinedUsers, setCombinedUsers] = useState<Array<{username: string, email: string, display: string}>>([]);
-  
-  // Per-classroom admin settings
-  const [classroomSettings, setClassroomSettings] = useState<{[key: number]: {copy_paste_enabled: boolean, isLoading: boolean}}>({});
+  // Dropdown options from React Query
+  const templates = templatesOptions?.templates || [];
+  const combinedUsers = usersOptions?.users || [];
   
   // Client-side filtering functions (2025 best practice - no more API calls per filter)
   const getFilteredActivities = useCallback(() => {
@@ -242,7 +228,7 @@ export default function AdminDashboard() {
     if (!userSearch) return adminUsers;
     
     const searchTerm = userSearch.toLowerCase();
-    return adminUsers.filter(user =>
+    return adminUsers.filter((user: AdminUser) =>
       user.username?.toLowerCase().includes(searchTerm) ||
       user.email?.toLowerCase().includes(searchTerm) ||
       user.full_name?.toLowerCase().includes(searchTerm)
@@ -274,181 +260,56 @@ export default function AdminDashboard() {
     
     return filtered;
   }, [allTemplateExecutions, templateNameFilter, templateLanguageFilter, templateStatusFilter, templateUserFilter]);
-  const [loadingClassroomSettings, setLoadingClassroomSettings] = useState<{[key: number]: boolean}>({});
   const [classroomNotifications, setClassroomNotifications] = useState<{[key: number]: {message: string, type: 'success' | 'error'} | null}>({});
 
   
   const pageSize = 20;
 
-  // Load admin stats
-  const loadStats = async () => {
-    try {
-      const data = await apiService.getAdminStats();
-      setStats(data);
-    } catch (err: any) {
-      console.error('Failed to load stats:', err);
-    }
-  };
-
-  // Load ALL activities once (no more pagination API calls)
-  const loadAllActivities = async () => {
-    if (loadingRefs.current['activities']) return;
-    loadingRefs.current['activities'] = true;
-    
-    try {
-      // Load larger batch to minimize API calls (200 items)
-      const data: UserActivitiesResponse = await apiService.getAdminActivities(
-        1, 
-        200, // Larger page size to get most data in one call
-        undefined, // No filtering on server - do it client-side
-        undefined,
-        undefined,
-        undefined
-      );
-      setAllActivities(data.activities);
-    } catch (err: any) {
-      console.error('Failed to load all activities:', err);
-    } finally {
-      loadingRefs.current['activities'] = false;
-    }
-  };
-
-  // Load ALL users once (no more search API calls)
-  const loadAllUsers = async () => {
-    if (loadingRefs.current['users']) return;
-    loadingRefs.current['users'] = true;
-    
-    try {
-      setUserSearchError(null);
-      // Load all users without search filter - filter client-side
-      const data = await apiService.getAdminUsers(1, 100, undefined);
-      setAdminUsers(data);
-    } catch (err: any) {
-      console.error('Failed to load all users:', err);
-      setUserSearchError('Failed to load users');
-    } finally {
-      loadingRefs.current['users'] = false;
-    }
-  };
-
-  // Toggle user activation
+  // Toggle user activation using React Query mutation
   const toggleUserActivation = async (userId: number, activate: boolean) => {
     try {
-      if (activate) {
-        await apiService.activateUser(userId);
-      } else {
-        await apiService.deactivateUser(userId);
-      }
-      
-      await loadAllUsers(); // Reload users list
+      await toggleUserMutation.mutateAsync({ userId, activate });
     } catch (err: any) {
       console.error(`Failed to ${activate ? 'activate' : 'deactivate'} user:`, err);
     }
   };
 
-  // Load template executions
-  // Load ALL template executions once (no more filter API calls)
-  const loadAllTemplateExecutions = async () => {
-    if (loadingRefs.current['templateExecutions']) return;
-    loadingRefs.current['templateExecutions'] = true;
-    
-    try {
-      // Load larger batch to minimize API calls (200 items)
-      const data: TemplateExecutionsResponse = await apiService.getTemplateExecutions(
-        1,
-        200, // Larger page size
-        undefined, // No server-side filtering
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined
-      );
-      
-      setAllTemplateExecutions(data.executions);
-    } catch (err: any) {
-      console.error('Failed to load all template executions:', err);
-    } finally {
-      loadingRefs.current['templateExecutions'] = false;
-    }
+  // Hook to get classroom settings using React Query
+  const getClassroomSettings = (classroomId: number) => {
+    const { data: settings, isLoading } = useClassroomSettings(classroomId, !!classroomId);
+    return {
+      copy_paste_enabled: settings?.copy_paste_enabled ?? true,
+      isLoading
+    };
   };
 
-  // Removed extractUserInfo - no longer needed with client-side filtering
-
-  // Load classroom-specific admin settings
-  const loadClassroomSettings = async (classroomId: number) => {
-    if (classroomSettings[classroomId]) {
-      // Already loaded
-      return;
-    }
-
-    setLoadingClassroomSettings(prev => ({ ...prev, [classroomId]: true }));
-    try {
-      const settings = await apiService.getClassroomAdminSettings(classroomId);
-      setClassroomSettings(prev => ({
-        ...prev,
-        [classroomId]: {
-          copy_paste_enabled: settings.copy_paste_enabled,
-          isLoading: false
-        }
-      }));
-    } catch (err: any) {
-      console.error(`Failed to load classroom ${classroomId} settings:`, err);
-      // Set default values on error
-      setClassroomSettings(prev => ({
-        ...prev,
-        [classroomId]: {
-          copy_paste_enabled: true,
-          isLoading: false
-        }
-      }));
-    } finally {
-      setLoadingClassroomSettings(prev => ({ ...prev, [classroomId]: false }));
-    }
-  };
-
-  // Handle classroom-specific copy-paste toggle
+  // Handle classroom-specific copy-paste toggle using React Query
   const handleClassroomCopyPasteToggle = async (classroomId: number, enabled: boolean) => {
     // Clear any existing notification
     setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
-    
-    setClassroomSettings(prev => ({
-      ...prev,
-      [classroomId]: {
-        ...prev[classroomId],
-        isLoading: true
-      }
-    }));
 
     try {
-      const success = await updateClassroomAdminSettings(classroomId, {
-        copy_paste_enabled: enabled,
-        notes: `Copy-paste ${enabled ? 'enabled' : 'disabled'} by ${user?.username} for classroom ${classroomId}`
+      await updateSettingsMutation.mutateAsync({
+        classroomId,
+        settings: {
+          copy_paste_enabled: enabled,
+          notes: `Copy-paste ${enabled ? 'enabled' : 'disabled'} by ${user?.username} for classroom ${classroomId}`
+        }
       });
-
-      if (success) {
-        setClassroomSettings(prev => ({
-          ...prev,
-          [classroomId]: {
-            copy_paste_enabled: enabled,
-            isLoading: false
-          }
-        }));
-        
-        // Set inline success notification
-        setClassroomNotifications(prev => ({
-          ...prev,
-          [classroomId]: {
-            message: `Copy-paste ${enabled ? 'enabled' : 'disabled'} successfully`,
-            type: 'success'
-          }
-        }));
-        
-        // Clear notification after 3 seconds
-        setTimeout(() => {
-          setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
-        }, 3000);
-      }
+      
+      // Set inline success notification
+      setClassroomNotifications(prev => ({
+        ...prev,
+        [classroomId]: {
+          message: `Copy-paste ${enabled ? 'enabled' : 'disabled'} successfully`,
+          type: 'success'
+        }
+      }));
+      
+      // Clear notification after 3 seconds
+      setTimeout(() => {
+        setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
+      }, 3000);
     } catch (error: any) {
       console.error(`Failed to update classroom ${classroomId} copy-paste setting:`, error);
       
@@ -465,61 +326,23 @@ export default function AdminDashboard() {
       setTimeout(() => {
         setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
       }, 5000);
-    } finally {
-      setClassroomSettings(prev => ({
-        ...prev,
-        [classroomId]: {
-          ...prev[classroomId],
-          isLoading: false
-        }
-      }));
     }
   };
 
-  // Load dropdown options
-  const loadDropdownOptions = async () => {
-    try {
-      const [templatesData, usersData] = await Promise.all([
-        apiService.getTemplatesList(),
-        apiService.getUsersList()
-      ]);
-      
-      setTemplates(templatesData.templates || []);
-      setCombinedUsers(usersData.users || []);
-    } catch (err: any) {
-      console.error('Failed to load dropdown options:', err);
-    }
-  };
-
-
-
-  // Load all data ONCE - no more multiple API calls per filter change
+  // Refresh all data using React Query refetch
   const loadAllData = async () => {
-    setLoading(true);
     try {
-      // Load all data in parallel - single API call per data type
       await Promise.all([
-        loadStats(),
-        loadAllActivities(),  // Load ALL activities at once
-        loadAllUsers(),       // Load ALL users at once
-        loadAllTemplateExecutions(), // Load ALL template executions at once
-        loadDropdownOptions()
+        refetchStats(),
+        refetchUsers(),
+        // Other data is automatically refetched by React Query as needed
       ]);
-      
-      // Load classroom settings for all classrooms
-      if (user?.classroom_context?.classrooms) {
-        user.classroom_context.classrooms.forEach((classroom: any) => {
-          loadClassroomSettings(classroom.id);
-        });
-      }
     } catch (err: any) {
-      console.error('Error loading admin data:', err);
-    } finally {
-      setLoading(false);
+      console.error('Error refreshing admin data:', err);
     }
   };
 
-  // Handle classroom creation
+  // Handle classroom creation using React Query mutation
   const handleCreateClassroom = async () => {
     // Clear previous messages
     setClassroomCreationError('');
@@ -542,7 +365,7 @@ export default function AdminDashboard() {
 
     setCreatingClassroom(true);
     try {
-      await apiService.createClassroom({
+      await createClassroomMutation.mutateAsync({
         name,
         description,
         max_members: maxMembers,
@@ -591,31 +414,19 @@ export default function AdminDashboard() {
     setIsCreatingClassroom(false);
   };
 
-  // Handle member management
-  const loadClassroomMembers = async (classroomId: number) => {
-    if (classroomMembers[classroomId]) {
-      // Already loaded
-      return;
-    }
-
-    setLoadingMembers(prev => ({ ...prev, [classroomId]: true }));
-    try {
-      const members = await apiService.getClassroomMembers(classroomId);
-      setClassroomMembers(prev => ({ ...prev, [classroomId]: members }));
-    } catch (err: any) {
-      console.error('Failed to load members:', err);
-    } finally {
-      setLoadingMembers(prev => ({ ...prev, [classroomId]: false }));
-    }
+  // Hook to get classroom members using React Query
+  const getClassroomMembers = (classroomId: number, enabled: boolean = true) => {
+    const { data: members = [], isLoading } = useClassroomMembers(classroomId, enabled);
+    return { members, isLoading };
   };
 
-  const handleClassroomClick = async (classroomId: number) => {
+  const handleClassroomClick = (classroomId: number) => {
     if (expandedClassroom === classroomId) {
       setExpandedClassroom(null);
     } else {
       setExpandedClassroom(classroomId);
       setCurrentClassroom(classroomId); // Set current classroom for WebSocket filtering
-      await loadClassroomMembers(classroomId);
+      // React Query will automatically load classroom members when expanded
     }
   };
 
@@ -630,15 +441,8 @@ export default function AdminDashboard() {
     const { classroomId, memberId } = memberToRemove;
 
     try {
-      await apiService.removeClassroomMember(classroomId, memberId);
-      
-      // Refresh the member list
-      setClassroomMembers(prev => ({
-        ...prev,
-        [classroomId]: prev[classroomId]?.filter(member => member.id !== memberId) || []
-      }));
-      
-      // Note: Member count will be updated on next refresh or page reload
+      await removeStudentMutation.mutateAsync({ classroomId, memberId });
+      // React Query will automatically refresh the member list
     } catch (err: any) {
       console.error('Remove member error:', err);
     } finally {
@@ -662,14 +466,11 @@ export default function AdminDashboard() {
     setAddingStudent(prev => ({ ...prev, [classroomId]: true }));
     setUserSearchError(null); // Clear any previous errors
     try {
-      await apiService.addStudentToClassroom(classroomId, email);
+      await addStudentMutation.mutateAsync({ classroomId, email });
       
       // Clear the email input
       setStudentEmails(prev => ({ ...prev, [classroomId]: '' }));
-      
-      // Refresh the member list to show the new student
-      setClassroomMembers(prev => ({ ...prev, [classroomId]: [] })); // Clear to force reload
-      await loadClassroomMembers(classroomId);
+      // React Query will automatically refresh the member list
     } catch (err: any) {
       console.error('Add student error:', err);
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to add student';
@@ -699,10 +500,10 @@ export default function AdminDashboard() {
 
     setDeletingClassroom(true);
     try {
-      const result = await apiService.deleteClassroom(classroomToDelete.id);
+      await deleteClassroomMutation.mutateAsync(classroomToDelete.id);
       
       // Show success message - classroom will be removed from user context on refresh
-      console.log('Classroom deleted:', result);
+      console.log('Classroom deleted successfully');
       
       // Refresh user data to update classroom context
       const success = await refreshUser();
@@ -727,11 +528,9 @@ export default function AdminDashboard() {
     setClassroomToDelete(null);
   };
 
-  // SINGLE useEffect for initial data load - NO MORE FILTER-TRIGGERED API CALLS
+  // SINGLE useEffect for WebSocket and settings only - React Query handles data loading
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
-      // Load ALL data once on page load - filters work client-side
-      loadAllData();
       loadAdminSettings(isAuthenticated);
       
       // Initialize WebSocket with user and classroom context
@@ -754,8 +553,6 @@ export default function AdminDashboard() {
       };
       
       refreshUserData();
-    } else {
-      setLoading(false);
     }
     
     // Cleanup websocket on unmount
@@ -1182,7 +979,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {stats.popular_languages.map((lang) => (
+                {stats.popular_languages.map((lang: { language: string; count: number }) => (
                   <div key={lang.language} className="text-center">
                     <div className="text-2xl font-bold">{lang.count}</div>
                     <div className="text-sm text-muted-foreground capitalize">
@@ -1242,7 +1039,7 @@ export default function AdminDashboard() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All users</SelectItem>
-                      {combinedUsers.map((user) => (
+                      {combinedUsers.map((user: any) => (
                         <SelectItem key={user.display} value={user.display}>
                           {user.display}
                         </SelectItem>
@@ -1374,7 +1171,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {getFilteredUsers().map((user) => (
+                  {getFilteredUsers().map((user: AdminUser) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1673,19 +1470,16 @@ export default function AdminDashboard() {
                                   <div className="flex items-center space-x-2">
                                     <span className="text-sm font-medium">Copy-Paste:</span>
                                     <span className="text-sm text-muted-foreground">
-                                      {loadingClassroomSettings[classroom.id] ? (
-                                        'Loading...'
-                                      ) : classroomSettings[classroom.id] ? (
-                                        classroomSettings[classroom.id].copy_paste_enabled ? 'Enabled' : 'Disabled'
-                                      ) : (
-                                        'Default'
-                                      )}
+                                      {(() => {
+                                        const { copy_paste_enabled, isLoading } = getClassroomSettings(classroom.id);
+                                        return isLoading ? 'Loading...' : (copy_paste_enabled ? 'Enabled' : 'Disabled');
+                                      })()}
                                     </span>
                                   </div>
                                   <Switch
-                                    checked={classroomSettings[classroom.id]?.copy_paste_enabled ?? true}
+                                    checked={getClassroomSettings(classroom.id).copy_paste_enabled}
                                     onCheckedChange={(checked) => handleClassroomCopyPasteToggle(classroom.id, checked)}
-                                    disabled={loadingClassroomSettings[classroom.id] || classroomSettings[classroom.id]?.isLoading}
+                                    disabled={getClassroomSettings(classroom.id).isLoading}
                                     className="scale-90"
                                   />
                                 </div>
@@ -1712,16 +1506,23 @@ export default function AdminDashboard() {
                               {/* Expanded Member List */}
                               {expandedClassroom === classroom.id && (
                                 <div className="border-t bg-muted/20">
-                                  {loadingMembers[classroom.id] ? (
-                                    <div className="p-4 text-center">
-                                      <div className="flex items-center justify-center space-x-2">
-                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                                        <span className="text-sm text-muted-foreground">Loading members...</span>
-                                      </div>
-                                    </div>
-                                  ) : classroomMembers[classroom.id] && classroomMembers[classroom.id].length > 0 ? (
-                                    <div className="divide-y">
-                                      {classroomMembers[classroom.id].map((member: any) => (
+                                  {(() => {
+                                    const { members, isLoading } = getClassroomMembers(classroom.id, expandedClassroom === classroom.id);
+                                    if (isLoading) {
+                                      return (
+                                        <div className="p-4 text-center">
+                                          <div className="flex items-center justify-center space-x-2">
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                                            <span className="text-sm text-muted-foreground">Loading members...</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    if (members && members.length > 0) {
+                                      return (
+                                        <div className="divide-y">
+                                          {members.map((member: any) => (
                                         <div key={member.id} className="p-4 flex items-center justify-between">
                                           <div className="flex-1">
                                             <div className="flex items-center space-x-3">
@@ -1748,11 +1549,11 @@ export default function AdminDashboard() {
                                               Remove
                                             </Button>
                                           )}
-                                        </div>
-                                      ))}
-                                      
-                                      {/* Add student by email */}
-                                      <div className="p-4 border-t bg-muted/10">
+                                            </div>
+                                          ))}
+                                          
+                                          {/* Add student by email */}
+                                          <div className="p-4 border-t bg-muted/10">
                                         <div className="space-y-3">
                                           <div className="font-medium text-sm">Add Student by Email</div>
                                           <div className="flex space-x-2">
@@ -1812,14 +1613,18 @@ export default function AdminDashboard() {
                                             Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded">{classroom.key}</code> so new students can register for this classroom.
                                           </div>
                                         </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    return (
+                                      <div className="p-4 text-center text-muted-foreground">
+                                        <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                        <p>No members found</p>
                                       </div>
-                                    </div>
-                                  ) : (
-                                    <div className="p-4 text-center text-muted-foreground">
-                                      <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                      <p>No members found</p>
-                                    </div>
-                                  )}
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -2007,7 +1812,7 @@ export default function AdminDashboard() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All templates</SelectItem>
-                            {templates.map((template) => (
+                            {templates.map((template: any) => (
                               <SelectItem key={template.id} value={template.name}>
                                 {template.name} ({template.language})
                               </SelectItem>
@@ -2021,7 +1826,7 @@ export default function AdminDashboard() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All users</SelectItem>
-                            {combinedUsers.map((user) => (
+                            {combinedUsers.map((user: any) => (
                               <SelectItem key={user.display} value={user.display}>
                                 {user.display}
                               </SelectItem>
@@ -2058,7 +1863,7 @@ export default function AdminDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * pageSize, templateExecutionsPage * pageSize).map((execution) => (
+                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * pageSize, templateExecutionsPage * pageSize).map((execution: TemplateExecution) => (
                           <div key={execution.id} className="border rounded-lg overflow-hidden">
                             {/* Clickable Row */}
                             <div 
@@ -2252,7 +2057,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {getFilteredUsers().map((user) => (
+                  {getFilteredUsers().map((user: AdminUser) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -2439,7 +2244,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {stats.popular_languages.map((lang) => (
+                {stats.popular_languages.map((lang: { language: string; count: number }) => (
                   <div key={lang.language} className="text-center">
                     <div className="text-2xl font-bold">{lang.count}</div>
                     <div className="text-sm text-muted-foreground capitalize">
@@ -2690,19 +2495,16 @@ export default function AdminDashboard() {
                                   <div className="flex items-center space-x-2">
                                     <span className="text-xs font-medium">Copy-Paste:</span>
                                     <span className="text-xs text-muted-foreground">
-                                      {loadingClassroomSettings[classroom.id] ? (
-                                        'Loading...'
-                                      ) : classroomSettings[classroom.id] ? (
-                                        classroomSettings[classroom.id].copy_paste_enabled ? 'Enabled' : 'Disabled'
-                                      ) : (
-                                        'Default'
-                                      )}
+                                      {(() => {
+                                        const { copy_paste_enabled, isLoading } = getClassroomSettings(classroom.id);
+                                        return isLoading ? 'Loading...' : (copy_paste_enabled ? 'Enabled' : 'Disabled');
+                                      })()}
                                     </span>
                                   </div>
                                   <Switch
-                                    checked={classroomSettings[classroom.id]?.copy_paste_enabled ?? true}
+                                    checked={getClassroomSettings(classroom.id).copy_paste_enabled}
                                     onCheckedChange={(checked) => handleClassroomCopyPasteToggle(classroom.id, checked)}
-                                    disabled={loadingClassroomSettings[classroom.id] || classroomSettings[classroom.id]?.isLoading}
+                                    disabled={getClassroomSettings(classroom.id).isLoading}
                                     className="scale-75"
                                   />
                                 </div>
@@ -2729,16 +2531,23 @@ export default function AdminDashboard() {
                               {/* Expanded Member List - Mobile optimized */}
                               {expandedClassroom === classroom.id && (
                                 <div className="border-t bg-muted/20">
-                                  {loadingMembers[classroom.id] ? (
-                                    <div className="p-4 text-center">
-                                      <div className="flex items-center justify-center space-x-2">
-                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                                        <span className="text-sm text-muted-foreground">Loading members...</span>
-                                      </div>
-                                    </div>
-                                  ) : classroomMembers[classroom.id] && classroomMembers[classroom.id].length > 0 ? (
-                                    <div className="divide-y">
-                                      {classroomMembers[classroom.id].map((member: any) => (
+                                  {(() => {
+                                    const { members, isLoading } = getClassroomMembers(classroom.id, expandedClassroom === classroom.id);
+                                    if (isLoading) {
+                                      return (
+                                        <div className="p-4 text-center">
+                                          <div className="flex items-center justify-center space-x-2">
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                                            <span className="text-sm text-muted-foreground">Loading members...</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    if (members && members.length > 0) {
+                                      return (
+                                        <div className="divide-y">
+                                          {members.map((member: any) => (
                                         <div key={member.id} className="p-3">
                                           <div className="flex items-center justify-between">
                                             <div className="flex-1 min-w-0">
@@ -2767,11 +2576,11 @@ export default function AdminDashboard() {
                                               </Button>
                                             )}
                                           </div>
-                                        </div>
-                                      ))}
-                                      
-                                      {/* Add student by email - Mobile optimized */}
-                                      <div className="p-3 border-t bg-muted/10">
+                                            </div>
+                                          ))}
+                                          
+                                          {/* Add student by email - Mobile optimized */}
+                                          <div className="p-3 border-t bg-muted/10">
                                         <div className="space-y-2">
                                           <div className="font-medium text-sm">Add Student by Email</div>
                                           <div className="space-y-2">
@@ -2832,14 +2641,18 @@ export default function AdminDashboard() {
                                             Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded text-xs">{classroom.key}</code> so new students can register for this classroom.
                                           </div>
                                         </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    return (
+                                      <div className="p-4 text-center text-muted-foreground">
+                                        <Users className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                                        <p className="text-sm">No members found</p>
                                       </div>
-                                    </div>
-                                  ) : (
-                                    <div className="p-4 text-center text-muted-foreground">
-                                      <Users className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                                      <p className="text-sm">No members found</p>
-                                    </div>
-                                  )}
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -2945,7 +2758,7 @@ export default function AdminDashboard() {
                         />
                       </div>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {adminUsers.slice(0, 10).map((user) => (
+                        {adminUsers.slice(0, 10).map((user: AdminUser) => (
                           <div key={user.id} className="border rounded-lg p-3">
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
