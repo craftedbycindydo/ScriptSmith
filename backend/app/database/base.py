@@ -14,11 +14,26 @@ engine = create_engine(
     pool_timeout=30,       # Wait 30s for connection from pool
     # Performance optimizations
     echo=settings.debug,
-    # Additional production settings
+    # PostgreSQL encoding fix - prevents Unicode decode errors
+    client_encoding='utf8',
+    # Additional production settings for Railway.app PostgreSQL
     connect_args={
         "connect_timeout": 10,
         "application_name": "scripting_smith_api",
-        "options": "-c statement_timeout=30000"  # 30s statement timeout
+        "options": "-c statement_timeout=30000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=300000",
+        "server_settings": {
+            "jit": "off",  # Disable JIT for Railway.app compatibility
+            "application_name": "scripting_smith_api",
+            "client_encoding": "UTF8",  # Explicit UTF8 encoding on server side
+            # PostgreSQL 2025 performance optimizations
+            "shared_preload_libraries": "pg_stat_statements",
+            "random_page_cost": "1.1",  # SSD-optimized value for Railway
+            "effective_cache_size": "1GB",  # Adjust based on Railway memory
+            "maintenance_work_mem": "256MB",
+            "checkpoint_completion_target": "0.9",
+            "wal_buffers": "16MB",
+            "default_statistics_target": "100"
+        }
     } if "postgresql" in settings.database_url else {}
 )
 
@@ -30,6 +45,37 @@ Base = declarative_base()
 
 # Dependency to get database session
 def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Async-compatible session manager for better connection pool management
+class AsyncSessionManager:
+    """Manages database sessions in async context to prevent pool exhaustion"""
+    
+    @staticmethod
+    async def get_session():
+        """Get a new database session with proper async handling"""
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    
+    @staticmethod
+    def execute_with_session(func, *args, **kwargs):
+        """Execute a function with a fresh database session"""
+        db = SessionLocal()
+        try:
+            return func(db, *args, **kwargs)
+        finally:
+            db.close()
+
+# Alternative async dependency that prevents session sharing issues
+async def get_async_db():
+    """Async database dependency that creates fresh sessions"""
     db = SessionLocal()
     try:
         yield db

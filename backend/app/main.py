@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import time
@@ -138,6 +139,22 @@ async def security_middleware(request: Request, call_next):
         if settings.environment == "production" or settings.enforce_https:
             response.headers["Strict-Transport-Security"] = f"max-age={settings.hsts_max_age}; includeSubDomains; preload"
     
+    # 2025 Performance headers for Cloudflare + Railway optimization
+    if request.url.path.startswith("/api/"):
+        # Cache control for API responses
+        if request.method == "GET" and not request.url.path.startswith("/api/auth/"):
+            response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+            response.headers["Vary"] = "Accept-Encoding, Authorization"
+        else:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        
+        # Performance hints for browsers and CDNs
+        response.headers["X-DNS-Prefetch-Control"] = "on"
+        
+    # Static assets caching (if serving any through FastAPI)
+    elif any(request.url.path.endswith(ext) for ext in ['.js', '.css', '.png', '.jpg', '.ico', '.svg']):
+        response.headers["Cache-Control"] = "public, max-age=2592000"  # 30 days
+    
     return response
 
 # Add CORS middleware - Permissive for Railway deployment
@@ -147,6 +164,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+)
+
+# Add GZip compression middleware for 2025 performance optimization
+app.add_middleware(
+    GZipMiddleware, 
+    minimum_size=1000,  # Only compress responses larger than 1KB
+    compresslevel=6     # Balance between compression ratio and speed
 )
 
 # Create database tables and load routers - Combined startup event
