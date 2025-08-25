@@ -68,7 +68,150 @@ import {
   Trash2
 } from 'lucide-react';
 
+// Classroom Members List Component
+interface ClassroomMembersListProps {
+  classroomId: number;
+  members: any[];
+  isLoading: boolean;
+  handleRemoveMemberClick: (classroomId: number, memberId: number, memberName: string) => void;
+  handleAddStudentByEmail: (classroomId: number) => void;
+  studentEmails: {[key: number]: string};
+  setStudentEmails: any;
+  addingStudent: {[key: number]: boolean};
+  userSearchError: string | null;
+  setUserSearchError: any;
+  classroom: any;
+}
 
+function ClassroomMembersList({
+  classroomId,
+  members,
+  isLoading,
+  handleRemoveMemberClick,
+  handleAddStudentByEmail,
+  studentEmails,
+  setStudentEmails,
+  addingStudent,
+  userSearchError,
+  setUserSearchError,
+  classroom
+}: ClassroomMembersListProps) {
+  if (isLoading) {
+    return (
+      <div className="p-4 text-center">
+        <div className="flex items-center justify-center space-x-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+          <span className="text-sm text-muted-foreground">Loading members...</span>
+        </div>
+      </div>
+    );
+  }
+  
+  if (members && members.length > 0) {
+    return (
+      <div className="divide-y">
+        {members.map((member: any) => (
+          <div key={member.id} className="p-4 flex items-center justify-between">
+            <div className="flex-1">
+              <div className="flex items-center space-x-3">
+                <div className="font-medium">{member.username}</div>
+                <Badge variant={member.role === 'TEACHER' ? 'default' : 'secondary'} className="text-xs">
+                  {member.role}
+                </Badge>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {member.email}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
+              </div>
+            </div>
+            {member.role !== 'TEACHER' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleRemoveMemberClick(classroomId, member.id, member.username)}
+                className="text-red-600 hover:text-red-700 hover:border-red-300"
+              >
+                <UserMinus className="w-3 h-3 mr-1" />
+                Remove
+              </Button>
+            )}
+          </div>
+        ))}
+        
+        {/* Add student by email */}
+        <div className="p-4 border-t bg-muted/10">
+          <div className="space-y-3">
+            <div className="font-medium text-sm">Add Student by Email</div>
+            <div className="flex space-x-2">
+              <Input
+                placeholder="student@example.com"
+                type="email"
+                value={studentEmails[classroomId] || ''}
+                onChange={(e) => {
+                  setStudentEmails((prev: any) => ({ 
+                    ...prev, 
+                    [classroomId]: e.target.value 
+                  }));
+                  if (userSearchError) setUserSearchError(null);
+                }}
+                className={`flex-1 ${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
+                disabled={addingStudent[classroomId]}
+              />
+              <Button
+                onClick={() => handleAddStudentByEmail(classroomId)}
+                disabled={addingStudent[classroomId] || !studentEmails[classroomId]?.trim()}
+                size="sm"
+              >
+                {addingStudent[classroomId] ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                    Adding...
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-3 h-3 mr-1" />
+                    Add
+                  </>
+                )}
+              </Button>
+            </div>
+            
+            {userSearchError && (
+              <div className="text-sm text-red-600 dark:text-red-400">
+                {userSearchError}
+              </div>
+            )}
+            
+            <div className="text-xs text-muted-foreground">
+              Add existing users to this classroom by their registered email address.
+            </div>
+          </div>
+        </div>
+
+        {/* Registration instructions */}
+        <div className="p-4 bg-blue-50 dark:bg-blue-950 border-t">
+          <div className="text-sm">
+            <div className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+              For New Students
+            </div>
+            <div className="text-blue-700 dark:text-blue-200">
+              Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded">{classroom.key}</code> so new students can register for this classroom.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="p-4 text-center text-muted-foreground">
+      <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+      <p>No members found</p>
+    </div>
+  );
+}
 
 interface AdminUser {
   id: number;
@@ -274,12 +417,30 @@ export default function AdminDashboard() {
     }
   };
 
-  // Hook to get classroom settings using React Query
+  // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
+  const allClassroomIds = user?.classroom_context?.classrooms?.map((c: any) => c.id) || [];
+  
+  // Call classroom settings hooks at top level for each classroom
+  const classroomSettings1 = useClassroomSettings(allClassroomIds[0], allClassroomIds.length > 0);
+  const classroomSettings2 = useClassroomSettings(allClassroomIds[1], allClassroomIds.length > 1);
+  const classroomSettings3 = useClassroomSettings(allClassroomIds[2], allClassroomIds.length > 2);
+  const classroomSettings4 = useClassroomSettings(allClassroomIds[3], allClassroomIds.length > 3);
+  const classroomSettings5 = useClassroomSettings(allClassroomIds[4], allClassroomIds.length > 4);
+  
+  // Create a map of classroom settings queries manually
+  const classroomSettingsQueries: any = {};
+  if (allClassroomIds[0]) classroomSettingsQueries[allClassroomIds[0]] = classroomSettings1;
+  if (allClassroomIds[1]) classroomSettingsQueries[allClassroomIds[1]] = classroomSettings2;
+  if (allClassroomIds[2]) classroomSettingsQueries[allClassroomIds[2]] = classroomSettings3;
+  if (allClassroomIds[3]) classroomSettingsQueries[allClassroomIds[3]] = classroomSettings4;
+  if (allClassroomIds[4]) classroomSettingsQueries[allClassroomIds[4]] = classroomSettings5;
+  
+  // Helper function to get classroom settings data
   const getClassroomSettings = (classroomId: number) => {
-    const { data: settings, isLoading } = useClassroomSettings(classroomId, !!classroomId);
+    const query = classroomSettingsQueries[classroomId];
     return {
-      copy_paste_enabled: settings?.copy_paste_enabled ?? true,
-      isLoading
+      copy_paste_enabled: query?.data?.copy_paste_enabled ?? true,
+      isLoading: query?.isLoading ?? false
     };
   };
 
@@ -414,10 +575,28 @@ export default function AdminDashboard() {
     setIsCreatingClassroom(false);
   };
 
-  // Hook to get classroom members using React Query
-  const getClassroomMembers = (classroomId: number, enabled: boolean = true) => {
-    const { data: members = [], isLoading } = useClassroomMembers(classroomId, enabled);
-    return { members, isLoading };
+  // Call classroom members hooks at top level for each classroom
+  const classroomMembers1 = useClassroomMembers(allClassroomIds[0], expandedClassroom === allClassroomIds[0]);
+  const classroomMembers2 = useClassroomMembers(allClassroomIds[1], expandedClassroom === allClassroomIds[1]);
+  const classroomMembers3 = useClassroomMembers(allClassroomIds[2], expandedClassroom === allClassroomIds[2]);
+  const classroomMembers4 = useClassroomMembers(allClassroomIds[3], expandedClassroom === allClassroomIds[3]);
+  const classroomMembers5 = useClassroomMembers(allClassroomIds[4], expandedClassroom === allClassroomIds[4]);
+  
+  // Create a map of classroom members queries manually
+  const classroomMembersQueries: any = {};
+  if (allClassroomIds[0]) classroomMembersQueries[allClassroomIds[0]] = classroomMembers1;
+  if (allClassroomIds[1]) classroomMembersQueries[allClassroomIds[1]] = classroomMembers2;
+  if (allClassroomIds[2]) classroomMembersQueries[allClassroomIds[2]] = classroomMembers3;
+  if (allClassroomIds[3]) classroomMembersQueries[allClassroomIds[3]] = classroomMembers4;
+  if (allClassroomIds[4]) classroomMembersQueries[allClassroomIds[4]] = classroomMembers5;
+  
+  // Helper function to get classroom members data
+  const getClassroomMembers = (classroomId: number) => {
+    const query = classroomMembersQueries[classroomId];
+    return { 
+      members: query?.data || [], 
+      isLoading: query?.isLoading ?? false 
+    };
   };
 
   const handleClassroomClick = (classroomId: number) => {
@@ -1506,125 +1685,19 @@ export default function AdminDashboard() {
                               {/* Expanded Member List */}
                               {expandedClassroom === classroom.id && (
                                 <div className="border-t bg-muted/20">
-                                  {(() => {
-                                    const { members, isLoading } = getClassroomMembers(classroom.id, expandedClassroom === classroom.id);
-                                    if (isLoading) {
-                                      return (
-                                        <div className="p-4 text-center">
-                                          <div className="flex items-center justify-center space-x-2">
-                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                                            <span className="text-sm text-muted-foreground">Loading members...</span>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    
-                                    if (members && members.length > 0) {
-                                      return (
-                                        <div className="divide-y">
-                                          {members.map((member: any) => (
-                                        <div key={member.id} className="p-4 flex items-center justify-between">
-                                          <div className="flex-1">
-                                            <div className="flex items-center space-x-3">
-                                              <div className="font-medium">{member.username}</div>
-                                              <Badge variant={member.role === 'TEACHER' ? 'default' : 'secondary'} className="text-xs">
-                                                {member.role}
-                                              </Badge>
-                                            </div>
-                                            <div className="text-sm text-muted-foreground">
-                                              {member.email}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground">
-                                              Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
-                                            </div>
-                                          </div>
-                                          {member.role !== 'TEACHER' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleRemoveMemberClick(classroom.id, member.id, member.username)}
-                                              className="text-red-600 hover:text-red-700 hover:border-red-300"
-                                            >
-                                              <UserMinus className="w-3 h-3 mr-1" />
-                                              Remove
-                                            </Button>
-                                          )}
-                                            </div>
-                                          ))}
-                                          
-                                          {/* Add student by email */}
-                                          <div className="p-4 border-t bg-muted/10">
-                                        <div className="space-y-3">
-                                          <div className="font-medium text-sm">Add Student by Email</div>
-                                          <div className="flex space-x-2">
-                                            <Input
-                                              placeholder="student@example.com"
-                                              type="email"
-                                              value={studentEmails[classroom.id] || ''}
-                                              onChange={(e) => {
-                                                setStudentEmails(prev => ({ 
-                                                  ...prev, 
-                                                  [classroom.id]: e.target.value 
-                                                }));
-                                                if (userSearchError) setUserSearchError(null); // Clear error when typing
-                                              }}
-                                              className={`flex-1 ${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
-                                              disabled={addingStudent[classroom.id]}
-                                            />
-                                            <Button
-                                              onClick={() => handleAddStudentByEmail(classroom.id)}
-                                              disabled={addingStudent[classroom.id] || !studentEmails[classroom.id]?.trim()}
-                                              size="sm"
-                                            >
-                                              {addingStudent[classroom.id] ? (
-                                                <>
-                                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                                                  Adding...
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <UserPlus className="w-3 h-3 mr-1" />
-                                                  Add
-                                                </>
-                                              )}
-                                            </Button>
-                                          </div>
-                                          
-                                          {/* Error display for add student */}
-                                          {userSearchError && (
-                                            <div className="text-sm text-red-600 dark:text-red-400">
-                                              {userSearchError}
-                                            </div>
-                                          )}
-                                          
-                                          <div className="text-xs text-muted-foreground">
-                                            Add existing users to this classroom by their registered email address.
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* Registration instructions */}
-                                      <div className="p-4 bg-blue-50 dark:bg-blue-950 border-t">
-                                        <div className="text-sm">
-                                          <div className="font-medium text-blue-900 dark:text-blue-100 mb-2">
-                                            For New Students
-                                          </div>
-                                          <div className="text-blue-700 dark:text-blue-200">
-                                            Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded">{classroom.key}</code> so new students can register for this classroom.
-                                          </div>
-                                        </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    
-                                    return (
-                                      <div className="p-4 text-center text-muted-foreground">
-                                        <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                        <p>No members found</p>
-                                      </div>
-                                    );
-                                  })()}
+                                  <ClassroomMembersList 
+                                    classroomId={classroom.id}
+                                    members={getClassroomMembers(classroom.id).members}
+                                    isLoading={getClassroomMembers(classroom.id).isLoading}
+                                    handleRemoveMemberClick={handleRemoveMemberClick}
+                                    handleAddStudentByEmail={handleAddStudentByEmail}
+                                    studentEmails={studentEmails}
+                                    setStudentEmails={setStudentEmails}
+                                    addingStudent={addingStudent}
+                                    userSearchError={userSearchError}
+                                    setUserSearchError={setUserSearchError}
+                                    classroom={classroom}
+                                  />
                                 </div>
                               )}
                             </div>
@@ -2531,128 +2604,19 @@ export default function AdminDashboard() {
                               {/* Expanded Member List - Mobile optimized */}
                               {expandedClassroom === classroom.id && (
                                 <div className="border-t bg-muted/20">
-                                  {(() => {
-                                    const { members, isLoading } = getClassroomMembers(classroom.id, expandedClassroom === classroom.id);
-                                    if (isLoading) {
-                                      return (
-                                        <div className="p-4 text-center">
-                                          <div className="flex items-center justify-center space-x-2">
-                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                                            <span className="text-sm text-muted-foreground">Loading members...</span>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    
-                                    if (members && members.length > 0) {
-                                      return (
-                                        <div className="divide-y">
-                                          {members.map((member: any) => (
-                                        <div key={member.id} className="p-3">
-                                          <div className="flex items-center justify-between">
-                                            <div className="flex-1 min-w-0">
-                                              <div className="flex items-center space-x-2">
-                                                <div className="font-medium text-sm truncate">{member.username}</div>
-                                                <Badge variant={member.role === 'TEACHER' ? 'default' : 'secondary'} className="text-xs shrink-0">
-                                                  {member.role}
-                                                </Badge>
-                                              </div>
-                                              <div className="text-xs text-muted-foreground truncate">
-                                                {member.email}
-                                              </div>
-                                              <div className="text-xs text-muted-foreground">
-                                                Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
-                                              </div>
-                                            </div>
-                                            {member.role !== 'TEACHER' && (
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => handleRemoveMemberClick(classroom.id, member.id, member.username)}
-                                                className="text-red-600 hover:text-red-700 hover:border-red-300 h-8 text-xs"
-                                              >
-                                                <UserMinus className="w-3 h-3 mr-1" />
-                                                Remove
-                                              </Button>
-                                            )}
-                                          </div>
-                                            </div>
-                                          ))}
-                                          
-                                          {/* Add student by email - Mobile optimized */}
-                                          <div className="p-3 border-t bg-muted/10">
-                                        <div className="space-y-2">
-                                          <div className="font-medium text-sm">Add Student by Email</div>
-                                          <div className="space-y-2">
-                                            <Input
-                                              placeholder="student@example.com"
-                                              type="email"
-                                              value={studentEmails[classroom.id] || ''}
-                                              onChange={(e) => {
-                                                setStudentEmails(prev => ({ 
-                                                  ...prev, 
-                                                  [classroom.id]: e.target.value 
-                                                }));
-                                                if (userSearchError) setUserSearchError(null);
-                                              }}
-                                              className={`${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
-                                              disabled={addingStudent[classroom.id]}
-                                            />
-                                            <Button
-                                              onClick={() => handleAddStudentByEmail(classroom.id)}
-                                              disabled={addingStudent[classroom.id] || !studentEmails[classroom.id]?.trim()}
-                                              size="sm"
-                                              className="w-full"
-                                            >
-                                              {addingStudent[classroom.id] ? (
-                                                <>
-                                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                                                  Adding...
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <UserPlus className="w-3 h-3 mr-1" />
-                                                  Add Student
-                                                </>
-                                              )}
-                                            </Button>
-                                          </div>
-                                          
-                                          {/* Error display for add student */}
-                                          {userSearchError && (
-                                            <div className="text-xs text-red-600 dark:text-red-400">
-                                              {userSearchError}
-                                            </div>
-                                          )}
-                                          
-                                          <div className="text-xs text-muted-foreground">
-                                            Add existing users to this classroom by their registered email address.
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* Registration instructions */}
-                                      <div className="p-3 bg-blue-50 dark:bg-blue-950 border-t">
-                                        <div className="text-xs">
-                                          <div className="font-medium text-blue-900 dark:text-blue-100 mb-1">
-                                            For New Students
-                                          </div>
-                                          <div className="text-blue-700 dark:text-blue-200">
-                                            Share the classroom key <code className="bg-blue-100 dark:bg-blue-800 px-1 py-0.5 rounded text-xs">{classroom.key}</code> so new students can register for this classroom.
-                                          </div>
-                                        </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    
-                                    return (
-                                      <div className="p-4 text-center text-muted-foreground">
-                                        <Users className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                                        <p className="text-sm">No members found</p>
-                                      </div>
-                                    );
-                                  })()}
+                                  <ClassroomMembersList 
+                                    classroomId={classroom.id}
+                                    members={getClassroomMembers(classroom.id).members}
+                                    isLoading={getClassroomMembers(classroom.id).isLoading}
+                                    handleRemoveMemberClick={handleRemoveMemberClick}
+                                    handleAddStudentByEmail={handleAddStudentByEmail}
+                                    studentEmails={studentEmails}
+                                    setStudentEmails={setStudentEmails}
+                                    addingStudent={addingStudent}
+                                    userSearchError={userSearchError}
+                                    setUserSearchError={setUserSearchError}
+                                    classroom={classroom}
+                                  />
                                 </div>
                               )}
                             </div>
