@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
 import { useTheme } from '@/contexts/ThemeContext';
+import { apiService, type CodeHistoryItem, type TemplateSubmission } from '@/services/api';
 import { 
   Settings as SettingsIcon, 
   History, 
@@ -35,12 +36,124 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('history');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // 2025 Best Practice: Central data management - load ALL data once
+  const [allCodeHistory, setAllCodeHistory] = useState<CodeHistoryItem[]>([]);
+  const [allUserSubmissions, setAllUserSubmissions] = useState<TemplateSubmission[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [submissionStats, setSubmissionStats] = useState<{
+    total_submissions: number;
+    success_submissions: number;
+    error_submissions: number;
+    success_rate: number;
+    submissions_by_language: Array<{ language: string; count: number }>;
+  }>({
+    total_submissions: 0,
+    success_submissions: 0,
+    error_submissions: 0,
+    success_rate: 0,
+    submissions_by_language: []
+  });
+
+  const [loading, setLoading] = useState(false);
+  
+  // Prevent duplicate API calls
+  const loadingRefs = useRef<{[key: string]: boolean}>({});
+
   const handleLoadCode = (historyCode: string, historyLanguage: string) => {
     setCode(historyCode);
     setLanguage(historyLanguage);
     // Navigate back to IDE after loading code
     navigate('/');
   };
+
+  // Load ALL code history once (no more pagination API calls)
+  const loadAllCodeHistory = async () => {
+    if (loadingRefs.current['codeHistory']) return;
+    loadingRefs.current['codeHistory'] = true;
+    
+    try {
+      // Load larger batch to get most data in one call (100 items)
+      const response = await apiService.getCodeHistory(1, 100);
+      setAllCodeHistory(response.history);
+    } catch (error) {
+      console.error('Failed to load all code history:', error);
+    } finally {
+      loadingRefs.current['codeHistory'] = false;
+    }
+  };
+
+  // Load ALL user submissions once (no more refresh API calls)
+  const loadAllUserSubmissions = async () => {
+    if (loadingRefs.current['userSubmissions']) return;
+    loadingRefs.current['userSubmissions'] = true;
+    
+    try {
+      const response = await apiService.getUserSubmissions();
+      setAllUserSubmissions(response);
+    } catch (error) {
+      console.error('Failed to load all user submissions:', error);
+    } finally {
+      loadingRefs.current['userSubmissions'] = false;
+    }
+  };
+
+  // Load submission stats once
+  const loadSubmissionStats = async () => {
+    if (loadingRefs.current['submissionStats']) return;
+    loadingRefs.current['submissionStats'] = true;
+    
+    try {
+      const response = await apiService.getUserSubmissionsStats();
+      setSubmissionStats(response);
+    } catch (error) {
+      console.error('Failed to load submission stats:', error);
+    } finally {
+      loadingRefs.current['submissionStats'] = false;
+    }
+  };
+
+  // Load templates once (using USER endpoint, not admin)
+  const loadTemplates = async () => {
+    if (loadingRefs.current['templates']) return;
+    loadingRefs.current['templates'] = true;
+    
+    try {
+      // Use user endpoint instead of admin endpoint
+      const response = await apiService.getUserTemplatesList();
+      setTemplates(response || []); // /templates endpoint returns array directly
+    } catch (error) {
+      console.error('Failed to load templates:', error);
+      setTemplates([]);
+    } finally {
+      loadingRefs.current['templates'] = false;
+    }
+  };
+
+  // Load ALL settings data once - no more multiple API calls per tab switch
+  const loadAllSettingsData = async () => {
+    setLoading(true);
+    try {
+      // Load all data in parallel - single API call per data type
+      await Promise.all([
+        loadAllCodeHistory(),
+        loadAllUserSubmissions(),
+        loadSubmissionStats(),
+        loadTemplates()
+      ]);
+    } catch (error) {
+      console.error('Failed to load settings data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // SINGLE useEffect for initial data load - NO MORE TAB-TRIGGERED API CALLS
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Load ALL data once on page load - tabs work client-side
+      loadAllSettingsData();
+    }
+  }, [isAuthenticated]); // Only trigger on auth change, NOT tab changes
 
 
 
@@ -190,13 +303,22 @@ export default function Settings() {
 
                 {activeTab === 'history' && (
                   <div className="space-y-4">
-                    <CodeHistory onLoadCode={handleLoadCode} />
+                    <CodeHistory 
+                      onLoadCode={handleLoadCode} 
+                      allCodeHistory={allCodeHistory}
+                      loading={loading}
+                    />
                   </div>
                 )}
 
                 {activeTab === 'submissions' && (
                   <div className="space-y-4">
-                    <UserSubmissions />
+                    <UserSubmissions 
+                      allUserSubmissions={allUserSubmissions}
+                      submissionStats={submissionStats}
+                      templates={templates}
+                      loading={loading}
+                    />
                   </div>
                 )}
 
@@ -328,13 +450,22 @@ export default function Settings() {
             <div className="mt-6">
               {activeTab === 'history' && (
                 <div className="space-y-4">
-                  <CodeHistory onLoadCode={handleLoadCode} />
+                  <CodeHistory 
+                    onLoadCode={handleLoadCode} 
+                    allCodeHistory={allCodeHistory}
+                    loading={loading}
+                  />
                 </div>
               )}
 
               {activeTab === 'submissions' && (
                 <div className="space-y-4">
-                  <UserSubmissions />
+                  <UserSubmissions 
+                    allUserSubmissions={allUserSubmissions}
+                    submissionStats={submissionStats}
+                    templates={templates}
+                    loading={loading}
+                  />
                 </div>
               )}
 

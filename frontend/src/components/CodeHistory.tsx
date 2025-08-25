@@ -1,45 +1,32 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { apiService, type CodeHistoryItem, type CodeHistoryResponse } from '@/services/api';
+import { type CodeHistoryItem } from '@/services/api';
 import { History, ChevronLeft, ChevronRight, Eye, Play, Copy, Code, Terminal, ChevronDown, ChevronUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import ReadOnlyCodeViewer from './ReadOnlyCodeViewer';
 
 interface CodeHistoryProps {
   onLoadCode?: (code: string, language: string) => void;
+  allCodeHistory?: CodeHistoryItem[]; // 2025 Best Practice: Receive data as props
+  loading?: boolean;
 }
 
-export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
-  const [history, setHistory] = useState<CodeHistoryItem[]>([]);
-  const [loading, setLoading] = useState(false);
+export default function CodeHistory({ onLoadCode, allCodeHistory = [], loading: parentLoading = false }: CodeHistoryProps) {
+  // 2025 Best Practice: Use props data instead of local API calls
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
   const [selectedItem, setSelectedItem] = useState<CodeHistoryItem | null>(null);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   const [copiedItemId, setCopiedItemId] = useState<number | null>(null);
   const pageSize = 10;
 
-  const loadHistory = async (page: number = 1) => {
-    setLoading(true);
-    try {
-      const response: CodeHistoryResponse = await apiService.getCodeHistory(page, pageSize);
-      setHistory(response.history);
-      setTotalItems(response.total);
-      setCurrentPage(response.page);
-    } catch (error) {
-      console.error('Failed to load code history:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
+  // 2025 Best Practice: Client-side pagination (no more API calls)
+  const totalItems = allCodeHistory.length;
   const totalPages = Math.ceil(totalItems / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const currentHistory = allCodeHistory.slice(startIndex, endIndex);
 
   const getStatusBadge = (status?: string) => {
     switch (status) {
@@ -91,9 +78,9 @@ export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {loading ? (
+                  {parentLoading ? (
           <div className="text-center py-8">Loading history...</div>
-        ) : history.length === 0 ? (
+        ) : allCodeHistory.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             No code executions found. Start coding to see your history!
           </div>
@@ -101,7 +88,7 @@ export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
           <div className="space-y-4">
             {/* History Items - Accordion Style */}
             <div className="space-y-2">
-              {history.map((item) => {
+              {currentHistory.map((item) => {
                 const isExpanded = expandedItemId === item.id;
                 return (
                   <div
@@ -361,7 +348,7 @@ export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => loadHistory(currentPage - 1)}
+                    onClick={() => setCurrentPage(currentPage - 1)}
                     disabled={currentPage <= 1}
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -370,7 +357,7 @@ export default function CodeHistory({ onLoadCode }: CodeHistoryProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => loadHistory(currentPage + 1)}
+                    onClick={() => setCurrentPage(currentPage + 1)}
                     disabled={currentPage >= totalPages}
                   >
                     Next
