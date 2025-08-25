@@ -201,6 +201,13 @@ async def startup_event():
                 from app.services.database_migration_service import migration_service
                 migration_service.apply_performance_optimizations()
                 print("✅ Performance optimizations applied successfully!")
+                
+                # Apply Railway.app specific optimizations
+                print("🚄 Applying Railway.app specific optimizations...")
+                from app.services.railway_optimization_service import optimization_service
+                optimization_service.apply_railway_specific_optimizations()
+                print("✅ Railway.app optimizations applied successfully!")
+                
             except Exception as perf_error:
                 print(f"⚠️  Performance optimization failed (non-critical): {perf_error}")
                 # Don't fail startup for performance optimizations
