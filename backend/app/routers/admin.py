@@ -970,11 +970,18 @@ async def get_template_executions(
         CodeSubmission.id,
         CodeSubmission.user_id, 
         CodeSubmission.template_id,
+        CodeSubmission.code,
         CodeSubmission.language,
+        CodeSubmission.input_data,
+        CodeSubmission.output,
+        CodeSubmission.error_message,
         CodeSubmission.status,
         CodeSubmission.execution_time,
         CodeSubmission.created_at,
+        CodeSubmission.executed_at,
         User.username,
+        User.email,
+        User.full_name,
         Template.name.label('template_name')
     ).join(User, CodeSubmission.user_id == User.id, isouter=True)
     query = query.join(Template, CodeSubmission.template_id == Template.id, isouter=True)
@@ -1026,17 +1033,17 @@ async def get_template_executions(
     offset = (page - 1) * page_size
     executions = query.order_by(desc(CodeSubmission.created_at)).offset(offset).limit(page_size).all()
     
-    # Format response
+    # Format response - use direct column access instead of relationships
     execution_items = []
     for execution in executions:
         execution_items.append(TemplateExecutionItem(
             id=execution.id,
             user_id=execution.user_id,
-            username=execution.user.username if execution.user else None,
-            email=execution.user.email if execution.user else None,
-            full_name=execution.user.full_name if execution.user else None,
+            username=execution.username,  # Direct column access
+            email=execution.email,        # Direct column access
+            full_name=execution.full_name,  # Direct column access
             template_id=execution.template_id,
-            template_name=execution.template.name if execution.template else None,
+            template_name=execution.template_name,  # Already labeled in query
             code=execution.code,
             language=execution.language,
             input_data=execution.input_data,
