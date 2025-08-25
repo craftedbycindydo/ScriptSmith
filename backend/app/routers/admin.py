@@ -282,11 +282,11 @@ async def get_user_activities(
     # Simplified approach: Get classroom users first, then fetch activities separately
     # This is more likely to use indexes properly
     
-    # First, get the user IDs in classrooms for filtering
-    classroom_user_ids = db.query(User.id).join(UserClassroom).filter(
+    # First, get the user IDs in classrooms for filtering (explicit scalar subquery to avoid warning)
+    classroom_user_ids_query = db.query(User.id).join(UserClassroom).filter(
         UserClassroom.classroom_id.in_(classroom_ids),
         UserClassroom.is_active == True
-    ).distinct().subquery()
+    ).distinct().scalar_subquery()
     
     # Use simplified individual queries that can leverage indexes
     all_activities = []
@@ -310,7 +310,7 @@ async def get_user_activities(
                 CodeSubmission.classroom_id.in_(classroom_ids),
                 and_(
                     CodeSubmission.classroom_id.is_(None),
-                    CodeSubmission.user_id.in_(classroom_user_ids)
+                    CodeSubmission.user_id.in_(classroom_user_ids_query)
                 )
             )
         )
