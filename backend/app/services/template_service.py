@@ -621,3 +621,28 @@ class TemplateService:
                 {"language": lang, "count": count} for lang, count in language_stats
             ]
         }
+    
+    @staticmethod
+    def get_user_submissions_stats(db: Session, user_id: int) -> dict:
+        """Get submission statistics for a specific user"""
+        query = db.query(TemplateSubmission).filter(TemplateSubmission.user_id == user_id)
+        
+        total_submissions = query.count()
+        success_submissions = query.filter(TemplateSubmission.status == "success").count()
+        error_submissions = query.filter(TemplateSubmission.status == "error").count()
+        
+        # Get submissions by language for this user
+        language_stats = db.query(
+            TemplateSubmission.language,
+            func.count(TemplateSubmission.id).label('count')
+        ).filter(TemplateSubmission.user_id == user_id).group_by(TemplateSubmission.language).all()
+        
+        return {
+            "total_submissions": total_submissions,
+            "success_submissions": success_submissions,
+            "error_submissions": error_submissions,
+            "success_rate": round((success_submissions / total_submissions * 100), 2) if total_submissions > 0 else 0,
+            "submissions_by_language": [
+                {"language": lang, "count": count} for lang, count in language_stats
+            ]
+        }

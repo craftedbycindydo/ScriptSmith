@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import CodeHistory from './CodeHistory';
+import UserSubmissions from './UserSubmissions';
 import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
@@ -19,7 +20,8 @@ import {
   PanelLeft,
   PanelLeftOpen,
   Menu,
-  ChevronDown
+  ChevronDown,
+  Send
 } from 'lucide-react';
 
 export default function Settings() {
@@ -78,6 +80,7 @@ export default function Settings() {
                   <span className="flex items-center">
                     <Menu className="w-4 h-4 mr-2" />
                     {activeTab === 'history' && 'Code History'}
+                    {activeTab === 'submissions' && 'Submissions'}
                     {activeTab === 'profile' && 'Profile'}
                     {activeTab === 'preferences' && 'Preferences'}
                   </span>
@@ -88,6 +91,10 @@ export default function Settings() {
                 <DropdownMenuItem onClick={() => setActiveTab('history')}>
                   <History className="w-4 h-4 mr-2" />
                   Code History
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab('submissions')}>
+                  <Send className="w-4 h-4 mr-2" />
+                  Submissions
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setActiveTab('profile')}>
                   <User className="w-4 h-4 mr-2" />
@@ -141,6 +148,17 @@ export default function Settings() {
                     {!sidebarCollapsed && <span className="ml-3">Code History</span>}
                   </Button>
                   <Button
+                    variant={activeTab === 'submissions' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('submissions')}
+                    title={sidebarCollapsed ? 'Submissions' : ''}
+                  >
+            <Send className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Submissions</span>}
+                  </Button>
+                  <Button
                     variant={activeTab === 'profile' ? 'default' : 'ghost'}
                     className={`w-full h-12 px-4 ${
                       sidebarCollapsed ? 'justify-center' : 'justify-start'
@@ -173,6 +191,12 @@ export default function Settings() {
                 {activeTab === 'history' && (
                   <div className="space-y-4">
                     <CodeHistory onLoadCode={handleLoadCode} />
+                  </div>
+                )}
+
+                {activeTab === 'submissions' && (
+                  <div className="space-y-4">
+                    <UserSubmissions />
                   </div>
                 )}
 
@@ -305,6 +329,12 @@ export default function Settings() {
               {activeTab === 'history' && (
                 <div className="space-y-4">
                   <CodeHistory onLoadCode={handleLoadCode} />
+                </div>
+              )}
+
+              {activeTab === 'submissions' && (
+                <div className="space-y-4">
+                  <UserSubmissions />
                 </div>
               )}
 

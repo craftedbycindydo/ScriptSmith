@@ -519,6 +519,36 @@ export const apiService = {
     return response.data;
   },
 
+  // User submissions endpoints (for regular users to see their own submissions)
+  async getUserSubmissions(
+    templateName?: string,
+    language?: string,
+    status?: string,
+    skip: number = 0,
+    limit: number = 100
+  ): Promise<TemplateSubmission[]> {
+    const params = new URLSearchParams();
+    if (templateName) params.append('template_name', templateName);
+    if (language) params.append('language', language);
+    if (status) params.append('status', status);
+    params.append('skip', skip.toString());
+    params.append('limit', limit.toString());
+    
+    const response = await api.get(`/my-submissions?${params.toString()}`);
+    return response.data;
+  },
+
+  async getUserSubmissionsStats(): Promise<{
+    total_submissions: number;
+    success_submissions: number;
+    error_submissions: number;
+    success_rate: number;
+    submissions_by_language: Array<{ language: string; count: number }>;
+  }> {
+    const response = await api.get('/my-submissions/stats');
+    return response.data;
+  },
+
   // Note: Direct file upload endpoint available but not used in current flow
   // Templates are now created through the regular create endpoint after file content is loaded in UI
   async uploadTemplateFile(file: File, name?: string, description?: string, language?: string): Promise<Template> {

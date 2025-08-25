@@ -585,6 +585,55 @@ async def can_submit_template(
         )
 
 
+@router.get("/my-submissions", response_model=List[TemplateSubmissionResponse])
+async def get_my_submissions(
+    template_name: Optional[str] = Query(None, description="Filter by template name"),
+    language: Optional[str] = Query(None, description="Filter by language"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get current user's template submissions only"""
+    try:
+        submissions = TemplateService.get_template_submissions(
+            db=db,
+            user_id=current_user.id,  # Only return current user's submissions
+            status=status,
+            language=language,
+            skip=skip,
+            limit=limit
+        )
+        
+        # Filter by template name if provided
+        if template_name:
+            submissions = [s for s in submissions if s.template_name and template_name.lower() in s.template_name.lower()]
+        
+        return submissions
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get user submissions: {str(e)}"
+        )
+
+
+@router.get("/my-submissions/stats")
+async def get_my_submissions_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get current user's submission statistics"""
+    try:
+        stats = TemplateService.get_user_submissions_stats(db, current_user.id)
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get user submission stats: {str(e)}"
+        )
+
+
 @router.get("/admin/classrooms/{classroom_id}/users", response_model=List[UserInfo])
 async def get_classroom_users(
     classroom_id: int,

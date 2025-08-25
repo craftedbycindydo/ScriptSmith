@@ -110,38 +110,45 @@ class DatabaseMigrationService:
                 # Set timeout for the migration
                 connection.execute(text("SET statement_timeout = '300s'"))
                 
-                # Performance indexes for classroom-scoped queries
+                # Performance indexes optimized for Railway.app admin APIs
                 performance_indexes = [
-                    # UserClassroom indexes
+                    # UserClassroom indexes - Critical for admin queries
                     ("idx_user_classroom_classroom_id", "user_classrooms", "(classroom_id)"),
                     ("idx_user_classroom_user_id_active", "user_classrooms", "(user_id, is_active)"),
                     ("idx_user_classroom_active_composite", "user_classrooms", "(classroom_id, is_active, user_id)"),
+                    ("idx_user_classroom_covering", "user_classrooms", "(classroom_id, user_id, is_active)"),
                     
-                    # CodeSubmission indexes  
+                    # CodeSubmission indexes - Optimized for admin stats and activities
                     ("idx_code_submission_classroom_user", "code_submissions", "(classroom_id, user_id)"),
-                    ("idx_code_submission_created_at", "code_submissions", "(created_at DESC)"),
+                    ("idx_code_submission_created_at_desc", "code_submissions", "(created_at DESC)"),
                     ("idx_code_submission_status_classroom", "code_submissions", "(status, classroom_id)"),
-                    ("idx_code_submission_language_classroom", "code_submissions", "(language, classroom_id)"),
+                    ("idx_code_submission_language_stats", "code_submissions", "(language, classroom_id) WHERE language IS NOT NULL"),
+                    ("idx_code_submission_user_created", "code_submissions", "(user_id, created_at DESC)"),
+                    ("idx_code_submission_null_classroom", "code_submissions", "(user_id, created_at DESC) WHERE classroom_id IS NULL"),
                     
-                    # CollaborationSession indexes
-                    ("idx_collaboration_session_classroom", "collaboration_sessions", "(classroom_id, is_active)"),
+                    # CollaborationSession indexes - For session statistics
+                    ("idx_collaboration_session_classroom_active", "collaboration_sessions", "(classroom_id, is_active)"),
                     ("idx_collaboration_session_owner_classroom", "collaboration_sessions", "(owner_id, classroom_id)"),
-                    ("idx_collaboration_session_created_at", "collaboration_sessions", "(created_at DESC)"),
+                    ("idx_collaboration_session_created_desc", "collaboration_sessions", "(created_at DESC)"),
+                    ("idx_collaboration_session_null_classroom", "collaboration_sessions", "(owner_id, created_at DESC) WHERE classroom_id IS NULL"),
                     
-                    # CollaborationParticipant indexes  
-                    ("idx_collaboration_participant_session", "collaboration_participants", "(session_id, status)"),
-                    ("idx_collaboration_participant_user", "collaboration_participants", "(user_id, is_connected)"),
+                    # CollaborationParticipant indexes
+                    ("idx_collaboration_participant_session_status", "collaboration_participants", "(session_id, status)"),
+                    ("idx_collaboration_participant_user_connected", "collaboration_participants", "(user_id, is_connected)"),
+                    ("idx_collaboration_participant_joined_desc", "collaboration_participants", "(joined_at DESC)"),
                     
                     # Template indexes
                     ("idx_template_classroom_active", "templates", "(classroom_id, is_active)"),
                     ("idx_template_created_by_classroom", "templates", "(created_by, classroom_id)"),
                     
                     # AdminSettings indexes
-                    ("idx_admin_settings_classroom", "admin_settings", "(classroom_id)"),
+                    ("idx_admin_settings_classroom_unique", "admin_settings", "(classroom_id)"),
                     
-                    # User indexes
+                    # User indexes - Optimized for admin user queries
                     ("idx_user_active_role", "users", "(is_active, role)"),
-                    ("idx_user_created_at", "users", "(created_at DESC)"),
+                    ("idx_user_created_desc", "users", "(created_at DESC)"),
+                    ("idx_user_search_composite", "users", "(username, email, full_name)"),
+                    ("idx_user_email_lower", "users", "(lower(email))"),
                 ]
                 
                 # Create regular indexes
@@ -152,12 +159,35 @@ class DatabaseMigrationService:
                 partial_indexes = [
                     ("idx_active_user_classroom", "user_classrooms", "(classroom_id, user_id)", "is_active = true"),
                     ("idx_successful_executions", "code_submissions", "(created_at DESC, user_id, classroom_id)", "status = 'success'"),
+                    ("idx_error_executions", "code_submissions", "(created_at DESC, classroom_id)", "status = 'error'"),
                     ("idx_active_sessions", "collaboration_sessions", "(owner_id, created_at DESC)", "is_active = true"),
+                    ("idx_recent_executions", "code_submissions", "(created_at DESC, user_id)", "created_at >= CURRENT_DATE - INTERVAL '30 days'"),
+                    ("idx_active_templates", "templates", "(classroom_id, name, language)", "is_active = true"),
                 ]
                 
                 # Create partial indexes
                 for index_name, table_name, columns, where_clause in partial_indexes:
                     self._create_index_safely(connection, index_name, table_name, columns, where_clause)
+                
+                # Apply PostgreSQL-specific optimizations for Railway.app
+                railway_optimizations = [
+                    # Increase statistics target for better query plans
+                    "ALTER TABLE code_submissions ALTER COLUMN created_at SET STATISTICS 1000",
+                    "ALTER TABLE collaboration_sessions ALTER COLUMN created_at SET STATISTICS 1000", 
+                    "ALTER TABLE user_classrooms ALTER COLUMN classroom_id SET STATISTICS 1000",
+                    "ALTER TABLE users ALTER COLUMN created_at SET STATISTICS 1000",
+                    
+                    # Set fill factor for tables with frequent updates
+                    "ALTER TABLE user_classrooms SET (fillfactor = 90)",
+                    "ALTER TABLE collaboration_sessions SET (fillfactor = 90)",
+                ]
+                
+                for optimization in railway_optimizations:
+                    try:
+                        connection.execute(text(optimization))
+                        logger.info(f"Applied optimization: {optimization[:50]}...")
+                    except Exception as e:
+                        logger.warning(f"Could not apply optimization {optimization[:30]}...: {e}")
                 
                 # Update table statistics for query optimization
                 tables_to_analyze = [
