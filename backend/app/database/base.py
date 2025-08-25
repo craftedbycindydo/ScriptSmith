@@ -20,20 +20,7 @@ engine = create_engine(
     connect_args={
         "connect_timeout": 10,
         "application_name": "scripting_smith_api",
-        "options": "-c statement_timeout=30000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=300000",
-        "server_settings": {
-            "jit": "off",  # Disable JIT for Railway.app compatibility
-            "application_name": "scripting_smith_api",
-            "client_encoding": "UTF8",  # Explicit UTF8 encoding on server side
-            # PostgreSQL 2025 performance optimizations
-            "shared_preload_libraries": "pg_stat_statements",
-            "random_page_cost": "1.1",  # SSD-optimized value for Railway
-            "effective_cache_size": "1GB",  # Adjust based on Railway memory
-            "maintenance_work_mem": "256MB",
-            "checkpoint_completion_target": "0.9",
-            "wal_buffers": "16MB",
-            "default_statistics_target": "100"
-        }
+        "options": "-c statement_timeout=30000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=300000 -c jit=off",
     } if "postgresql" in settings.database_url else {}
 )
 
