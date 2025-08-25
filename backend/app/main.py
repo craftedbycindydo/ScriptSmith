@@ -259,25 +259,77 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 
 # Load other routers lazily during startup
 async def load_routers():
-    try:
-        from app.routers import code, languages, auth, collaboration, admin, assignments, templates, classroom
-        
-        app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
-        app.include_router(languages.router, prefix="/api", tags=["languages"])
-        app.include_router(code.router, prefix="/api", tags=["code"])
-        app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
-        app.include_router(admin.router, prefix="/api", tags=["admin"])
-        app.include_router(assignments.router, prefix="/api", tags=["assignments"])
-        app.include_router(templates.router, prefix="/api", tags=["templates"])
-        app.include_router(classroom.router, prefix="/api", tags=["classroom"])
-        print("✅ All routers loaded successfully")
-        print("🔗 WebSocket service running separately on dedicated microservice")
-        
-    except Exception as e:
-        print(f"⚠️  Router loading failed: {e}")
-        print("💡 Health check endpoint will still be available")
-        import traceback
-        traceback.print_exc()
+    """Load all application routers with detailed error reporting"""
+    routers_config = [
+        ("auth", "/api/auth", ["authentication"]),
+        ("languages", "/api", ["languages"]),
+        ("code", "/api", ["code"]),
+        ("collaboration", "/api", ["collaboration"]),
+        ("admin", "/api", ["admin"]),
+        ("assignments", "/api", ["assignments"]),
+        ("templates", "/api", ["templates"]),
+        ("classroom", "/api", ["classroom"])
+    ]
+    
+    loaded_routers = []
+    failed_routers = []
+    
+    for router_name, prefix, tags in routers_config:
+        try:
+            print(f"📡 Loading {router_name} router...")
+            
+            # Dynamic import with specific error handling
+            if router_name == "auth":
+                from app.routers import auth
+                app.include_router(auth.router, prefix=prefix, tags=tags)
+            elif router_name == "languages":
+                from app.routers import languages
+                app.include_router(languages.router, prefix=prefix, tags=tags)
+            elif router_name == "code":
+                from app.routers import code
+                app.include_router(code.router, prefix=prefix, tags=tags)
+            elif router_name == "collaboration":
+                from app.routers import collaboration
+                app.include_router(collaboration.router, prefix=prefix, tags=tags)
+            elif router_name == "admin":
+                from app.routers import admin
+                app.include_router(admin.router, prefix=prefix, tags=tags)
+            elif router_name == "assignments":
+                from app.routers import assignments
+                app.include_router(assignments.router, prefix=prefix, tags=tags)
+            elif router_name == "templates":
+                from app.routers import templates
+                app.include_router(templates.router, prefix=prefix, tags=tags)
+            elif router_name == "classroom":
+                from app.routers import classroom
+                app.include_router(classroom.router, prefix=prefix, tags=tags)
+            
+            loaded_routers.append(router_name)
+            print(f"  ✅ {router_name} router loaded successfully")
+            
+        except Exception as e:
+            failed_routers.append((router_name, str(e)))
+            print(f"  ❌ {router_name} router failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print(f"\n🎯 Router Loading Summary:")
+    print(f"  ✅ Loaded: {len(loaded_routers)} routers - {', '.join(loaded_routers)}")
+    if failed_routers:
+        print(f"  ❌ Failed: {len(failed_routers)} routers")
+        for name, error in failed_routers:
+            print(f"    - {name}: {error}")
+    else:
+        print("  🎉 All routers loaded successfully!")
+    
+    print("🔗 WebSocket service running separately on dedicated microservice")
+
+# Startup event to load routers
+@app.on_event("startup")
+async def startup_event():
+    """Load all routers on application startup"""
+    print("🚀 Loading application routers...")
+    await load_routers()
 
 # Root endpoint - Simplified for Railway
 @app.get("/")

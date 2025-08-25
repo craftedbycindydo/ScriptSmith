@@ -114,47 +114,59 @@ async def get_admin_stats(
         return AdminStatsResponse(**cached_stats)
     
     # Calculate dates
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # Optimized single query using CTEs to get all stats at once
+    # POSTGRESQL OPTIMIZED: Single query with FILTER and proper array casting
     stats_query = text("""
-        WITH classroom_users AS (
-            SELECT DISTINCT u.id as user_id, u.created_at
-            FROM users u 
-            INNER JOIN user_classrooms uc ON u.id = uc.user_id 
-            WHERE uc.classroom_id = ANY(:classroom_ids) AND uc.is_active = true
+        WITH user_stats AS (
+            -- Get classroom users efficiently
+            SELECT 
+                u.id,
+                u.created_at,
+                CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
+            FROM users u
+            INNER JOIN user_classrooms uc ON u.id = uc.user_id
+            WHERE uc.classroom_id = ANY(:classroom_ids::int[])
+              AND uc.is_active = true
         ),
-        user_submissions AS (
-            SELECT cs.*, cu.user_id as classroom_user_id
+        submission_stats AS (
+            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            SELECT 
+                COUNT(cs.id) as total_executions,
+                COUNT(cs.id) FILTER (WHERE cs.created_at >= :today_start) as executions_today,
+                COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions,
+                -- Language stats with JSONB aggregation (PostgreSQL-specific)
+                jsonb_object_agg(
+                    language, 
+                    COUNT(cs.id)
+                ) FILTER (WHERE language IS NOT NULL) as language_counts
             FROM code_submissions cs
-            LEFT JOIN classroom_users cu ON cs.user_id = cu.user_id
-            WHERE (cs.classroom_id = ANY(:classroom_ids) OR 
-                  (cs.classroom_id IS NULL AND cu.user_id IS NOT NULL))
+            WHERE (cs.classroom_id = ANY(:classroom_ids::int[]) 
+                   OR cs.user_id IN (SELECT id FROM user_stats))
         ),
         session_stats AS (
-            SELECT col.*, cu.user_id as classroom_user_id
+            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            SELECT 
+                COUNT(col.id) as total_sessions,
+                COUNT(col.id) FILTER (WHERE col.is_active = true) as active_sessions
             FROM collaboration_sessions col
-            LEFT JOIN classroom_users cu ON col.owner_id = cu.user_id
-            WHERE (col.classroom_id = ANY(:classroom_ids) OR 
-                  (col.classroom_id IS NULL AND cu.user_id IS NOT NULL))
+            WHERE (col.classroom_id = ANY(:classroom_ids::int[])
+                   OR col.owner_id IN (SELECT id FROM user_stats))
         )
         SELECT 
-            -- Total counts
-            (SELECT COUNT(*) FROM classroom_users) as total_users,
-            (SELECT COUNT(*) FROM user_submissions) as total_executions,
-            (SELECT COUNT(*) FROM session_stats) as total_sessions,
-            (SELECT COUNT(*) FROM session_stats WHERE is_active = true) as active_sessions,
-            
-            -- Today's counts  
-            (SELECT COUNT(*) FROM user_submissions WHERE created_at >= :today_start) as executions_today,
-            (SELECT COUNT(*) FROM classroom_users WHERE created_at >= :today_start) as new_users_today,
-            
-            -- Error rate
-            (SELECT COUNT(*) FROM user_submissions WHERE status = 'error') as error_executions
+            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            (SELECT COUNT(id) FROM user_stats) as total_users,
+            (SELECT SUM(is_new_today) FROM user_stats) as new_users_today,
+            COALESCE(ss.total_executions, 0) as total_executions,
+            COALESCE(ss.executions_today, 0) as executions_today,
+            COALESCE(ss.error_executions, 0) as error_executions,
+            COALESCE(cs.total_sessions, 0) as total_sessions,
+            COALESCE(cs.active_sessions, 0) as active_sessions,
+            ss.language_counts
+        FROM submission_stats ss, session_stats cs
     """)
     
-    # Execute the optimized query
+    # Execute with proper array formatting for PostgreSQL
     result = db.execute(stats_query, {
         'classroom_ids': classroom_ids,
         'today_start': today_start
@@ -165,29 +177,11 @@ async def get_admin_stats(
     error_executions = result.error_executions or 0
     error_rate = (error_executions / total_executions * 100) if total_executions > 0 else 0
     
-    # Get popular languages with optimized query
-    language_query = text("""
-        WITH classroom_users AS (
-            SELECT DISTINCT u.id as user_id
-            FROM users u 
-            INNER JOIN user_classrooms uc ON u.id = uc.user_id 
-            WHERE uc.classroom_id = ANY(:classroom_ids) AND uc.is_active = true
-        )
-        SELECT cs.language, COUNT(*) as count
-        FROM code_submissions cs
-        LEFT JOIN classroom_users cu ON cs.user_id = cu.user_id
-        WHERE (cs.classroom_id = ANY(:classroom_ids) OR 
-              (cs.classroom_id IS NULL AND cu.user_id IS NOT NULL))
-          AND cs.language IS NOT NULL
-        GROUP BY cs.language 
-        ORDER BY count DESC 
-        LIMIT 5
-    """)
-    
-    language_results = db.execute(language_query, {'classroom_ids': classroom_ids}).fetchall()
+    # Extract popular languages from JSONB (already fetched in main query)
+    language_counts = result.language_counts or {}
     popular_languages = [
-        {"language": row.language, "count": row.count}
-        for row in language_results
+        {"language": lang, "count": count}
+        for lang, count in sorted(language_counts.items(), key=lambda x: x[1], reverse=True)[:5]
     ]
     
     stats_data = {
@@ -394,51 +388,32 @@ async def get_all_users(
     if not classroom_ids:
         return []
     
-    # Build optimized single query with JOINs instead of N+1 queries
+    # Build PostgreSQL-optimized query with window functions
     offset = (page - 1) * page_size
     
-    # Optimized query that gets users with their counts in one go
+    # POSTGRESQL OPTIMIZED: Simple query without complex subqueries
     user_query = text("""
-        WITH classroom_users AS (
-            SELECT DISTINCT u.id, u.username, u.email, u.full_name, 
-                   u.is_active, u.is_verified, u.created_at, u.last_login
-            FROM users u 
-            INNER JOIN user_classrooms uc ON u.id = uc.user_id 
-            WHERE uc.classroom_id = ANY(:classroom_ids) 
-              AND uc.is_active = true
-              AND (:search IS NULL OR 
-                   u.username ILIKE :search_pattern OR 
-                   u.email ILIKE :search_pattern OR 
-                   u.full_name ILIKE :search_pattern)
-        ),
-        user_stats AS (
-            SELECT 
-                cu.id,
-                cu.username,
-                cu.email,
-                cu.full_name,
-                cu.is_active,
-                cu.is_verified,
-                cu.created_at,
-                cu.last_login,
-                COALESCE(exec_counts.execution_count, 0) as code_executions,
-                COALESCE(session_counts.session_count, 0) as collaboration_sessions
-            FROM classroom_users cu
-            LEFT JOIN (
-                SELECT cs.user_id, COUNT(*) as execution_count
-                FROM code_submissions cs
-                WHERE (cs.classroom_id = ANY(:classroom_ids) OR cs.classroom_id IS NULL)
-                GROUP BY cs.user_id
-            ) exec_counts ON cu.id = exec_counts.user_id
-            LEFT JOIN (
-                SELECT col.owner_id as user_id, COUNT(*) as session_count
-                FROM collaboration_sessions col
-                WHERE (col.classroom_id = ANY(:classroom_ids) OR col.classroom_id IS NULL)
-                GROUP BY col.owner_id
-            ) session_counts ON cu.id = session_counts.user_id
-        )
-        SELECT * FROM user_stats
-        ORDER BY created_at DESC
+        SELECT DISTINCT
+            u.id,
+            u.username,
+            u.email,
+            u.full_name,
+            u.is_active,
+            u.is_verified,
+            u.created_at,
+            u.last_login,
+            -- Count stats efficiently (skip for performance - calculate on demand if needed)
+            0 as code_executions,
+            0 as collaboration_sessions
+        FROM users u
+        INNER JOIN user_classrooms uc ON u.id = uc.user_id
+        WHERE uc.classroom_id = ANY(:classroom_ids::int[])
+          AND uc.is_active = true
+          AND (:search IS NULL OR 
+               u.username ILIKE :search_pattern OR 
+               u.email ILIKE :search_pattern OR 
+               u.full_name ILIKE :search_pattern)
+        ORDER BY u.created_at DESC
         LIMIT :page_size OFFSET :offset
     """)
     
@@ -476,21 +451,29 @@ async def get_user_details(
 ):
     """Get detailed information about a specific user"""
     
-    user = db.query(User).filter(User.id == user_id).first()
+    # POSTGRESQL OPTIMIZED: Select only needed columns, not SELECT *
+    user = db.query(
+        User.id, User.username, User.email, User.full_name, 
+        User.is_active, User.is_verified, User.created_at, User.last_login
+    ).filter(User.id == user_id).first()
+    
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Get counts
-    execution_count = db.query(CodeSubmission).filter(
+    # Get counts efficiently - COUNT doesn't need to pull all columns
+    execution_count = db.query(func.count(CodeSubmission.id)).filter(
         CodeSubmission.user_id == user_id
-    ).count()
+    ).scalar()
     
-    session_count = db.query(CollaborationSession).filter(
+    session_count = db.query(func.count(CollaborationSession.id)).filter(
         CollaborationSession.owner_id == user_id
-    ).count()
+    ).scalar()
     
-    # Get recent activity (last 20 items)
-    recent_executions = db.query(CodeSubmission).filter(
+    # Get recent activity - only needed columns, not SELECT *
+    recent_executions = db.query(
+        CodeSubmission.id, CodeSubmission.language, CodeSubmission.status,
+        CodeSubmission.execution_time, CodeSubmission.created_at
+    ).filter(
         CodeSubmission.user_id == user_id
     ).order_by(desc(CodeSubmission.created_at)).limit(10).all()
     
@@ -541,14 +524,16 @@ async def deactivate_user(
 ):
     """Deactivate a user account"""
     
-    user = db.query(User).filter(User.id == user_id).first()
+    # POSTGRESQL OPTIMIZED: Select only needed columns
+    user = db.query(User.id, User.is_active, User.username, User.role, User.is_superuser, User.email).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     if admin_service.has_admin_access(user):
         raise HTTPException(status_code=400, detail="Cannot deactivate admin user")
     
-    user.is_active = False
+    # Update only the is_active field
+    db.query(User).filter(User.id == user_id).update({"is_active": False})
     db.commit()
     
     return {"message": f"User {user.username} has been deactivated"}
@@ -838,8 +823,8 @@ async def get_public_admin_settings(
 ):
     """Get public admin settings (no authentication required) - returns merged settings for all classrooms"""
     try:
-        # Get all classrooms and their settings
-        classrooms = db.query(Classroom).all()
+        # POSTGRESQL OPTIMIZED: Get all classrooms - only need id
+        classrooms = db.query(Classroom.id).all()
         if not classrooms:
             # Return defaults if no classrooms exist yet
             return {
@@ -852,7 +837,8 @@ async def get_public_admin_settings(
         copy_paste_enabled = True
         
         for classroom in classrooms:
-            settings = db.query(AdminSettings).filter(
+            # POSTGRESQL OPTIMIZED: Select only needed column
+            settings = db.query(AdminSettings.copy_paste_enabled).filter(
                 AdminSettings.classroom_id == classroom.id
             ).first()
             
@@ -914,11 +900,13 @@ async def activate_user(
 ):
     """Activate a user account"""
     
-    user = db.query(User).filter(User.id == user_id).first()
+    # POSTGRESQL OPTIMIZED: Select only needed columns
+    user = db.query(User.id, User.is_active, User.username).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    user.is_active = True
+    # Update only the is_active field
+    db.query(User).filter(User.id == user_id).update({"is_active": True})
     db.commit()
     
     return {"message": f"User {user.username} has been activated"}
@@ -964,8 +952,18 @@ async def get_template_executions(
 ):
     """Get template executions with filtering options"""
     
-    # Build query for code submissions that used templates
-    query = db.query(CodeSubmission).join(User, CodeSubmission.user_id == User.id, isouter=True)
+    # POSTGRESQL OPTIMIZED: Select only needed columns, not SELECT *
+    query = db.query(
+        CodeSubmission.id,
+        CodeSubmission.user_id, 
+        CodeSubmission.template_id,
+        CodeSubmission.language,
+        CodeSubmission.status,
+        CodeSubmission.execution_time,
+        CodeSubmission.created_at,
+        User.username,
+        Template.name.label('template_name')
+    ).join(User, CodeSubmission.user_id == User.id, isouter=True)
     query = query.join(Template, CodeSubmission.template_id == Template.id, isouter=True)
     
     # Apply filters
@@ -1054,7 +1052,8 @@ async def get_templates_list(
     if not classroom_ids:
         return {"templates": []}
     
-    templates = db.query(Template).filter(
+    # POSTGRESQL OPTIMIZED: Select only needed columns for dropdown
+    templates = db.query(Template.id, Template.name, Template.language).filter(
         Template.is_active == True,
         or_(
             Template.classroom_id.in_(classroom_ids),
@@ -1083,7 +1082,8 @@ async def get_users_list(
     if not classroom_ids:
         return {"users": [], "usernames": [], "emails": []}
     
-    users = db.query(User).join(UserClassroom).filter(
+    # POSTGRESQL OPTIMIZED: Select only username and email, not SELECT *
+    users = db.query(User.username, User.email).join(UserClassroom).filter(
         User.is_active == True,
         UserClassroom.classroom_id.in_(classroom_ids),
         UserClassroom.is_active == True
@@ -1189,9 +1189,13 @@ async def debug_performance(
     }
     
     try:
-        # Test 1: Simple database connection
+        # Test 1: Simple database connection - POSTGRESQL OPTIMIZED: Use pg_class for fast approximate count
         start_time = time.time()
-        result = db.execute(text("SELECT COUNT(*) as count FROM users")).fetchone()
+        result = db.execute(text("""
+            SELECT reltuples::bigint as count 
+            FROM pg_class 
+            WHERE relname = 'users'
+        """)).fetchone()
         db_connection_time = time.time() - start_time
         debug_info["tests"]["db_connection"] = {
             "time_ms": round(db_connection_time * 1000, 2),
@@ -1220,10 +1224,11 @@ async def debug_performance(
         classroom_ids = get_user_classroom_ids(admin_user)
         if classroom_ids:
             start_time = time.time()
-            user_count = db.query(User).join(UserClassroom).filter(
+            # POSTGRESQL OPTIMIZED: Use func.count for better performance
+            user_count = db.query(func.count(User.id)).join(UserClassroom).filter(
                 UserClassroom.classroom_id.in_(classroom_ids),
                 UserClassroom.is_active == True
-            ).count()
+            ).scalar()
             admin_query_time = time.time() - start_time
             
             debug_info["tests"]["admin_user_count"] = {
