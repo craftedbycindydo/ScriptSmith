@@ -4,8 +4,8 @@ sqlalchemy==2.0.43
 psycopg2-binary==2.9.10
 redis==6.4.0
 python-multipart==0.0.20
-pydantic==2.6.4
-pydantic-settings==2.2.1
+pydantic==2.10.5
+pydantic-settings==2.7.0
 alembic==1.16.4
 python-dotenv==1.1.1
 
