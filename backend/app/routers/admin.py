@@ -116,9 +116,9 @@ async def get_admin_stats(
     # Calculate dates
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # POSTGRESQL OPTIMIZED: Single query with FILTER and proper array casting
+    # POSTGRESQL OPTIMIZED: Single query with FILTER (fixed nested aggregates)
     stats_query = text("""
-        WITH         user_stats AS (
+        WITH user_stats AS (
             -- Get classroom users efficiently
             SELECT 
                 u.id,
@@ -134,12 +134,7 @@ async def get_admin_stats(
             SELECT 
                 COUNT(cs.id) as total_executions,
                 COUNT(cs.id) FILTER (WHERE cs.created_at >= :today_start) as executions_today,
-                COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions,
-                -- Language stats with JSONB aggregation (PostgreSQL-specific)
-                jsonb_object_agg(
-                    language, 
-                    COUNT(cs.id)
-                ) FILTER (WHERE language IS NOT NULL) as language_counts
+                COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions
             FROM code_submissions cs
             WHERE (cs.classroom_id IN :classroom_ids 
                    OR cs.user_id IN (SELECT id FROM user_stats))
@@ -152,6 +147,21 @@ async def get_admin_stats(
             FROM collaboration_sessions col
             WHERE (col.classroom_id IN :classroom_ids
                    OR col.owner_id IN (SELECT id FROM user_stats))
+        ),
+        language_stats AS (
+            -- Language stats without nested aggregates
+            SELECT 
+                jsonb_object_agg(language, lang_count) as language_counts
+            FROM (
+                SELECT 
+                    cs.language,
+                    COUNT(cs.id) as lang_count
+                FROM code_submissions cs
+                WHERE (cs.classroom_id IN :classroom_ids 
+                       OR cs.user_id IN (SELECT id FROM user_stats))
+                  AND cs.language IS NOT NULL
+                GROUP BY cs.language
+            ) lang_summary
         )
         SELECT 
             -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
@@ -162,8 +172,10 @@ async def get_admin_stats(
             COALESCE(ss.error_executions, 0) as error_executions,
             COALESCE(cs.total_sessions, 0) as total_sessions,
             COALESCE(cs.active_sessions, 0) as active_sessions,
-            ss.language_counts
-        FROM submission_stats ss, session_stats cs
+            COALESCE(ls.language_counts, '{}'::jsonb) as language_counts
+        FROM submission_stats ss 
+        CROSS JOIN session_stats cs 
+        CROSS JOIN language_stats ls
     """)
     
     # Execute with tuple for PostgreSQL IN clause compatibility
