@@ -261,7 +261,9 @@ class ClassroomService:
                 "key": membership.classroom.classroom_key,
                 "role": membership.role,
                 "is_teacher": membership.role == "TEACHER",
-                "member_count": member_count
+                "member_count": member_count,
+                "created_by_id": membership.classroom.created_by_id,
+                "is_creator": membership.classroom.created_by_id == user.id
             })
             roles.append(membership.role)
         

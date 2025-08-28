@@ -20,6 +20,8 @@ export interface User {
       role: string;
       is_teacher: boolean;
       member_count: number;
+      created_by_id: number;
+      is_creator: boolean;
     }>;
     current_classroom?: {
       id: number;
@@ -28,6 +30,8 @@ export interface User {
       role: string;
       is_teacher: boolean;
       member_count: number;
+      created_by_id: number;
+      is_creator: boolean;
     };
     roles: string[];
     is_teacher: boolean;
