@@ -19,44 +19,48 @@ export const adminQueryKeys = {
   submissionStats: ['admin', 'submission-stats'] as const,
 };
 
-// Admin Stats Hook
-export function useAdminStats() {
+// Admin Stats Hook - Always enabled for instant overview load
+export function useAdminStats(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.stats,
     queryFn: () => apiService.getAdminStats(),
+    enabled,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
   });
 }
 
-// Admin Activities Hook
-export function useAdminActivities() {
+// Admin Activities Hook - Lazy load for better performance
+export function useAdminActivities(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.activities,
     queryFn: () => apiService.getAdminActivities(1, 200, undefined, undefined, undefined, undefined),
+    enabled,
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,
   });
 }
 
-// Admin Users Hook
-export function useAdminUsers() {
+// Admin Users Hook - Load for overview and users tab only
+export function useAdminUsers(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.users,
     queryFn: () => apiService.getAdminUsers(1, 100, undefined),
+    enabled,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
   });
 }
 
-// Template Executions Hook
-export function useTemplateExecutions() {
+// Template Executions Hook - Only load when viewing executions tab
+export function useTemplateExecutions(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.templateExecutions,
     queryFn: () => apiService.getTemplateExecutions(1, 200, undefined, undefined, undefined, undefined, undefined, undefined),
+    enabled,
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,
@@ -64,20 +68,22 @@ export function useTemplateExecutions() {
 }
 
 // Dropdown Options Hooks (lightweight, cached longer)
-export function useTemplatesOptions() {
+export function useTemplatesOptions(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.templatesOptions,
     queryFn: () => apiService.getTemplatesList(),
+    enabled,
     staleTime: 10 * 60 * 1000, // 10 minutes
     gcTime: 30 * 60 * 1000, // 30 minutes
     refetchOnWindowFocus: false,
   });
 }
 
-export function useUsersOptions() {
+export function useUsersOptions(enabled: boolean = true) {
   return useQuery({
     queryKey: adminQueryKeys.usersOptions,
     queryFn: () => apiService.getUsersList(),
+    enabled,
     staleTime: 10 * 60 * 1000, // 10 minutes
     gcTime: 30 * 60 * 1000, // 30 minutes
     refetchOnWindowFocus: false,

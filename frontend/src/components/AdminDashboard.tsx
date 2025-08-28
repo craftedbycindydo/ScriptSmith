@@ -256,13 +256,41 @@ export default function AdminDashboard() {
   } = useAdminSettingsStore();
   const navigate = useNavigate();
   
-  // React Query hooks - replaces direct API calls
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminStats();
-  const { data: adminUsers = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers();
-  const { data: activities = [], isLoading: activitiesLoading } = useAdminActivities();
-  const { data: templateExecutions = [], isLoading: templateExecutionsLoading } = useTemplateExecutions();
-  const { data: templatesOptions = [] } = useTemplatesOptions();
-  const { data: usersOptions = [] } = useUsersOptions();
+  // Tab state - must be declared before React Query hooks
+  const [activeTab, setActiveTab] = useState('overview');
+  
+  // SMART LAZY LOADING - Critical data loads immediately, heavy data loads on demand
+  const [heavyDataLoadTrigger, setHeavyDataLoadTrigger] = useState(false);
+  
+  // Trigger heavy data loading after page is interactive
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setHeavyDataLoadTrigger(true);
+    }, 100); // Shorter delay to ensure heavy queries load too
+    return () => clearTimeout(timer);
+  }, []);
+  
+  // React Query hooks - Stats load immediately for instant data, others lazy load
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminStats(
+    activeTab === 'overview' // Stats load immediately when on overview tab
+  );
+  
+  // Only load data when the specific tab is active AND data loading is triggered
+  const { data: adminUsers = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers(
+    activeTab === 'overview' || activeTab === 'users' // Users load immediately for overview and users tab
+  );
+  const { data: activities = [], isLoading: activitiesLoading } = useAdminActivities(
+    activeTab === 'overview' // Activities load immediately on overview tab for better UX
+  );
+  const { data: templateExecutions = [] } = useTemplateExecutions(
+    heavyDataLoadTrigger && activeTab === 'template-executions'
+  );
+  const { data: templatesOptions = [] } = useTemplatesOptions(
+    heavyDataLoadTrigger && (activeTab === 'templates' || activeTab === 'template-executions' || activeTab === 'template-submissions')
+  );
+  const { data: usersOptions = [] } = useUsersOptions(
+    heavyDataLoadTrigger && (activeTab === 'template-executions' || activeTab === 'template-submissions')
+  );
   
   // Mutations for user actions
   const toggleUserMutation = useToggleUserActivation();
@@ -272,8 +300,8 @@ export default function AdminDashboard() {
   const removeStudentMutation = useRemoveClassroomMember();
   const updateSettingsMutation = useUpdateClassroomSettings();
   
-  // Combined loading state for initial load
-  const loading = statsLoading || usersLoading || activitiesLoading || templateExecutionsLoading;
+  // INSTANT LOADING - Never block page render, show skeleton instead
+  const loading = false; // Always render page immediately
   
   // User search error state
   const [userSearchError, setUserSearchError] = useState<string | null>(null);
@@ -294,9 +322,6 @@ export default function AdminDashboard() {
   // Use React Query data directly for client-side filtering (2025 best practice)
   const allActivities = activities?.activities || [];
   const allTemplateExecutions = templateExecutions?.executions || [];
-  
-  // Tab state
-  const [activeTab, setActiveTab] = useState('overview');
   
   // Sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -421,12 +446,12 @@ export default function AdminDashboard() {
   // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
   const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
   
-  // Call classroom settings hooks at top level for each classroom
-  const classroomSettings1 = useClassroomSettings(allClassroomIds[0], allClassroomIds.length > 0);
-  const classroomSettings2 = useClassroomSettings(allClassroomIds[1], allClassroomIds.length > 1);
-  const classroomSettings3 = useClassroomSettings(allClassroomIds[2], allClassroomIds.length > 2);
-  const classroomSettings4 = useClassroomSettings(allClassroomIds[3], allClassroomIds.length > 3);
-  const classroomSettings5 = useClassroomSettings(allClassroomIds[4], allClassroomIds.length > 4);
+  // Call classroom settings hooks at top level for each classroom - Load immediately when classrooms tab is active
+  const classroomSettings1 = useClassroomSettings(allClassroomIds[0], activeTab === 'classrooms' && allClassroomIds.length > 0);
+  const classroomSettings2 = useClassroomSettings(allClassroomIds[1], activeTab === 'classrooms' && allClassroomIds.length > 1);
+  const classroomSettings3 = useClassroomSettings(allClassroomIds[2], activeTab === 'classrooms' && allClassroomIds.length > 2);
+  const classroomSettings4 = useClassroomSettings(allClassroomIds[3], activeTab === 'classrooms' && allClassroomIds.length > 3);
+  const classroomSettings5 = useClassroomSettings(allClassroomIds[4], activeTab === 'classrooms' && allClassroomIds.length > 4);
   
   // Create a map of classroom settings queries manually
   const classroomSettingsQueries: any = {};
@@ -576,12 +601,12 @@ export default function AdminDashboard() {
     setIsCreatingClassroom(false);
   };
 
-  // Call classroom members hooks at top level for each classroom
-  const classroomMembers1 = useClassroomMembers(allClassroomIds[0], expandedClassroom === allClassroomIds[0]);
-  const classroomMembers2 = useClassroomMembers(allClassroomIds[1], expandedClassroom === allClassroomIds[1]);
-  const classroomMembers3 = useClassroomMembers(allClassroomIds[2], expandedClassroom === allClassroomIds[2]);
-  const classroomMembers4 = useClassroomMembers(allClassroomIds[3], expandedClassroom === allClassroomIds[3]);
-  const classroomMembers5 = useClassroomMembers(allClassroomIds[4], expandedClassroom === allClassroomIds[4]);
+  // Call classroom members hooks at top level for each classroom - Load when classroom is expanded and tab is active
+  const classroomMembers1 = useClassroomMembers(allClassroomIds[0], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[0]);
+  const classroomMembers2 = useClassroomMembers(allClassroomIds[1], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[1]);
+  const classroomMembers3 = useClassroomMembers(allClassroomIds[2], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[2]);
+  const classroomMembers4 = useClassroomMembers(allClassroomIds[3], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[3]);
+  const classroomMembers5 = useClassroomMembers(allClassroomIds[4], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[4]);
   
   // Create a map of classroom members queries manually
   const classroomMembersQueries: any = {};
@@ -858,8 +883,12 @@ export default function AdminDashboard() {
                 <Button onClick={() => navigate('/')} variant="outline">
                   Go to IDE
                 </Button>
-                <Button onClick={loadAllData} variant="default">
-                  Refresh
+                <Button 
+                  onClick={loadAllData} 
+                  variant="default"
+                  disabled={statsLoading || activitiesLoading || usersLoading}
+                >
+                  {(statsLoading || activitiesLoading || usersLoading) ? 'Loading' : 'Refresh'}
                 </Button>
               </div>
             </div>
@@ -898,9 +927,16 @@ export default function AdminDashboard() {
 
             </div>
           </div>
-          <Button onClick={loadAllData} variant="outline" className="shrink-0">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            <span className="hidden sm:inline">Refresh</span>
+          <Button 
+            onClick={loadAllData} 
+            variant="outline" 
+            className="shrink-0"
+            disabled={statsLoading || activitiesLoading || usersLoading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${(statsLoading || activitiesLoading || usersLoading) ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">
+              {(statsLoading || activitiesLoading || usersLoading) ? 'Loading' : 'Refresh'}
+            </span>
           </Button>
         </div>
 
@@ -1074,70 +1110,105 @@ export default function AdminDashboard() {
               {activeTab === 'overview' && (
                 <div className="space-y-6">
 
-        {/* Stats Cards */}
-        {stats && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Users className="w-4 h-4 mr-2" />
-                  Total Users
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_users}</div>
-                <p className="text-xs text-muted-foreground">
-                  +{stats.new_users_today} today
-                </p>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Code className="w-4 h-4 mr-2" />
-                  Code Executions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_code_executions}</div>
-                <p className="text-xs text-muted-foreground">
-                  +{stats.executions_today} today
-                </p>
-              </CardContent>
-            </Card>
+        {/* Stats Cards - Always show, with skeleton loading */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Users className="w-4 h-4 mr-2" />
+                Total Users
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_users}</div>
+                  <p className="text-xs text-muted-foreground">
+                    +{stats.new_users_today} today
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-16 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-20 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Share2 className="w-4 h-4 mr-2" />
-                  Collaboration Sessions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_collaboration_sessions}</div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.active_sessions} active
-                </p>
-              </CardContent>
-            </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Code className="w-4 h-4 mr-2" />
+                Code Executions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_code_executions}</div>
+                  <p className="text-xs text-muted-foreground">
+                    +{stats.executions_today} today
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-20 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-24 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  Error Rate
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.error_rate_percentage}%</div>
-                <p className="text-xs text-muted-foreground">
-                  of executions
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Share2 className="w-4 h-4 mr-2" />
+                Collaboration Sessions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_collaboration_sessions}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {stats.active_sessions} active
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-16 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-20 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                Error Rate
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.error_rate_percentage}%</div>
+                  <p className="text-xs text-muted-foreground">
+                    of executions
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-12 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-24 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Popular Languages */}
         {stats && stats.popular_languages.length > 0 && (
@@ -1174,7 +1245,11 @@ export default function AdminDashboard() {
                         <Activity className="w-5 h-5 mr-2" />
                         User Activities
                       </span>
-                      <Badge variant="outline">{filteredActivities.length} shown</Badge>
+                      {activities.length > 0 ? (
+                        <Badge variant="outline">{filteredActivities.length} shown</Badge>
+                      ) : (
+                        <div className="bg-muted rounded h-6 w-16 animate-pulse"></div>
+                      )}
                     </CardTitle>
                 
                 {/* Filters */}
@@ -1221,7 +1296,36 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                                          {getFilteredActivities().slice((currentPage - 1) * pageSize, currentPage * pageSize).map((activity) => (
+                  {activities.length === 0 && activitiesLoading ? (
+                    // Skeleton loading for activities
+                    [...Array(5)].map((_, i) => (
+                      <div key={i} className="border rounded-lg p-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start space-x-3 flex-1">
+                            <div className="w-4 h-4 bg-muted rounded animate-pulse"></div>
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <div className="bg-muted rounded h-4 w-24 animate-pulse"></div>
+                                <div className="bg-muted rounded h-5 w-20 animate-pulse"></div>
+                                <div className="bg-muted rounded h-5 w-16 animate-pulse"></div>
+                              </div>
+                              <div className="bg-muted rounded h-3 w-32 animate-pulse"></div>
+                              <div className="bg-muted rounded h-3 w-40 animate-pulse mt-1"></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : activities.length === 0 ? (
+                    // Empty state when no activities and not loading
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p className="text-lg font-medium text-foreground mb-2">No activities yet</p>
+                      <p className="text-sm">Activity data will appear here once users start interacting with the platform</p>
+                    </div>
+                  ) : (
+                    // Actual activities
+                    getFilteredActivities().slice((currentPage - 1) * pageSize, currentPage * pageSize).map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3">
@@ -1268,7 +1372,8 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    ))
+                  )}
                 </div>
                 
                 {/* Pagination */}
@@ -1888,6 +1993,8 @@ export default function AdminDashboard() {
 
               {activeTab === 'template-executions' && (
                 <div className="space-y-6">
+
+                  
                   {/* Template Executions Section */}
                   <Card>
                     <CardHeader>
@@ -2263,70 +2370,104 @@ export default function AdminDashboard() {
               {activeTab === 'overview' && (
                 <div className="space-y-6">
 
-        {/* Stats Cards */}
-        {stats && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Users className="w-4 h-4 mr-2" />
-                  Total Users
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_users}</div>
-                <p className="text-xs text-muted-foreground">
-                  +{stats.new_users_today} today
-                </p>
-              </CardContent>
-            </Card>
+        {/* Stats Cards - Mobile version with skeleton loading */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Users className="w-4 h-4 mr-2" />
+                Total Users
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_users}</div>
+                  <p className="text-xs text-muted-foreground">
+                    +{stats.new_users_today} today
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-16 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-20 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Code className="w-4 h-4 mr-2" />
-                  Code Executions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_code_executions}</div>
-                <p className="text-xs text-muted-foreground">
-                  +{stats.executions_today} today
-                </p>
-              </CardContent>
-            </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Code className="w-4 h-4 mr-2" />
+                Code Executions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_code_executions}</div>
+                  <p className="text-xs text-muted-foreground">
+                    +{stats.executions_today} today
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-20 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-24 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <Share2 className="w-4 h-4 mr-2" />
-                  Collaboration Sessions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.total_collaboration_sessions}</div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.active_sessions} active
-                </p>
-              </CardContent>
-            </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <Share2 className="w-4 h-4 mr-2" />
+                Collaboration Sessions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.total_collaboration_sessions}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {stats.active_sessions} active
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-16 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-20 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center">
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  Error Rate
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.error_rate_percentage}%</div>
-                <p className="text-xs text-muted-foreground">
-                  of executions
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center">
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                Error Rate
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats ? (
+                <>
+                  <div className="text-2xl font-bold">{stats.error_rate_percentage}%</div>
+                  <p className="text-xs text-muted-foreground">
+                    of executions
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold bg-muted rounded h-8 w-12 animate-pulse"></div>
+                  <div className="text-xs bg-muted rounded h-4 w-24 animate-pulse mt-1"></div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Popular Languages */}
         {stats && stats.popular_languages.length > 0 && (
