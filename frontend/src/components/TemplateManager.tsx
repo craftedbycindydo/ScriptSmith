@@ -12,6 +12,7 @@ import CodeEditor from './CodeEditor';
 import { apiService } from '@/services/api';
 import type { TemplateCreate, TemplateUpdate, TemplateListItem, TemplateStats, ClassroomInfo, UserInfo } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
+import { parseDate } from '@/lib/dateUtils';
 import { 
   Plus, 
   Save, 
@@ -161,7 +162,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         submission_deadline: fullTemplate.submission_deadline ? 
-          new Date(fullTemplate.submission_deadline + (fullTemplate.submission_deadline.endsWith('Z') ? '' : 'Z')) : undefined,
+          parseDate(fullTemplate.submission_deadline) || undefined : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
           .map(exclusion => ({
@@ -325,7 +326,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         submission_deadline: fullTemplate.submission_deadline ? 
-          new Date(fullTemplate.submission_deadline + (fullTemplate.submission_deadline.endsWith('Z') ? '' : 'Z')) : undefined,
+          parseDate(fullTemplate.submission_deadline) || undefined : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
           .map(exclusion => ({
@@ -733,7 +734,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                             </div>
                             <div className="flex-shrink-0">
                               <DateTimePicker
-                                value={new Date(exclusion.deadline + (exclusion.deadline.endsWith('Z') ? '' : 'Z'))}
+                                value={parseDate(exclusion.deadline) || new Date()}
                                 onChange={(date) => date && updateExclusionDeadline(exclusion.user_id, date)}
                                 placeholder="Custom deadline"
                               />

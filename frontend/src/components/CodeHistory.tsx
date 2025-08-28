@@ -42,7 +42,30 @@ export default function CodeHistory({ onLoadCode, allCodeHistory = [], loading: 
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString + (dateString.endsWith('Z') ? '' : 'Z')).toLocaleString();
+    if (!dateString || dateString.trim() === '') {
+      return 'No date available';
+    }
+    
+    try {
+      // Handle both Z and +00:00 timezone formats
+      let formattedDateString = dateString;
+      
+      // If date already has timezone info (+00:00, +05:30, Z, etc.), use as-is
+      if (dateString.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dateString)) {
+        formattedDateString = dateString;
+      } else {
+        // If no timezone info, assume UTC and add Z
+        formattedDateString = dateString + 'Z';
+      }
+      
+      const date = new Date(formattedDateString);
+      if (isNaN(date.getTime())) {
+        return 'Invalid date format';
+      }
+      return date.toLocaleString();
+    } catch {
+      return 'Invalid date format';
+    }
   };
 
   const formatDuration = (seconds?: number) => {

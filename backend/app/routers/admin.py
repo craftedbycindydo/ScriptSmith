@@ -367,7 +367,7 @@ async def get_user_activities(
             email=activity["email"],
             activity_type=activity["activity_type"],
             activity_data=activity["activity_data"],
-            timestamp=activity["timestamp"].isoformat() if activity["timestamp"] else "",
+            timestamp=activity["timestamp"].isoformat() if activity["timestamp"] else None,
             status=activity["status"],
             error_message=activity["error_message"]
         ))
@@ -403,7 +403,7 @@ async def get_all_users(
     # Build PostgreSQL-optimized query with window functions
     offset = (page - 1) * page_size
     
-    # POSTGRESQL OPTIMIZED: Simple query with IN clause for better compatibility
+    # POSTGRESQL OPTIMIZED: Include actual counts with LEFT JOINs for accuracy
     user_query = text("""
         SELECT DISTINCT
             u.id,
@@ -414,11 +414,28 @@ async def get_all_users(
             u.is_verified,
             u.created_at,
             u.last_login,
-            -- Count stats efficiently (skip for performance - calculate on demand if needed)
-            0 as code_executions,
-            0 as collaboration_sessions
+            COALESCE(cs.execution_count, 0) as code_executions,
+            COALESCE(col.session_count, 0) as collaboration_sessions
         FROM users u
         INNER JOIN user_classrooms uc ON u.id = uc.user_id
+        LEFT JOIN (
+            SELECT user_id, COUNT(id) as execution_count
+            FROM code_submissions
+            WHERE (classroom_id IN :classroom_ids OR user_id IN (
+                SELECT DISTINCT user_id FROM user_classrooms 
+                WHERE classroom_id IN :classroom_ids AND is_active = true
+            ))
+            GROUP BY user_id
+        ) cs ON u.id = cs.user_id
+        LEFT JOIN (
+            SELECT owner_id, COUNT(id) as session_count
+            FROM collaboration_sessions
+            WHERE (classroom_id IN :classroom_ids OR owner_id IN (
+                SELECT DISTINCT user_id FROM user_classrooms 
+                WHERE classroom_id IN :classroom_ids AND is_active = true
+            ))
+            GROUP BY owner_id
+        ) col ON u.id = col.owner_id
         WHERE uc.classroom_id IN :classroom_ids
           AND uc.is_active = true
           AND (:search IS NULL OR 

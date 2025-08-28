@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
 import { useTheme } from '@/contexts/ThemeContext';
+import { formatDateOnly } from '@/lib/dateUtils';
 import { 
   useCodeHistory,
   useUserSubmissions,
@@ -269,7 +270,7 @@ export default function Settings() {
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Member Since</label>
-                <p className="text-lg">{new Date((user?.created_at || '') + ((user?.created_at && user.created_at.endsWith('Z')) ? '' : 'Z')).toLocaleDateString()}</p>
+                <p className="text-lg">{formatDateOnly(user?.created_at)}</p>
               </div>
             </CardContent>
           </Card>
@@ -415,7 +416,7 @@ export default function Settings() {
                         </div>
                         <div>
                           <label className="text-sm font-medium text-muted-foreground">Member Since</label>
-                          <p className="text-lg">{new Date((user?.created_at || '') + ((user?.created_at && user.created_at.endsWith('Z')) ? '' : 'Z')).toLocaleDateString()}</p>
+                          <p className="text-lg">{formatDateOnly(user?.created_at)}</p>
                         </div>
                       </div>
                     </CardContent>

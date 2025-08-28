@@ -30,6 +30,7 @@ import {
   useUpdateClassroomSettings
 } from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
+import { formatDate } from '@/lib/dateUtils';
 import AssignmentUpload from './AssignmentUpload';
 import AssignmentReports from './AssignmentReports';
 import TemplateManager from './TemplateManager';
@@ -123,7 +124,7 @@ function ClassroomMembersList({
                 {member.email}
               </div>
               <div className="text-xs text-muted-foreground">
-                Joined: {new Date(member.joined_at + (member.joined_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
+                Joined: {formatDate(member.joined_at)}
               </div>
             </div>
             {member.role !== 'TEACHER' && (
@@ -418,7 +419,7 @@ export default function AdminDashboard() {
   };
 
   // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
-  const allClassroomIds = user?.classroom_context?.classrooms?.map((c: any) => c.id) || [];
+  const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
   
   // Call classroom settings hooks at top level for each classroom
   const classroomSettings1 = useClassroomSettings(allClassroomIds[0], allClassroomIds.length > 0);
@@ -453,24 +454,24 @@ export default function AdminDashboard() {
       await updateSettingsMutation.mutateAsync({
         classroomId,
         settings: {
-          copy_paste_enabled: enabled,
-          notes: `Copy-paste ${enabled ? 'enabled' : 'disabled'} by ${user?.username} for classroom ${classroomId}`
+        copy_paste_enabled: enabled,
+        notes: `Copy-paste ${enabled ? 'enabled' : 'disabled'} by ${user?.username} for classroom ${classroomId}`
         }
       });
-      
-      // Set inline success notification
-      setClassroomNotifications(prev => ({
-        ...prev,
-        [classroomId]: {
-          message: `Copy-paste ${enabled ? 'enabled' : 'disabled'} successfully`,
-          type: 'success'
-        }
-      }));
-      
-      // Clear notification after 3 seconds
-      setTimeout(() => {
-        setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
-      }, 3000);
+        
+        // Set inline success notification
+        setClassroomNotifications(prev => ({
+          ...prev,
+          [classroomId]: {
+            message: `Copy-paste ${enabled ? 'enabled' : 'disabled'} successfully`,
+            type: 'success'
+          }
+        }));
+        
+        // Clear notification after 3 seconds
+        setTimeout(() => {
+          setClassroomNotifications(prev => ({ ...prev, [classroomId]: null }));
+        }, 3000);
     } catch (error: any) {
       console.error(`Failed to update classroom ${classroomId} copy-paste setting:`, error);
       
@@ -713,7 +714,7 @@ export default function AdminDashboard() {
       loadAdminSettings(isAuthenticated);
       
       // Initialize WebSocket with user and classroom context
-      const classroomIds = user?.classroom_context?.classrooms?.map((c: any) => c.id) || [];
+      const classroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
       initializeWebSocket(user?.id, classroomIds);
       
       // Debug: Log user data to understand classroom context
@@ -741,10 +742,6 @@ export default function AdminDashboard() {
   }, [isAuthenticated, isAdmin]); // Only trigger on auth/admin change, NOT filter changes
   
   // REMOVED: No more useEffect hooks for filter changes - all filtering is now client-side!
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString + (dateString.endsWith('Z') ? '' : 'Z')).toLocaleString();
-  };
 
   const getActivityIcon = (type: string) => {
     switch (type) {
@@ -886,15 +883,10 @@ export default function AdminDashboard() {
             </h1>
             <div className="space-y-1">
               <p className="text-muted-foreground text-sm lg:text-base">Monitor system activity and manage users</p>
-              {user?.classroom_context?.current_classroom && (
+              {user?.classroom_context?.classrooms && user.classroom_context.classrooms.length > 0 && (
                 <div className="flex items-center text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground mr-1">Classroom:</span>
-                  {user.classroom_context.current_classroom.name}
-                  <Badge variant="outline" className="ml-2 text-xs">
-                    {user.classroom_context.current_classroom.role}
-                  </Badge>
-                  <span className="mx-2">•</span>
-                  <span>{user.classroom_context.current_classroom.member_count} members</span>
+                  <span className="font-medium text-foreground mr-1">Classrooms:</span>
+                  <span>{user.classroom_context.classrooms.map(classroom => classroom.name).join(', ')}</span>
                 </div>
               )}
               {user?.classroom_context && !user.classroom_context.has_classroom && (
@@ -1466,7 +1458,7 @@ export default function AdminDashboard() {
                             Classroom Management
                           </CardTitle>
                           <p className="text-muted-foreground text-sm mt-1">
-                            Manage classrooms, members, and classroom-specific settings
+                            Manage all classrooms you're a member of. Shows both created classrooms and joined classrooms.
                           </p>
                         </div>
                         <Button 
@@ -1579,6 +1571,26 @@ export default function AdminDashboard() {
 
                         {user?.classroom_context?.classrooms && user.classroom_context.classrooms.length > 0 ? (
                           <div className="space-y-4">
+                            {/* Classroom Summary */}
+                            <div className="bg-muted/50 rounded-lg p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h4 className="font-medium text-sm">Your Classroom Access</h4>
+                                  <p className="text-muted-foreground text-xs mt-1">
+                                    {user.classroom_context.classrooms.filter(c => c.is_creator).length} created • {user.classroom_context.classrooms.filter(c => !c.is_creator).length} joined • {user.classroom_context.classrooms.length} total
+                                  </p>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                    Creator
+                                  </Badge>
+                                  <Badge variant="secondary" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                    Member
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
+                            
                             {user.classroom_context.classrooms.map((classroom) => (
                             <div key={classroom.id} className="border rounded-lg">
                               <div 
@@ -1593,6 +1605,16 @@ export default function AdminDashboard() {
                                         <Badge variant="outline" className="text-xs">
                                           {classroom.role}
                                         </Badge>
+                                        {classroom.is_creator && (
+                                          <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                            Creator
+                                          </Badge>
+                                        )}
+                                        {!classroom.is_creator && (
+                                          <Badge variant="secondary" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                            Member
+                                          </Badge>
+                                        )}
                                         {expandedClassroom === classroom.id ? (
                                           <ChevronDown className="w-4 h-4 text-muted-foreground" />
                                         ) : (
