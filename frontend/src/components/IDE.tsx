@@ -451,7 +451,7 @@ export default function IDE() {
 
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-[calc(100vh-56px)] flex flex-col bg-background">
       {/* Toolbar */}
       <div className="border-b bg-card flex-shrink-0">
         <div className="px-4 py-3 md:px-6 lg:px-8">
