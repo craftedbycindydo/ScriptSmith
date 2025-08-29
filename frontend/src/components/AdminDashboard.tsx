@@ -2951,9 +2951,8 @@ export default function AdminDashboard() {
                                 </div>
                                 
                                 {execution.error_message && (
-                                  <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
-                                    {execution.error_message.slice(0, 80)}
-                                    {execution.error_message.length > 80 && '...'}
+                                  <div className="text-xs text-destructive bg-destructive/10 p-2 rounded max-h-20 overflow-y-auto">
+                                    {execution.error_message}
                                   </div>
                                 )}
                               </div>
@@ -2978,14 +2977,11 @@ export default function AdminDashboard() {
                                   {/* Code Preview */}
                                   <div className="bg-background border rounded-lg">
                                     <div className="border-b px-3 py-2 bg-muted/30">
-                                      <h5 className="text-xs font-medium">Code Preview</h5>
+                                      <h5 className="text-xs font-medium">Code</h5>
                                     </div>
-                                    <div className="p-3 max-h-32 overflow-y-auto">
+                                    <div className="p-3 max-h-64 overflow-y-auto">
                                       <pre className="text-xs bg-muted/50 p-2 rounded overflow-x-auto">
-                                        <code>{execution.code.slice(0, 200)}</code>
-                                        {execution.code.length > 200 && (
-                                          <span className="text-muted-foreground">... (truncated)</span>
-                                        )}
+                                        <code>{execution.code}</code>
                                       </pre>
                                     </div>
                                   </div>
@@ -2996,20 +2992,18 @@ export default function AdminDashboard() {
                                       <div className="border-b px-3 py-2 bg-muted/30">
                                         <h5 className="text-xs font-medium">Output</h5>
                                       </div>
-                                      <div className="p-3 max-h-32 overflow-y-auto">
+                                      <div className="p-3 max-h-48 overflow-y-auto">
                                         {execution.output && (
                                           <pre className="text-xs bg-green-50 dark:bg-green-950/20 p-2 rounded overflow-x-auto mb-2">
                                             <code className="text-green-800 dark:text-green-200">
-                                              {execution.output.slice(0, 200)}
-                                              {execution.output.length > 200 && '...'}
+                                              {execution.output}
                                             </code>
                                           </pre>
                                         )}
                                         {execution.error_message && (
                                           <pre className="text-xs bg-red-50 dark:bg-red-950/20 p-2 rounded overflow-x-auto">
                                             <code className="text-red-800 dark:text-red-200">
-                                              {execution.error_message.slice(0, 200)}
-                                              {execution.error_message.length > 200 && '...'}
+                                              {execution.error_message}
                                             </code>
                                           </pre>
                                         )}
@@ -3023,10 +3017,9 @@ export default function AdminDashboard() {
                                       <div className="border-b px-3 py-2 bg-muted/30">
                                         <h5 className="text-xs font-medium">Input Data</h5>
                                       </div>
-                                      <div className="p-3">
+                                      <div className="p-3 max-h-32 overflow-y-auto">
                                         <pre className="text-xs bg-muted/50 p-2 rounded overflow-x-auto">
-                                          <code>{execution.input_data.slice(0, 100)}</code>
-                                          {execution.input_data.length > 100 && '...'}
+                                          <code>{execution.input_data}</code>
                                         </pre>
                                       </div>
                                     </div>
