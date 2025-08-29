@@ -285,15 +285,15 @@ Code to analyze:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are an expert code grader. Grade each submission fairly and consistently. Return grades in the exact JSON format requested."
+                            "content": "You are an expert code grader using deterministic scoring methods. Compute sub-scores mathematically and return grades in the exact JSON format with evidence."
                         },
                         {
                             "role": "user", 
                             "content": prompt
                         }
                     ],
-                    "max_tokens": 2000,
-                    "temperature": 0.1
+                    "max_tokens": 4000,  # Increased for detailed sub-scores, evidence, and feedback
+                    "temperature": 0.0   # Maximum determinism for consistent grading
                 }
                 
                 # Use reasonable timeout for batch grading
@@ -346,49 +346,127 @@ Code to analyze:
         grade_scale: int, 
         leniency: int
     ) -> str:
-        """Create a comprehensive prompt for batch grading"""
-        
-        leniency_desc = "very strict" if leniency < 30 else "strict" if leniency < 50 else "moderate" if leniency < 70 else "lenient"
+        """Create a deterministic, evidence-based prompt for batch grading"""
         
         template_code = template_info.get('code_content', '')
+        template_name = template_info.get('name', 'Code Assignment')
+        language = template_info.get('language', 'Unknown')
+        description = template_info.get('description', 'No description provided')
+        
+        # Base scoring weights (sum to 1.0)
+        base_weights = {
+            "correctness": 0.65,  # Did it fulfill template instructions/requirements?
+            "robustness": 0.10,   # Handles edge cases, avoids crashes
+            "quality": 0.15,      # Variable/function naming, code structure (NOT student comments)
+            "effort": 0.10        # Complexity of attempt, debugging signs (NOT student comments)
+        }
         
         prompt = f"""
-Grade the following {len(submissions)} code submissions for this assignment:
+You are an expert {language} instructor grading {len(submissions)} code submissions **individually**.
 
-TEMPLATE INFORMATION:
-- Name: {template_info.get('name', 'Code Assignment')}
-- Language: {template_info.get('language', 'Unknown')}
-- Description: {template_info.get('description', 'No description provided')}
+ASSIGNMENT
+- Template: {template_name}
+- Language: {language}
+- Description: {description}
 
-ORIGINAL TEMPLATE/ASSIGNMENT CODE:
-```{template_info.get('language', '')}
+REFERENCE TEMPLATE (contains assignment instructions)
+```{language}
 {template_code}
 ```
 
-GRADING SCALE: Each submission will be graded from 0 to {grade_scale} points.
+⚠️ **CRITICAL DISTINCTION - COMMENTS:**
+- **Template comments**: These are ASSIGNMENT INSTRUCTIONS that define what students should implement. Use these to evaluate correctness.
+- **Student comments**: These should be COMPLETELY IGNORED in all scoring. Do not consider student comments for any grading criteria.
 
-LENIENCY SETTING: {leniency}% leniency ({leniency_desc} grading)
-- This affects how forgiving you should be with minor style/formatting issues
-- Higher leniency = more forgiving, lower leniency = more strict
-- ALWAYS give full points for correct output regardless of leniency
+GRADING SCALE
+0 to {grade_scale} points per student.
 
-GRADING GUIDELINES:
-1. PERFECT CODE (Correct output + good style): {grade_scale} points
-2. WORKING CODE (Correct output, any style): {grade_scale - 5} to {grade_scale} points  
-3. MOSTLY WORKING (Minor output differences): {int(grade_scale * 0.8)} to {grade_scale - 6} points
-4. PARTIAL WORKING (Some logic correct): {int(grade_scale * 0.6)} to {int(grade_scale * 0.79)} points
-5. SHOWS EFFORT (Major errors but tries): {int(grade_scale * 0.3)} to {int(grade_scale * 0.59)} points
-6. MINIMAL EFFORT (Very basic attempt): {int(grade_scale * 0.1)} to {int(grade_scale * 0.29)} points
-7. NO SUBMISSION OR BROKEN: 0 points
+You must compute sub-scores first, then the final score:
 
-CRITICAL RULE: If student code produces the EXACT same output as the template, give {grade_scale} points (full credit).
+- **correctness**: did it fulfill the template instructions and produce expected behavior/output?
+- **robustness**: handles edge cases, avoids crashes for plausible inputs  
+- **quality**: clarity, structure, modularity, meaningful naming (IGNORE student comments completely)
+- **effort**: evidence of thoughtful attempt (non-trivial logic, meaningful approach, debugging attempts - IGNORE student comments)
 
-LENIENCY APPLICATION:
-- High leniency ({leniency}% ≥ 70): Be generous with partial credit, overlook style issues
-- Medium leniency (30% ≤ {leniency}% < 70): Standard grading, some tolerance for style
-- Low leniency ({leniency}% < 30): Strict grading, deduct for style and minor issues
+LENIENCY = {leniency}% (0–100)
 
-SUBMISSIONS TO GRADE:
+Leniency adjusts only quality and robustness weightings (not correctness).
+
+Recalculate effective weights as:
+- quality_eff = {base_weights['quality']} * (1 - {leniency}/100)
+- robustness_eff = {base_weights['robustness']} * (1 - {leniency}/100)
+
+Shift the removed mass equally to correctness and effort:
+- delta = ({base_weights['quality']} * ({leniency}/100) + {base_weights['robustness']} * ({leniency}/100))
+- correctness_eff = {base_weights['correctness']} + delta * 0.85
+- effort_eff = {base_weights['effort']} + delta * 0.15
+
+Normalize so all effective weights sum to 1.0 before scoring.
+
+EVALUATION METHOD (deterministic)
+
+Compare each student's code to the template requirements in two ways:
+a. **Behavior**: compare given output to expected output; if outputs differ, describe concrete mismatches. If an error was raised, classify: syntax / runtime / logic.
+b. **Implementation vs Instructions**: compare student's approach to template requirements (which may be specified in template comments). Check if required functions/features are present, algorithmic steps match instructions, data structures follow specifications. Prefer logical compliance over superficial token differences.
+
+⚠️ **CRITICAL: IGNORE STUDENT COMMENTS ONLY** - Student comments should be completely ignored in all scoring. However, template comments are assignment instructions that define correctness criteria.
+
+Compute sub-scores on a 0–1 scale:
+
+- **correctness**: 1.0 for fully correct implementation of template instructions (which may be in template comments); partial credit if major functions pass or output matches requirements; 0 if non-running or unrelated to template requirements.
+- **robustness**: credit for handling edge cases, avoiding obvious crashes, reasonable error handling.
+- **quality**: meaningful variable/function names, code decomposition/structure, readable flow (do NOT consider STUDENT comments at all; do not nitpick cosmetic style).
+- **effort**: credit non-trivial attempts (e.g., multiple functions, visible debugging attempts, tests, iterative logic), even if buggy (do NOT consider STUDENT comments as effort indicators).
+
+Final score = round( {grade_scale} * Σ(effective_weight_i * subscore_i) , 1 ).
+
+Round to 1 decimal place to allow differentiation without randomness.
+
+Identical work may receive identical scores, but you MUST mark "identical_to" with the matching username and explain why.
+
+BANDING (for human readability; derived from the computed score, not vice versa)
+- {int(0.90*grade_scale)}–{grade_scale}: fully correct or tiny nits
+- {int(0.75*grade_scale)}–{int(0.89*grade_scale)}: correct with small gaps  
+- {int(0.50*grade_scale)}–{int(0.74*grade_scale)}: partially working
+- {int(0.20*grade_scale)}–{int(0.49*grade_scale)}: attempted with significant errors
+- 0–{int(0.19*grade_scale)}: minimal/irrelevant
+
+RETURN FORMAT — JSON ONLY
+Return only this JSON (no prose outside JSON). Use an array so we can handle any number of submissions.
+
+{{
+  "scale_max": {grade_scale},
+  "leniency": {leniency},
+  "weights_effective": {{
+    "correctness": "<computed float 0–1>",
+    "robustness": "<computed float 0–1>",
+    "quality": "<computed float 0–1>",
+    "effort": "<computed float 0–1>"
+  }},
+  "results": [
+    {{
+      "username": "<student username>",
+      "status": "<as provided>",
+      "score": "<number 0–{grade_scale} rounded to 1 decimal>",
+      "subscores": {{
+        "correctness": "<0–1>",
+        "robustness": "<0–1>", 
+        "quality": "<0–1>",
+        "effort": "<0–1>"
+      }},
+      "evidence": {{
+        "output_match": "describe exact matches/diffs vs expected (or 'no expected output provided')",
+        "error_type": "<none | syntax | runtime | logic>",
+        "notable_diffs_from_template": ["short bullets of structural differences"],
+        "testlike_reasoning": "which parts appear correct/incorrect and why"
+      }},
+      "identical_to": "<username if truly identical, else null>",
+      "feedback": "two to three specific, actionable suggestions to improve"
+    }}
+  ]
+}}
+
+SUBMISSIONS
 """
         
         for i, submission in enumerate(submissions, 1):
@@ -402,7 +480,7 @@ SUBMISSIONS TO GRADE:
 Student {i}: {username}
 Status: {status}
 Code:
-```{template_info.get('language', '')}
+```{language}
 {code}
 ```
 Output: {output}
@@ -412,29 +490,31 @@ Error: {error}
 """
         
         prompt += f"""
-FINAL INSTRUCTIONS:
-- Grade each submission from 0 to {grade_scale} points
-- If code output matches template output exactly: give {grade_scale} points
-- If code works but has style differences: give {grade_scale - 2} to {grade_scale} points
-- Apply leniency setting: {leniency}% ({"be generous" if leniency > 70 else "be moderate" if leniency > 50 else "be strict"})
 
-Return your grades in this EXACT JSON format:
-{{
-  "grades": {{
-    "{submissions[0].get('username', 'Student1')}": <number between 0 and {grade_scale}>,
-    "{submissions[1].get('username', 'Student2') if len(submissions) > 1 else 'StudentX'}": <number between 0 and {grade_scale}>
-    // ... for all students
-  }},
-  "reasoning": "Brief explanation of grading approach and why each grade was given"
-}}
+IMPORTANT:
 
-REMEMBER: Maximum possible grade is {grade_scale} points. Perfect working code = {grade_scale} points.
-Return ONLY the JSON, no other text.
+- Grade each student independently using the deterministic method above.
+- Do not invent tests; rely on provided output/error + structural comparison.  
+- Avoid stylistic nitpicks unless leniency is very low (which the weights already capture).
+- If two works are identical, set "identical_to" and explain; otherwise, do not force differences.
+- **Return JSON only.**
+
+FINAL CHECKLIST:
+1. Compute effective weights (quality_eff, robustness_eff, correctness_eff, effort_eff) 
+2. Normalize weights to sum to 1.0
+3. For each student: compare behavior + implementation to template requirements
+4. Compute 4 sub-scores (0–1 scale) with evidence
+5. Calculate final score = round({grade_scale} * weighted_sum, 1)
+6. Mark identical work with "identical_to"
+7. Provide specific feedback per student
+8. **CRITICAL: Template comments = assignment instructions (USE for grading). Student comments = ignore completely (DO NOT use for grading).**
+
+Return ONLY the JSON array format specified above.
 """
         return prompt
     
     def _parse_batch_grading_response(self, response: Dict[str, Any], submissions: list) -> Dict[str, Any]:
-        """Parse OpenAI batch grading response and extract grades"""
+        """Parse OpenAI batch grading response with new deterministic format"""
         try:
             content = response["choices"][0]["message"]["content"].strip()
             
@@ -448,41 +528,123 @@ Return ONLY the JSON, no other text.
                 json_str = json_match.group()
                 try:
                     parsed_data = json.loads(json_str)
-                    grades = parsed_data.get("grades", {})
                     
-                    # Validate and clean grades
-                    cleaned_grades = {}
-                    for submission in submissions:
-                        username = submission.get('username', '')
-                        if username in grades:
-                            try:
-                                grade = float(grades[username])
-                                cleaned_grades[username] = max(0, grade)  # Ensure non-negative
-                            except (ValueError, TypeError):
+                    # Handle new array-based format with detailed scoring
+                    if "results" in parsed_data and isinstance(parsed_data["results"], list):
+                        cleaned_grades = {}
+                        feedback_details = []
+                        
+                        for result in parsed_data["results"]:
+                            username = result.get("username", "")
+                            if username:
+                                try:
+                                    # Extract score (could be string or number)
+                                    score_raw = result.get("score", 0)
+                                    if isinstance(score_raw, str):
+                                        score = float(score_raw)
+                                    else:
+                                        score = float(score_raw)
+                                    
+                                    # Ensure score is within bounds
+                                    max_scale = parsed_data.get("scale_max", 100)
+                                    score = max(0, min(score, max_scale))
+                                    cleaned_grades[username] = score
+                                    
+                                    # Collect detailed feedback for reasoning
+                                    evidence = result.get("evidence", {})
+                                    feedback = result.get("feedback", "")
+                                    subscores = result.get("subscores", {})
+                                    
+                                    feedback_detail = f"{username}: {score}/{max_scale} points"
+                                    if subscores:
+                                        subscore_str = ", ".join([f"{k}: {v}" for k, v in subscores.items()])
+                                        feedback_detail += f" (sub-scores: {subscore_str})"
+                                    if feedback:
+                                        feedback_detail += f" - {feedback}"
+                                    feedback_details.append(feedback_detail)
+                                    
+                                except (ValueError, TypeError):
+                                    cleaned_grades[username] = 0
+                                    feedback_details.append(f"{username}: 0 points (parsing error)")
+                        
+                        # Ensure all submissions have grades
+                        for submission in submissions:
+                            username = submission.get('username', '')
+                            if username not in cleaned_grades:
                                 cleaned_grades[username] = 0
-                        else:
-                            cleaned_grades[username] = 0
+                                feedback_details.append(f"{username}: 0 points (not found in results)")
+                        
+                        # Build comprehensive reasoning
+                        weights_info = parsed_data.get("weights_effective", {})
+                        leniency_info = parsed_data.get("leniency", 0)
+                        reasoning = f"Deterministic AI grading (leniency: {leniency_info}%, weights: {weights_info}). Individual results: " + "; ".join(feedback_details)
+                        
+                        return {
+                            "grades": cleaned_grades,
+                            "reasoning": reasoning,
+                            "available": True,
+                            "errors": [],
+                            "metadata": {
+                                "weights_effective": weights_info,
+                                "leniency": leniency_info,
+                                "scale_max": parsed_data.get("scale_max", 100)
+                            }
+                        }
                     
+                    # Fallback: handle legacy format with direct grades dict
+                    elif "grades" in parsed_data:
+                        grades = parsed_data.get("grades", {})
+                        cleaned_grades = {}
+                        
+                        for submission in submissions:
+                            username = submission.get('username', '')
+                            if username in grades:
+                                try:
+                                    grade = float(grades[username])
+                                    cleaned_grades[username] = max(0, grade)
+                                except (ValueError, TypeError):
+                                    cleaned_grades[username] = 0
+                            else:
+                                cleaned_grades[username] = 0
+                        
+                        return {
+                            "grades": cleaned_grades,
+                            "reasoning": parsed_data.get("reasoning", "AI grading completed (legacy format)"),
+                            "available": True,
+                            "errors": []
+                        }
+                    
+                    # No recognizable format found
                     return {
-                        "grades": cleaned_grades,
-                        "reasoning": parsed_data.get("reasoning", "AI grading completed"),
-                        "available": True,
-                        "errors": []
+                        "grades": {},
+                        "errors": ["AI response missing expected 'results' or 'grades' field"],
+                        "available": False
                     }
-                except json.JSONDecodeError:
-                    pass
+                    
+                except json.JSONDecodeError as e:
+                    return {
+                        "grades": {},
+                        "errors": [f"Failed to parse AI response as JSON: {str(e)}"],
+                        "available": False
+                    }
             
-            # If JSON parsing fails, return failure - no fallback grading
+            # No JSON found in response
             return {
                 "grades": {},
-                "errors": ["Failed to parse AI response as JSON"],
+                "errors": ["No JSON found in AI response"],
                 "available": False
             }
             
-        except (KeyError, IndexError, Exception):
+        except (KeyError, IndexError) as e:
             return {
                 "grades": {},
-                "errors": ["Failed to parse AI grading response"],
+                "errors": [f"Missing required field in AI response: {str(e)}"],
+                "available": False
+            }
+        except Exception as e:
+            return {
+                "grades": {},
+                "errors": [f"Failed to parse AI grading response: {str(e)}"],
                 "available": False
             }
     
