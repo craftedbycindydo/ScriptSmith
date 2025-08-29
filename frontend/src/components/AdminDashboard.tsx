@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -328,7 +328,8 @@ export default function AdminDashboard() {
 
   
   // Password management state
-  const [tempPasswordResult, setTempPasswordResult] = useState<{ userId: number; password: string } | null>(null);
+  const [tempPasswordResult, setTempPasswordResult] = useState<{ userId: number; password: string; createdAt: number } | null>(null);
+  const [tempPasswordUpdateTrigger, setTempPasswordUpdateTrigger] = useState(0);
   const [resetUsernameDialog, setResetUsernameDialog] = useState<{ open: boolean; userId: number | null; newUsername: string; currentUsername: string }>({
     open: false,
     userId: null,
@@ -481,7 +482,19 @@ export default function AdminDashboard() {
     
     try {
       const result = await generateTempPasswordMutation.mutateAsync(userId);
-      setTempPasswordResult({ userId, password: result.temp_password });
+      const tempPasswordData = { 
+        userId, 
+        password: result.temp_password, 
+        createdAt: Date.now() 
+      };
+      
+      // Save to state and localStorage
+      setTempPasswordResult(tempPasswordData);
+      localStorage.setItem('admin_temp_password', JSON.stringify(tempPasswordData));
+      
+      // Automatically expand the user row to show success
+      setExpandedUser(userId);
+      
       // Force logout the user after generating temp password
       try {
         await adminForceLogoutMutation.mutateAsync(userId);
@@ -523,6 +536,29 @@ export default function AdminDashboard() {
   const handleCancelUsernameReset = () => {
     setResetUsernameDialog({ open: false, userId: null, newUsername: '', currentUsername: '' });
   };
+
+  // Helper function to get remaining time for temp password
+  const getRemainingTime = useMemo(() => {
+    if (!tempPasswordResult) return () => 'Expired';
+    
+    return (createdAt: number) => {
+      // tempPasswordUpdateTrigger ensures re-calculation when time updates
+      const now = Date.now();
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+      const timeLeft = TWENTY_FOUR_HOURS - (now - createdAt);
+      
+      if (timeLeft <= 0) return 'Expired';
+      
+      const hours = Math.floor(timeLeft / (60 * 60 * 1000));
+      const minutes = Math.floor((timeLeft % (60 * 60 * 1000)) / (60 * 1000));
+      
+      if (hours > 0) {
+        return `${hours}h ${minutes}m remaining`;
+      } else {
+        return `${minutes}m remaining`;
+      }
+    };
+  }, [tempPasswordResult, tempPasswordUpdateTrigger]);
 
   // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
   const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
@@ -813,6 +849,53 @@ export default function AdminDashboard() {
     setDeleteClassroomModalOpen(false);
     setClassroomToDelete(null);
   };
+
+  // Load temp password from localStorage and clean up expired ones
+  useEffect(() => {
+    const loadTempPassword = () => {
+      try {
+        const stored = localStorage.getItem('admin_temp_password');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const now = Date.now();
+          const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+          
+          // Check if temp password has expired (24 hours)
+          if (now - parsed.createdAt < TWENTY_FOUR_HOURS) {
+            setTempPasswordResult(parsed);
+          } else {
+            // Expired, remove from localStorage
+            localStorage.removeItem('admin_temp_password');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load temp password from localStorage:', err);
+        localStorage.removeItem('admin_temp_password');
+      }
+    };
+
+    loadTempPassword();
+  }, []);
+
+  // Check for expired temp password and update remaining time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (tempPasswordResult) {
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+        
+        if (now - tempPasswordResult.createdAt >= TWENTY_FOUR_HOURS) {
+          setTempPasswordResult(null);
+          localStorage.removeItem('admin_temp_password');
+        } else {
+          // Trigger update to refresh remaining time display
+          setTempPasswordUpdateTrigger(prev => prev + 1);
+        }
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, [tempPasswordResult]);
 
   // SINGLE useEffect for WebSocket and settings only - React Query handles data loading
   useEffect(() => {
@@ -2575,7 +2658,10 @@ export default function AdminDashboard() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => setTempPasswordResult(null)}
+                                      onClick={() => {
+                                        setTempPasswordResult(null);
+                                        localStorage.removeItem('admin_temp_password');
+                                      }}
                                       title="Dismiss"
                                       className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
                                     >
@@ -2585,7 +2671,7 @@ export default function AdminDashboard() {
                                 </div>
                                 <div className="text-xs text-blue-600 dark:text-blue-300 mt-1 flex items-center gap-1">
                                   <AlertTriangle className="w-3 h-3" />
-                                  <span>Expires in 24 hours. User should change after login.</span>
+                                  <span>{getRemainingTime(tempPasswordResult.createdAt)} • User should change after login.</span>
                                 </div>
                               </div>
                             )}
@@ -3509,7 +3595,10 @@ export default function AdminDashboard() {
                                           <Button
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() => setTempPasswordResult(null)}
+                                            onClick={() => {
+                                              setTempPasswordResult(null);
+                                              localStorage.removeItem('admin_temp_password');
+                                            }}
                                             title="Dismiss"
                                             className="h-8 w-8 p-0 text-blue-600 dark:text-blue-400"
                                           >
@@ -3518,7 +3607,7 @@ export default function AdminDashboard() {
                                         </div>
                                         <div className="text-xs text-blue-600 dark:text-blue-300 flex items-center gap-1">
                                           <AlertTriangle className="w-3 h-3" />
-                                          <span>Expires in 24 hours. User should change after login.</span>
+                                          <span>{getRemainingTime(tempPasswordResult.createdAt)} • User should change after login.</span>
                                         </div>
                                       </div>
                                     </div>
