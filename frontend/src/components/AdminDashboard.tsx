@@ -341,6 +341,19 @@ export default function AdminDashboard() {
     userId: null,
     username: ''
   });
+  const [userActivationDialog, setUserActivationDialog] = useState<{ 
+    open: boolean; 
+    userId: number | null; 
+    username: string;
+    currentStatus: boolean;
+    action: 'activate' | 'deactivate';
+  }>({
+    open: false,
+    userId: null,
+    username: '',
+    currentStatus: false,
+    action: 'activate'
+  });
   const [expandedUser, setExpandedUser] = useState<number | null>(null);
   const [tempPasswordVisibility, setTempPasswordVisibility] = useState<{ [userId: number]: boolean }>({});
   
@@ -462,13 +475,51 @@ export default function AdminDashboard() {
   
   const pageSize = 20;
 
-  // Toggle user activation using React Query mutation
-  const toggleUserActivation = async (userId: number, activate: boolean) => {
+  // Request user activation/deactivation with confirmation
+  const requestUserActivationToggle = (userId: number, username: string, currentStatus: boolean) => {
+    setUserActivationDialog({
+      open: true,
+      userId,
+      username,
+      currentStatus,
+      action: currentStatus ? 'deactivate' : 'activate'
+    });
+  };
+
+  // Confirm user activation/deactivation
+  const handleConfirmUserActivation = async () => {
+    const { userId, action } = userActivationDialog;
+    if (!userId) return;
+
     try {
-      await toggleUserMutation.mutateAsync({ userId, activate });
+      await toggleUserMutation.mutateAsync({ 
+        userId, 
+        activate: action === 'activate' 
+      });
+      console.log(`User ${action}d successfully`);
     } catch (err: any) {
-      console.error(`Failed to ${activate ? 'activate' : 'deactivate'} user:`, err);
+      console.error(`Failed to ${action} user:`, err);
+      // Could add toast notification for error handling
+    } finally {
+      setUserActivationDialog({
+        open: false,
+        userId: null,
+        username: '',
+        currentStatus: false,
+        action: 'activate'
+      });
     }
+  };
+
+  // Cancel user activation/deactivation
+  const handleCancelUserActivation = () => {
+    setUserActivationDialog({
+      open: false,
+      userId: null,
+      username: '',
+      currentStatus: false,
+      action: 'activate'
+    });
   };
 
   // Password management handlers
@@ -1640,19 +1691,11 @@ export default function AdminDashboard() {
                         </div>
                         
                         <div className="flex space-x-1">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
-                            title="View user details"
-                          >
-                            <Eye className="w-3 h-3" />
-                          </Button>
-                          
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => toggleUserActivation(user.id, !user.is_active)}
+                            onClick={() => requestUserActivationToggle(user.id, user.username, user.is_active)}
+                            disabled={toggleUserMutation.isPending}
                           >
                             {user.is_active ? (
                               <UserX className="w-3 h-3" />
@@ -2077,6 +2120,88 @@ export default function AdminDashboard() {
                       </div>
                     </DialogContent>
                   </Dialog>
+
+                  {/* User Activation/Deactivation Confirmation Dialog */}
+                  <Dialog open={userActivationDialog.open} onOpenChange={(open) => {
+                    if (!open) handleCancelUserActivation();
+                  }}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle className={`flex items-center ${
+                          userActivationDialog.action === 'deactivate' ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {userActivationDialog.action === 'deactivate' ? (
+                            <UserX className="w-5 h-5 mr-2" />
+                          ) : (
+                            <UserCheck className="w-5 h-5 mr-2" />
+                          )}
+                          {userActivationDialog.action === 'deactivate' ? 'Deactivate User' : 'Activate User'}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <div className="py-4">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Are you sure you want to <strong>{userActivationDialog.action}</strong> the user <strong>{userActivationDialog.username}</strong>?
+                        </p>
+                        
+                        {userActivationDialog.action === 'deactivate' ? (
+                          <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
+                            <div className="text-sm text-red-800 dark:text-red-200">
+                              <strong>⚠️ Warning:</strong> Deactivating this user will:
+                              <ul className="ml-4 mt-2 space-y-1 text-xs">
+                                <li>• Prevent the user from logging in</li>
+                                <li>• Log the user out of all active sessions immediately</li>
+                                <li>• Disconnect the user from any active collaboration sessions</li>
+                                <li>• Block access to all platform features</li>
+                                <li>• The user can be reactivated later if needed</li>
+                              </ul>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-lg p-3 mb-4">
+                            <div className="text-sm text-green-800 dark:text-green-200">
+                              <strong>✅ Reactivating:</strong> This user will:
+                              <ul className="ml-4 mt-2 space-y-1 text-xs">
+                                <li>• Be able to log in again</li>
+                                <li>• Regain access to all platform features</li>
+                                <li>• Be able to join collaboration sessions</li>
+                                <li>• Have access to their previous data and settings</li>
+                              </ul>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex justify-end space-x-2">
+                        <Button variant="outline" onClick={handleCancelUserActivation}>
+                          Cancel
+                        </Button>
+                        <Button 
+                          variant={userActivationDialog.action === 'deactivate' ? 'destructive' : 'default'}
+                          onClick={handleConfirmUserActivation}
+                          disabled={toggleUserMutation.isPending}
+                          className={userActivationDialog.action === 'deactivate' 
+                            ? 'bg-red-600 hover:bg-red-700' 
+                            : 'bg-green-600 hover:bg-green-700 text-white'
+                          }
+                        >
+                          {toggleUserMutation.isPending ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                              {userActivationDialog.action === 'deactivate' ? 'Deactivating...' : 'Activating...'}
+                            </>
+                          ) : (
+                            <>
+                              {userActivationDialog.action === 'deactivate' ? (
+                                <UserX className="w-3 h-3 mr-1" />
+                              ) : (
+                                <UserCheck className="w-3 h-3 mr-1" />
+                              )}
+                              {userActivationDialog.action === 'deactivate' ? 'Deactivate User' : 'Activate User'}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               )}
               
@@ -2415,9 +2540,10 @@ export default function AdminDashboard() {
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                toggleUserActivation(user.id, !user.is_active);
+                                requestUserActivationToggle(user.id, user.username, user.is_active);
                               }}
                               title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                              disabled={toggleUserMutation.isPending}
                             >
                               {user.is_active ? (
                                 <UserX className="w-3 h-3" />
@@ -3491,10 +3617,11 @@ export default function AdminDashboard() {
                                     size="sm"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      toggleUserActivation(user.id, !user.is_active);
+                                      requestUserActivationToggle(user.id, user.username, user.is_active);
                                     }}
                                     className="h-8 w-8 p-0"
                                     title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                                    disabled={toggleUserMutation.isPending}
                                   >
                                     {user.is_active ? (
                                       <UserX className="w-3 h-3" />
