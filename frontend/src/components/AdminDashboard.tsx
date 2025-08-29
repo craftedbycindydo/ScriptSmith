@@ -2842,18 +2842,238 @@ export default function AdminDashboard() {
               )}
 
               {activeTab === 'template-executions' && (
-                <div className="space-y-6">
+                <div className="space-y-4">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="flex items-center">
-                        <Play className="w-5 h-5 mr-2" />
-                        Template Executions
+                      <CardTitle className="flex items-center justify-between">
+                        <span className="flex items-center">
+                          <Play className="w-5 h-5 mr-2" />
+                          Template Executions
+                        </span>
+                        <Badge variant="outline" className="text-xs">
+                          {getFilteredTemplateExecutions().length} shown
+                        </Badge>
                       </CardTitle>
+                      
+                      {/* Mobile-optimized Filters */}
+                      <div className="space-y-2 mt-4">
+                        <Select value={templateNameFilter} onValueChange={setTemplateNameFilter}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Filter by template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All templates</SelectItem>
+                            {templates.map((template: any) => (
+                              <SelectItem key={template.id} value={template.name}>
+                                {template.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        
+                        <div className="grid grid-cols-2 gap-2">
+                          <Select value={templateLanguageFilter} onValueChange={setTemplateLanguageFilter}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All languages</SelectItem>
+                              <SelectItem value="python">Python</SelectItem>
+                              <SelectItem value="javascript">JavaScript</SelectItem>
+                              <SelectItem value="java">Java</SelectItem>
+                              <SelectItem value="cpp">C++</SelectItem>
+                              <SelectItem value="go">Go</SelectItem>
+                              <SelectItem value="rust">Rust</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          
+                          <Select value={templateStatusFilter} onValueChange={setTemplateStatusFilter}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All statuses</SelectItem>
+                              <SelectItem value="success">Success</SelectItem>
+                              <SelectItem value="error">Error</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-muted-foreground text-sm">
-                        Use the desktop version for detailed execution viewing.
-                      </p>
+                      <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * 10, templateExecutionsPage * 10).map((execution: TemplateExecution) => (
+                          <div key={execution.id} className="border rounded-lg overflow-hidden">
+                            {/* Mobile Execution Card */}
+                            <div 
+                              className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => setExpandedExecution(
+                                expandedExecution === execution.id ? null : execution.id
+                              )}
+                            >
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                    <span className="font-medium text-sm truncate">
+                                      {execution.username || 'Anonymous'}
+                                    </span>
+                                    <Badge variant="outline" className="text-xs shrink-0">
+                                      {execution.language}
+                                    </Badge>
+                                  </div>
+                                  {getStatusBadge(execution.status)}
+                                </div>
+                                
+                                {execution.template_name && (
+                                  <div className="text-xs text-muted-foreground truncate">
+                                    Template: {execution.template_name}
+                                  </div>
+                                )}
+                                
+                                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                  <span>{formatDate(execution.created_at)}</span>
+                                  {execution.execution_time && (
+                                    <span>{execution.execution_time.toFixed(3)}s</span>
+                                  )}
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    className="h-6 w-12 text-xs p-0"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedExecution(
+                                        expandedExecution === execution.id ? null : execution.id
+                                      );
+                                    }}
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                                
+                                {execution.error_message && (
+                                  <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
+                                    {execution.error_message.slice(0, 80)}
+                                    {execution.error_message.length > 80 && '...'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Mobile Expanded View */}
+                            {expandedExecution === execution.id && (
+                              <div className="border-t bg-muted/20 p-3">
+                                <div className="space-y-3">
+                                  {/* Execution Info */}
+                                  <div className="grid grid-cols-2 gap-3 text-xs">
+                                    <div>
+                                      <span className="font-medium text-muted-foreground">User:</span>
+                                      <div className="truncate">{execution.username}</div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-muted-foreground">Language:</span>
+                                      <div className="capitalize">{execution.language}</div>
+                                    </div>
+                                  </div>
+
+                                  {/* Code Preview */}
+                                  <div className="bg-background border rounded-lg">
+                                    <div className="border-b px-3 py-2 bg-muted/30">
+                                      <h5 className="text-xs font-medium">Code Preview</h5>
+                                    </div>
+                                    <div className="p-3 max-h-32 overflow-y-auto">
+                                      <pre className="text-xs bg-muted/50 p-2 rounded overflow-x-auto">
+                                        <code>{execution.code.slice(0, 200)}</code>
+                                        {execution.code.length > 200 && (
+                                          <span className="text-muted-foreground">... (truncated)</span>
+                                        )}
+                                      </pre>
+                                    </div>
+                                  </div>
+
+                                  {/* Output Preview */}
+                                  {(execution.output || execution.error_message) && (
+                                    <div className="bg-background border rounded-lg">
+                                      <div className="border-b px-3 py-2 bg-muted/30">
+                                        <h5 className="text-xs font-medium">Output</h5>
+                                      </div>
+                                      <div className="p-3 max-h-32 overflow-y-auto">
+                                        {execution.output && (
+                                          <pre className="text-xs bg-green-50 dark:bg-green-950/20 p-2 rounded overflow-x-auto mb-2">
+                                            <code className="text-green-800 dark:text-green-200">
+                                              {execution.output.slice(0, 200)}
+                                              {execution.output.length > 200 && '...'}
+                                            </code>
+                                          </pre>
+                                        )}
+                                        {execution.error_message && (
+                                          <pre className="text-xs bg-red-50 dark:bg-red-950/20 p-2 rounded overflow-x-auto">
+                                            <code className="text-red-800 dark:text-red-200">
+                                              {execution.error_message.slice(0, 200)}
+                                              {execution.error_message.length > 200 && '...'}
+                                            </code>
+                                          </pre>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Input Data */}
+                                  {execution.input_data && (
+                                    <div className="bg-background border rounded-lg">
+                                      <div className="border-b px-3 py-2 bg-muted/30">
+                                        <h5 className="text-xs font-medium">Input Data</h5>
+                                      </div>
+                                      <div className="p-3">
+                                        <pre className="text-xs bg-muted/50 p-2 rounded overflow-x-auto">
+                                          <code>{execution.input_data.slice(0, 100)}</code>
+                                          {execution.input_data.length > 100 && '...'}
+                                        </pre>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        
+                        {getFilteredTemplateExecutions().length === 0 && (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <Play className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                            <p className="text-sm font-medium text-foreground mb-1">No executions found</p>
+                            <p className="text-xs">Template executions will appear here once users start running code</p>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Mobile Pagination */}
+                      {Math.ceil(getFilteredTemplateExecutions().length / 10) > 1 && (
+                        <div className="flex items-center justify-between pt-4 border-t">
+                          <div className="text-xs text-muted-foreground">
+                            Page {templateExecutionsPage} of {Math.ceil(getFilteredTemplateExecutions().length / 10)}
+                          </div>
+                          <div className="flex space-x-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTemplateExecutionsPage(templateExecutionsPage - 1)}
+                              disabled={templateExecutionsPage <= 1}
+                              className="h-8 w-8 p-0"
+                            >
+                              <ChevronLeft className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTemplateExecutionsPage(templateExecutionsPage + 1)}
+                              disabled={templateExecutionsPage >= Math.ceil(getFilteredTemplateExecutions().length / 10)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <ChevronRight className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </div>
@@ -2869,51 +3089,192 @@ export default function AdminDashboard() {
                 <div className="space-y-6">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="flex items-center">
-                        <Users className="w-5 h-5 mr-2" />
-                        User Management
+                      <CardTitle className="flex items-center justify-between">
+                        <span className="flex items-center">
+                          <Users className="w-5 h-5 mr-2" />
+                          User Management
+                        </span>
+                        <Badge variant="outline" className="text-xs">
+                          {getFilteredUsers().length} shown
+                        </Badge>
                       </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center space-x-2 mb-4">
+                      
+                      {/* Mobile Search */}
+                      <div className="flex items-center space-x-2 mt-4">
                         <Search className="w-4 h-4 text-muted-foreground" />
                         <Input
                           placeholder="Search users..."
                           value={userSearch}
-                          onChange={(e) => setUserSearch(e.target.value)}
-                          className="flex-1"
+                          onChange={(e) => {
+                            setUserSearch(e.target.value);
+                            if (userSearchError) setUserSearchError(null);
+                          }}
+                          className={`flex-1 ${userSearchError ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
                         />
                       </div>
+                      
+                      {/* Inline User Search Error */}
+                      {userSearchError && (
+                        <div className="mt-2 flex items-start space-x-2 p-2 border border-red-200 rounded bg-red-50 dark:bg-red-950/20 dark:border-red-900/30">
+                          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm text-red-700 dark:text-red-400">{userSearchError}</p>
+                          </div>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => setUserSearchError(null)}
+                            className="h-6 w-6 p-0 text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                          >
+                            ×
+                          </Button>
+                        </div>
+                      )}
+                    </CardHeader>
+                    <CardContent>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {adminUsers.slice(0, 10).map((user: AdminUser) => (
+                        {getFilteredUsers().map((user: AdminUser) => (
                           <div key={user.id} className="border rounded-lg p-3">
                             <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <span className="font-medium text-sm">{user.username}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center space-x-2 mb-2">
+                                  <span className="font-medium text-sm truncate">{user.username}</span>
                                   {!user.is_active && (
-                                    <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                                    <Badge variant="destructive" className="text-xs shrink-0">Inactive</Badge>
+                                  )}
+                                  {!user.is_verified && (
+                                    <Badge variant="outline" className="text-xs shrink-0">Unverified</Badge>
                                   )}
                                 </div>
-                                <div className="text-xs text-muted-foreground">
+                                <div className="text-xs text-muted-foreground mb-1 truncate">
                                   {user.email}
                                 </div>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => toggleUserActivation(user.id, !user.is_active)}
-                              >
-                                {user.is_active ? (
-                                  <UserX className="w-3 h-3" />
-                                ) : (
-                                  <UserCheck className="w-3 h-3" />
+                                <div className="text-xs text-muted-foreground mb-1">
+                                  {user.code_executions} executions • {user.collaboration_sessions} sessions
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Joined: {formatDate(user.created_at)}
+                                </div>
+                                {user.last_login && (
+                                  <div className="text-xs text-muted-foreground">
+                                    Last login: {formatDate(user.last_login)}
+                                  </div>
                                 )}
-                              </Button>
+                              </div>
+                              
+                              <div className="flex flex-col space-y-1 shrink-0 ml-3">
+                                {/* View Details Button */}
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => setSelectedUser(user)}
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="w-[95vw] max-w-md" aria-describedby="mobile-user-details-description">
+                                    <DialogHeader>
+                                      <DialogTitle className="text-lg">User Details</DialogTitle>
+                                    </DialogHeader>
+                                    <div id="mobile-user-details-description" className="sr-only">
+                                      Detailed information about the selected user including status and activity
+                                    </div>
+                                    {selectedUser && (
+                                      <div className="space-y-4">
+                                        <div className="grid grid-cols-1 gap-4">
+                                          <div>
+                                            <label className="text-sm font-medium text-muted-foreground">Username</label>
+                                            <div className="text-sm break-all">{selectedUser.username}</div>
+                                          </div>
+                                          <div>
+                                            <label className="text-sm font-medium text-muted-foreground">Email</label>
+                                            <div className="text-sm break-all">{selectedUser.email}</div>
+                                          </div>
+                                          <div>
+                                            <label className="text-sm font-medium text-muted-foreground">Full Name</label>
+                                            <div className="text-sm">{selectedUser.full_name || 'Not provided'}</div>
+                                          </div>
+                                          <div>
+                                            <label className="text-sm font-medium text-muted-foreground">Status</label>
+                                            <div className="flex flex-wrap gap-2 mt-1">
+                                              {selectedUser.is_active ? (
+                                                <Badge className="badge-success text-xs">Active</Badge>
+                                              ) : (
+                                                <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                                              )}
+                                              {selectedUser.is_verified ? (
+                                                <Badge className="badge-info text-xs">Verified</Badge>
+                                              ) : (
+                                                <Badge variant="outline" className="text-xs">Unverified</Badge>
+                                              )}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <label className="text-sm font-medium text-muted-foreground">Activity</label>
+                                            <div className="text-sm space-y-1">
+                                              <div>{selectedUser.code_executions} code executions</div>
+                                              <div>{selectedUser.collaboration_sessions} collaboration sessions</div>
+                                            </div>
+                                          </div>
+                                          <div className="grid grid-cols-1 gap-2">
+                                            <div>
+                                              <label className="text-sm font-medium text-muted-foreground">Joined</label>
+                                              <div className="text-sm">{formatDate(selectedUser.created_at)}</div>
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-muted-foreground">Last Login</label>
+                                              <div className="text-sm">
+                                                {selectedUser.last_login ? formatDate(selectedUser.last_login) : 'Never'}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </DialogContent>
+                                </Dialog>
+                                
+                                {/* Toggle Activation Button */}
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => toggleUserActivation(user.id, !user.is_active)}
+                                  className="h-8 w-8 p-0"
+                                  title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                                >
+                                  {user.is_active ? (
+                                    <UserX className="w-3 h-3" />
+                                  ) : (
+                                    <UserCheck className="w-3 h-3" />
+                                  )}
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         ))}
+                        
+                        {getFilteredUsers().length === 0 && (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <Users className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                            <p className="text-sm font-medium text-foreground mb-1">No users found</p>
+                            <p className="text-xs">
+                              {userSearch ? 'Try adjusting your search terms' : 'User data will appear here once users register'}
+                            </p>
+                          </div>
+                        )}
                       </div>
+                      
+                      {/* Mobile Load More (if needed) */}
+                      {!userSearch && adminUsers.length > 10 && (
+                        <div className="pt-4 border-t text-center">
+                          <p className="text-xs text-muted-foreground mb-2">
+                            Showing first 10 users. Use search to find specific users.
+                          </p>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </div>
