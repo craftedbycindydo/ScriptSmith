@@ -687,7 +687,7 @@ async def deactivate_user(
     """Deactivate a user account"""
     
     # POSTGRESQL OPTIMIZED: Select only needed columns
-    user = db.query(User.id, User.is_active, User.username, User.role, User.is_superuser, User.email).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
