@@ -279,8 +279,12 @@ Code to analyze:
             # Create SSL context for secure connections
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             
-            # Make API call with timeout
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            # Make API call with timeout - configure connector for batch processing
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_context,
+                keepalive_timeout=300,  # Keep connections alive longer for batch processing
+                timeout_ceil_threshold=5  # Allow more time for slow connections
+            )
             async with aiohttp.ClientSession(connector=connector) as session:
                 headers = self._get_secure_headers()
                 
@@ -300,8 +304,8 @@ Code to analyze:
                     "temperature": 0.0   # Maximum determinism for consistent grading
                 }
                 
-                # Use reasonable timeout for batch grading
-                timeout = aiohttp.ClientTimeout(total=30)
+                # Use extended timeout for batch grading (large prompts + multiple students)
+                timeout = aiohttp.ClientTimeout(total=180)
                 
                 async with session.post(
                     f"{self.base_url}/chat/completions",
