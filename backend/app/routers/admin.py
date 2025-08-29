@@ -20,6 +20,7 @@ from app.models.template import Template
 from app.models.admin_settings import AdminSettings
 from app.models.classroom import Classroom, UserClassroom
 from app.services.admin_service import AdminService
+from app.services.auth import AuthService
 from app.services.classroom_service import ClassroomService
 from app.services.railway_optimization_service import railway_performance_monitor
 from app.services.openai_service import openai_service
@@ -801,6 +802,16 @@ async def get_admin_settings(
 class AdminSettingsUpdate(BaseModel):
     copy_paste_enabled: bool
     notes: Optional[str] = None
+
+# Admin Password Management Models
+class AdminResetPasswordRequest(BaseModel):
+    user_id: int
+    new_password: str
+
+class TempPasswordResponse(BaseModel):
+    message: str
+    temp_password: str
+    expires_in_hours: int = 24
 
 # AI Grading Models
 class BatchGradingRequest(BaseModel):
@@ -1692,4 +1703,81 @@ async def grade_submissions_batch(
         raise HTTPException(
             status_code=500,
             detail="AI grading service temporarily unavailable"  # Don't expose internal error details
+        )
+
+# Admin Password Management Endpoints
+@router.post("/admin/users/{user_id}/generate-temp-password", response_model=TempPasswordResponse)
+async def generate_temp_password(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Generate temporary password for user (Admin only)"""
+    try:
+        temp_password = AuthService.admin_generate_temp_password(
+            db=db,
+            user_id=user_id,
+            admin_user=admin_user
+        )
+        
+        security_logger.info(
+            f"Temporary password generated for user {user_id} by admin {admin_user.id}"
+        )
+        
+        return TempPasswordResponse(
+            message=f"Temporary password generated for user ID {user_id}",
+            temp_password=temp_password,
+            expires_in_hours=24
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating temp password: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate temporary password"
+        )
+
+@router.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_password(
+    user_id: int,
+    request: AdminResetPasswordRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Admin resets user password"""
+    try:
+        # Validate that the user_id in path matches the request body
+        if user_id != request.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User ID in path must match user ID in request body"
+            )
+        
+        success = AuthService.admin_reset_user_password(
+            db=db,
+            user_id=user_id,
+            new_password=request.new_password,
+            admin_user=admin_user
+        )
+        
+        if success:
+            security_logger.info(
+                f"Password reset for user {user_id} by admin {admin_user.id}"
+            )
+            return {"message": f"Password reset successfully for user ID {user_id}"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to reset password"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting user password: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset user password"
         )

@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import CodeHistory from './CodeHistory';
 import UserSubmissions from './UserSubmissions';
 import { useAuthStore } from '@/store/authStore';
@@ -10,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
 import { useTheme } from '@/contexts/ThemeContext';
 import { formatDateOnly } from '@/lib/dateUtils';
+import { apiService } from '@/services/api';
 import { 
   useCodeHistory,
   useUserSubmissions,
@@ -28,11 +31,16 @@ import {
   PanelLeftOpen,
   Menu,
   ChevronDown,
-  Send
+  Send,
+  CheckCircle,
+  AlertCircle,
+  X,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 export default function Settings() {
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, refreshUser, logout } = useAuthStore();
   const { setCode, setLanguage } = useCodeStore();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
@@ -41,6 +49,36 @@ export default function Settings() {
   // Tab state and sidebar collapse
   const [activeTab, setActiveTab] = useState('history');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Password change form state
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+
+  // Username change form state
+  const [usernameForm, setUsernameForm] = useState({
+    newUsername: ''
+  });
+  const [usernameLoading, setUsernameLoading] = useState(false);
+
+  // Notification state for inline messages - separate for each form
+  const [passwordNotification, setPasswordNotification] = useState<{
+    type: 'success' | 'error' | null;
+    message: string;
+  }>({ type: null, message: '' });
+  
+  const [usernameNotification, setUsernameNotification] = useState<{
+    type: 'success' | 'error' | null;
+    message: string;
+  }>({ type: null, message: '' });
+  
+  // Password visibility states
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // React Query hooks - replaces direct API calls and state management
   const { data: codeHistoryData, isLoading: codeHistoryLoading } = useCodeHistory();
@@ -57,11 +95,117 @@ export default function Settings() {
   // Extract data from React Query responses
   const allCodeHistory = codeHistoryData?.history || [];
 
+  // Notification utility functions
+  const showPasswordNotification = (type: 'success' | 'error', message: string) => {
+    setPasswordNotification({ type, message });
+    // Auto-clear notification after 5 seconds
+    setTimeout(() => {
+      setPasswordNotification({ type: null, message: '' });
+    }, 5000);
+  };
+  
+  const showUsernameNotification = (type: 'success' | 'error', message: string) => {
+    setUsernameNotification({ type, message });
+    // Auto-clear notification after 5 seconds
+    setTimeout(() => {
+      setUsernameNotification({ type: null, message: '' });
+    }, 5000);
+  };
+
   const handleLoadCode = (historyCode: string, historyLanguage: string) => {
     setCode(historyCode);
     setLanguage(historyLanguage);
     // Navigate back to IDE after loading code
     navigate('/');
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validate form
+    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      showPasswordNotification('error', 'All password fields are required');
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      showPasswordNotification('error', 'New password and confirmation do not match');
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 8) {
+      showPasswordNotification('error', 'Password must be at least 8 characters long');
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      await apiService.changePassword(
+        passwordForm.currentPassword,
+        passwordForm.newPassword,
+        passwordForm.confirmPassword
+      );
+      
+      showPasswordNotification('success', 'Password changed successfully! Logging you out for security...');
+      
+      // Clear form
+      setPasswordForm({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      });
+      
+      // Force logout for security after password change
+      setTimeout(() => {
+        logout();
+        navigate('/login');
+      }, 2000); // 2 second delay to show success message
+    } catch (error: any) {
+      const errorMessage = error?.response?.data?.detail || 'Failed to change password';
+      showPasswordNotification('error', errorMessage);
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const handleUsernameChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validate form
+    if (!usernameForm.newUsername.trim()) {
+      showUsernameNotification('error', 'New username is required');
+      return;
+    }
+
+    if (usernameForm.newUsername === user?.username) {
+      showUsernameNotification('error', 'New username must be different from current username');
+      return;
+    }
+
+    if (usernameForm.newUsername.length < 3) {
+      showUsernameNotification('error', 'Username must be at least 3 characters long');
+      return;
+    }
+
+    setUsernameLoading(true);
+    try {
+      await apiService.changeUsername(usernameForm.newUsername);
+      
+      showUsernameNotification('success', 'Username changed successfully!');
+      
+      // Clear form
+      setUsernameForm({
+        newUsername: ''
+      });
+      
+      // Refresh user data to reflect the new username
+      await refreshUser();
+    } catch (error: any) {
+      const errorMessage = error?.response?.data?.detail || 'Failed to change username';
+      showUsernameNotification('error', errorMessage);
+    } finally {
+      setUsernameLoading(false);
+    }
   };
 
 
@@ -92,6 +236,8 @@ export default function Settings() {
           </div>
         </div>
 
+
+
         {/* Main Content */}
         <div className="flex-1 overflow-auto p-4 md:p-6">
           {/* Mobile Dropdown */}
@@ -109,22 +255,26 @@ export default function Settings() {
                   <ChevronDown className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
-                <DropdownMenuItem onClick={() => setActiveTab('history')}>
-                  <History className="w-4 h-4 mr-2" />
-                  Code History
+              <DropdownMenuContent 
+                className="w-[calc(100vw-2rem)] max-w-none" 
+                align="start" 
+                sideOffset={4}
+              >
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('history')}>
+                  <History className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Code History</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('submissions')}>
-                  <Send className="w-4 h-4 mr-2" />
-                  Submissions
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('submissions')}>
+                  <Send className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Submissions</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('profile')}>
-                  <User className="w-4 h-4 mr-2" />
-                  Profile
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('profile')}>
+                  <User className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Profile</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('preferences')}>
-                  <Bell className="w-4 h-4 mr-2" />
-                  Preferences
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('preferences')}>
+                  <Bell className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Preferences</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -274,6 +424,208 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Account Management Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Account Management</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Change Password Form */}
+              <div className="border rounded-lg p-4 space-y-4">
+                <div>
+                  <h4 className="font-medium">Change Password</h4>
+                  <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                    ⚠️ This will log you out of all sessions for security
+                  </p>
+                </div>
+                
+                {/* Inline Password Notification */}
+                {passwordNotification.type && (
+                  <div className={`p-3 rounded-lg border ${
+                    passwordNotification.type === 'success' 
+                      ? 'bg-green-50 dark:bg-green-900/50 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                      : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {passwordNotification.type === 'success' ? (
+                          <CheckCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                        )}
+                        <span className="text-sm font-medium">{passwordNotification.message}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-auto p-1 hover:bg-transparent"
+                        onClick={() => setPasswordNotification({ type: null, message: '' })}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                <form onSubmit={handlePasswordChange} className="space-y-4">
+                  <div>
+                    <Label htmlFor="currentPassword">Current Password</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        id="currentPassword"
+                        type={showCurrentPassword ? "text" : "password"}
+                        value={passwordForm.currentPassword}
+                        onChange={(e) => setPasswordForm(prev => ({ ...prev, currentPassword: e.target.value }))}
+                        placeholder="Enter current password"
+                        disabled={passwordLoading}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        disabled={passwordLoading}
+                      >
+                        {showCurrentPassword ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="newPassword">New Password</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        id="newPassword"
+                        type={showNewPassword ? "text" : "password"}
+                        value={passwordForm.newPassword}
+                        onChange={(e) => setPasswordForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                        placeholder="Enter new password (min 8 characters)"
+                        disabled={passwordLoading}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        disabled={passwordLoading}
+                      >
+                        {showNewPassword ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        id="confirmPassword"
+                        type={showConfirmPassword ? "text" : "password"}
+                        value={passwordForm.confirmPassword}
+                        onChange={(e) => setPasswordForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                        placeholder="Confirm new password"
+                        disabled={passwordLoading}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        disabled={passwordLoading}
+                      >
+                        {showConfirmPassword ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button type="submit" disabled={passwordLoading}>
+                    {passwordLoading ? 'Changing Password...' : 'Change Password'}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Note: Changing your password will automatically log you out of all sessions. You'll need to log back in with your new password.
+                  </p>
+                </form>
+              </div>
+
+              {/* Change Username Form */}
+              <div className="border rounded-lg p-4 space-y-4">
+                <h4 className="font-medium">Change Username</h4>
+                
+                {/* Inline Username Notification */}
+                {usernameNotification.type && (
+                  <div className={`p-3 rounded-lg border ${
+                    usernameNotification.type === 'success' 
+                      ? 'bg-green-50 dark:bg-green-900/50 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                      : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {usernameNotification.type === 'success' ? (
+                          <CheckCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                        )}
+                        <span className="text-sm font-medium">{usernameNotification.message}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-auto p-1 hover:bg-transparent"
+                        onClick={() => setUsernameNotification({ type: null, message: '' })}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                <form onSubmit={handleUsernameChange} className="space-y-4">
+                  <div>
+                    <Label htmlFor="currentUsername">Current Username</Label>
+                    <Input
+                      id="currentUsername"
+                      value={user?.username || ''}
+                      disabled
+                      className="bg-muted mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="newUsername">New Username</Label>
+                    <Input
+                      id="newUsername"
+                      type="text"
+                      value={usernameForm.newUsername}
+                      onChange={(e) => setUsernameForm(prev => ({ ...prev, newUsername: e.target.value }))}
+                      placeholder="Enter new username (min 3 characters)"
+                      disabled={usernameLoading}
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button type="submit" disabled={usernameLoading}>
+                    {usernameLoading ? 'Changing Username...' : 'Change Username'}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Note: Username changes don't require logout. Only password changes will log you out.
+                  </p>
+                </form>
+              </div>
+            </CardContent>
+          </Card>
                   </div>
                 )}
 
@@ -418,6 +770,208 @@ export default function Settings() {
                           <label className="text-sm font-medium text-muted-foreground">Member Since</label>
                           <p className="text-lg">{formatDateOnly(user?.created_at)}</p>
                         </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Mobile Account Management Section */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Account Management</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      {/* Change Password Form */}
+                      <div className="border rounded-lg p-4 space-y-4">
+                        <div>
+                          <h4 className="font-medium">Change Password</h4>
+                          <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                            ⚠️ This will log you out of all sessions for security
+                          </p>
+                        </div>
+                        
+                        {/* Inline Password Notification */}
+                        {passwordNotification.type && (
+                          <div className={`p-3 rounded-lg border ${
+                            passwordNotification.type === 'success' 
+                              ? 'bg-green-50 dark:bg-green-900/50 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                              : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center">
+                                {passwordNotification.type === 'success' ? (
+                                  <CheckCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                                ) : (
+                                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                                )}
+                                <span className="text-sm font-medium">{passwordNotification.message}</span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-auto p-1 hover:bg-transparent"
+                                onClick={() => setPasswordNotification({ type: null, message: '' })}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                        
+                        <form onSubmit={handlePasswordChange} className="space-y-4">
+                          <div>
+                            <Label htmlFor="mobileCurrentPassword">Current Password</Label>
+                            <div className="relative mt-1">
+                              <Input
+                                id="mobileCurrentPassword"
+                                type={showCurrentPassword ? "text" : "password"}
+                                value={passwordForm.currentPassword}
+                                onChange={(e) => setPasswordForm(prev => ({ ...prev, currentPassword: e.target.value }))}
+                                placeholder="Enter current password"
+                                disabled={passwordLoading}
+                                className="pr-10"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                disabled={passwordLoading}
+                              >
+                                {showCurrentPassword ? (
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="mobileNewPassword">New Password</Label>
+                            <div className="relative mt-1">
+                              <Input
+                                id="mobileNewPassword"
+                                type={showNewPassword ? "text" : "password"}
+                                value={passwordForm.newPassword}
+                                onChange={(e) => setPasswordForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                                placeholder="Enter new password (min 8 characters)"
+                                disabled={passwordLoading}
+                                className="pr-10"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                onClick={() => setShowNewPassword(!showNewPassword)}
+                                disabled={passwordLoading}
+                              >
+                                {showNewPassword ? (
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="mobileConfirmPassword">Confirm New Password</Label>
+                            <div className="relative mt-1">
+                              <Input
+                                id="mobileConfirmPassword"
+                                type={showConfirmPassword ? "text" : "password"}
+                                value={passwordForm.confirmPassword}
+                                onChange={(e) => setPasswordForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                                placeholder="Confirm new password"
+                                disabled={passwordLoading}
+                                className="pr-10"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                disabled={passwordLoading}
+                              >
+                                {showConfirmPassword ? (
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                          <Button type="submit" disabled={passwordLoading} className="w-full">
+                            {passwordLoading ? 'Changing Password...' : 'Change Password'}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            ⚠️ Security Notice: Changing your password will automatically log you out of all sessions. You'll need to log back in with your new password.
+                          </p>
+                        </form>
+                      </div>
+
+                      {/* Change Username Form */}
+                      <div className="border rounded-lg p-4 space-y-4">
+                        <h4 className="font-medium">Change Username</h4>
+                        
+                        {/* Inline Username Notification */}
+                        {usernameNotification.type && (
+                          <div className={`p-3 rounded-lg border ${
+                            usernameNotification.type === 'success' 
+                              ? 'bg-green-50 dark:bg-green-900/50 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                              : 'bg-red-50 dark:bg-red-900/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center">
+                                {usernameNotification.type === 'success' ? (
+                                  <CheckCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                                ) : (
+                                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                                )}
+                                <span className="text-sm font-medium">{usernameNotification.message}</span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-auto p-1 hover:bg-transparent"
+                                onClick={() => setUsernameNotification({ type: null, message: '' })}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                        
+                        <form onSubmit={handleUsernameChange} className="space-y-4">
+                          <div>
+                            <Label htmlFor="mobileCurrentUsername">Current Username</Label>
+                            <Input
+                              id="mobileCurrentUsername"
+                              value={user?.username || ''}
+                              disabled
+                              className="bg-muted mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="mobileNewUsername">New Username</Label>
+                            <Input
+                              id="mobileNewUsername"
+                              type="text"
+                              value={usernameForm.newUsername}
+                              onChange={(e) => setUsernameForm(prev => ({ ...prev, newUsername: e.target.value }))}
+                              placeholder="Enter new username (min 3 characters)"
+                              disabled={usernameLoading}
+                              className="mt-1"
+                            />
+                          </div>
+                          <Button type="submit" disabled={usernameLoading} className="w-full">
+                            {usernameLoading ? 'Changing Username...' : 'Change Username'}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            ℹ️ Note: Username changes don't require logout. Only password changes will log you out for security.
+                          </p>
+                        </form>
                       </div>
                     </CardContent>
                   </Card>

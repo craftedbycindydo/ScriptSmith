@@ -23,7 +23,10 @@ export default function LoginPage() {
       return;
     }
 
-    const success = await login(email, password);
+    // Normalize email: lowercase and trim whitespace
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    const success = await login(normalizedEmail, password);
     if (success) {
       navigate('/');
     }
