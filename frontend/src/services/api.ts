@@ -435,11 +435,15 @@ export const apiService = {
     return response.data;
   },
 
-  async adminResetPassword(userId: number, newPassword: string): Promise<void> {
-    await api.post(`/admin/users/${userId}/reset-password`, {
+  async adminResetUsername(userId: number, newUsername: string): Promise<void> {
+    await api.post(`/admin/users/${userId}/reset-username`, {
       user_id: userId,
-      new_password: newPassword,
+      new_username: newUsername,
     });
+  },
+  
+  async adminForceLogoutUser(userId: number): Promise<void> {
+    await api.post(`/admin/users/${userId}/force-logout`);
   },
 
   // AI Grading endpoint

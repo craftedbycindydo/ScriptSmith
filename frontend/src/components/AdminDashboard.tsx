@@ -29,7 +29,8 @@ import {
   useRemoveClassroomMember,
   useUpdateClassroomSettings,
   useGenerateTempPassword,
-  useAdminResetPassword
+  useAdminResetUsername,
+  useAdminForceLogoutUser
 } from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
 import { formatDate } from '@/lib/dateUtils';
@@ -306,7 +307,8 @@ export default function AdminDashboard() {
   
   // Password management mutations
   const generateTempPasswordMutation = useGenerateTempPassword();
-  const adminResetPasswordMutation = useAdminResetPassword();
+  const adminResetUsernameMutation = useAdminResetUsername();
+  const adminForceLogoutMutation = useAdminForceLogoutUser();
   
   // INSTANT LOADING - Never block page render, show skeleton instead
   const loading = false; // Always render page immediately
@@ -326,10 +328,16 @@ export default function AdminDashboard() {
   
   // Password management state
   const [tempPasswordResult, setTempPasswordResult] = useState<{ userId: number; password: string } | null>(null);
-  const [resetPasswordDialog, setResetPasswordDialog] = useState<{ open: boolean; userId: number | null; newPassword: string }>({
+  const [resetUsernameDialog, setResetUsernameDialog] = useState<{ open: boolean; userId: number | null; newUsername: string; currentUsername: string }>({
     open: false,
     userId: null,
-    newPassword: ''
+    newUsername: '',
+    currentUsername: ''
+  });
+  const [tempPasswordConfirmDialog, setTempPasswordConfirmDialog] = useState<{ open: boolean; userId: number | null; username: string }>({
+    open: false,
+    userId: null,
+    username: ''
   });
   const [passwordNotifications, setPasswordNotifications] = useState<{ [userId: number]: { type: 'success' | 'error'; message: string } }>({});
   
@@ -461,7 +469,14 @@ export default function AdminDashboard() {
   };
 
   // Password management handlers
-  const handleGenerateTempPassword = async (userId: number) => {
+  const handleGenerateTempPasswordRequest = (userId: number, username: string) => {
+    setTempPasswordConfirmDialog({ open: true, userId, username });
+  };
+  
+  const handleConfirmGenerateTempPassword = async () => {
+    const { userId } = tempPasswordConfirmDialog;
+    if (!userId) return;
+    
     try {
       const result = await generateTempPasswordMutation.mutateAsync(userId);
       setTempPasswordResult({ userId, password: result.temp_password });
@@ -470,30 +485,54 @@ export default function AdminDashboard() {
         [userId]: { type: 'success', message: 'Temporary password generated successfully!' }
       }));
       
-      // Clear notification after 5 seconds
+      // Force logout the user after generating temp password
+      try {
+        await adminForceLogoutMutation.mutateAsync(userId);
+        console.log(`User ${userId} has been logged out after temp password generation`);
+      } catch (logoutErr) {
+        console.error('Failed to logout user after temp password generation:', logoutErr);
+        // Don't show error to admin as temp password was generated successfully
+      }
+      
+      // Clear notification after 10 seconds (longer for temp password)
       setTimeout(() => {
         setPasswordNotifications(prev => {
           const { [userId]: _, ...rest } = prev;
           return rest;
         });
-      }, 5000);
+      }, 10000);
     } catch (err: any) {
       console.error('Failed to generate temporary password:', err);
       setPasswordNotifications(prev => ({
         ...prev,
         [userId]: { type: 'error', message: err?.response?.data?.detail || 'Failed to generate temporary password' }
       }));
+    } finally {
+      setTempPasswordConfirmDialog({ open: false, userId: null, username: '' });
     }
   };
+  
+  const handleCancelTempPasswordGeneration = () => {
+    setTempPasswordConfirmDialog({ open: false, userId: null, username: '' });
+  };
 
-  const handleResetPassword = async (userId: number, newPassword: string) => {
+  const handleResetUsernameRequest = (userId: number, currentUsername: string) => {
+    setResetUsernameDialog({ open: true, userId, newUsername: '', currentUsername });
+  };
+  
+  const handleConfirmResetUsername = async () => {
+    const { userId, newUsername } = resetUsernameDialog;
+    if (!userId || !newUsername.trim()) return;
+    
     try {
-      await adminResetPasswordMutation.mutateAsync({ userId, newPassword });
-      setResetPasswordDialog({ open: false, userId: null, newPassword: '' });
+      await adminResetUsernameMutation.mutateAsync({ userId, newUsername: newUsername.trim() });
+      
       setPasswordNotifications(prev => ({
         ...prev,
-        [userId]: { type: 'success', message: 'Password reset successfully!' }
+        [userId]: { type: 'success', message: `Username successfully changed to "${newUsername.trim()}"` }
       }));
+      
+      setResetUsernameDialog({ open: false, userId: null, newUsername: '', currentUsername: '' });
       
       // Clear notification after 5 seconds
       setTimeout(() => {
@@ -503,12 +542,16 @@ export default function AdminDashboard() {
         });
       }, 5000);
     } catch (err: any) {
-      console.error('Failed to reset password:', err);
+      console.error('Failed to reset username:', err);
       setPasswordNotifications(prev => ({
         ...prev,
-        [userId]: { type: 'error', message: err?.response?.data?.detail || 'Failed to reset password' }
+        [userId]: { type: 'error', message: err?.response?.data?.detail || 'Failed to reset username' }
       }));
     }
+  };
+  
+  const handleCancelUsernameReset = () => {
+    setResetUsernameDialog({ open: false, userId: null, newUsername: '', currentUsername: '' });
   };
 
   // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
@@ -2428,19 +2471,19 @@ export default function AdminDashboard() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleGenerateTempPassword(user.id)}
+                            onClick={() => handleGenerateTempPasswordRequest(user.id, user.username)}
                             disabled={generateTempPasswordMutation.isPending}
                             title="Generate temporary password"
                           >
                             <Key className="w-3 h-3" />
                           </Button>
                           
-                          {/* Reset Password Button */}
+                          {/* Reset Username Button */}
                           <Dialog 
-                            open={resetPasswordDialog.open && resetPasswordDialog.userId === user.id}
+                            open={resetUsernameDialog.open && resetUsernameDialog.userId === user.id}
                             onOpenChange={(open) => {
                               if (!open) {
-                                setResetPasswordDialog({ open: false, userId: null, newPassword: '' });
+                                handleCancelUsernameReset();
                               }
                             }}
                           >
@@ -2448,41 +2491,127 @@ export default function AdminDashboard() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setResetPasswordDialog({ open: true, userId: user.id, newPassword: '' })}
-                                title="Reset password"
+                                onClick={() => handleResetUsernameRequest(user.id, user.username)}
+                                title="Reset username"
                               >
                                 <RefreshCcw className="w-3 h-3" />
                               </Button>
                             </DialogTrigger>
                             <DialogContent>
                               <DialogHeader>
-                                <DialogTitle>Reset Password for {user.username}</DialogTitle>
+                                <DialogTitle>Reset Username for {resetUsernameDialog.currentUsername}</DialogTitle>
                               </DialogHeader>
                               <div className="space-y-4">
                                 <div>
-                                  <Label htmlFor="newPassword">New Password</Label>
+                                  <Label htmlFor="currentUsernameDisplay">Current Username</Label>
                                   <Input
-                                    id="newPassword"
-                                    type="password"
-                                    value={resetPasswordDialog.newPassword}
-                                    onChange={(e) => setResetPasswordDialog(prev => ({ ...prev, newPassword: e.target.value }))}
-                                    placeholder="Enter new password"
+                                    id="currentUsernameDisplay"
+                                    value={resetUsernameDialog.currentUsername}
+                                    disabled
+                                    className="bg-muted"
                                   />
+                                </div>
+                                <div>
+                                  <Label htmlFor="newUsername">New Username</Label>
+                                  <Input
+                                    id="newUsername"
+                                    type="text"
+                                    value={resetUsernameDialog.newUsername}
+                                    onChange={(e) => setResetUsernameDialog(prev => ({ ...prev, newUsername: e.target.value }))}
+                                    placeholder="Enter new username"
+                                  />
+                                </div>
+                                                                <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                                  <div className="text-sm text-blue-800 dark:text-blue-200">
+                                    <strong>ℹ️ Note:</strong> This will change the user's username immediately. The user will not be logged out and can continue using their account with the new username. Username must be at least 3 characters long and unique.
+                                  </div>
                                 </div>
                                 <div className="flex justify-end space-x-2">
                                   <Button
                                     variant="outline"
-                                    onClick={() => setResetPasswordDialog({ open: false, userId: null, newPassword: '' })}
+                                    onClick={handleCancelUsernameReset}
                                   >
                                     Cancel
                                   </Button>
                                   <Button
-                                    onClick={() => handleResetPassword(user.id, resetPasswordDialog.newPassword)}
-                                    disabled={!resetPasswordDialog.newPassword || adminResetPasswordMutation.isPending}
+                                    onClick={handleConfirmResetUsername}
+                                    disabled={!resetUsernameDialog.newUsername.trim() || adminResetUsernameMutation.isPending}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white"
                                   >
-                                    Reset Password
+                                    {adminResetUsernameMutation.isPending ? (
+                                      <>
+                                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                                        Resetting...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <RefreshCcw className="w-3 h-3 mr-1" />
+                                        Reset Username
+                                      </>
+                                    )}
                                   </Button>
                                 </div>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                          
+                          {/* Temporary Password Confirmation Dialog */}
+                          <Dialog 
+                            open={tempPasswordConfirmDialog.open && tempPasswordConfirmDialog.userId === user.id}
+                            onOpenChange={(open) => {
+                              if (!open) {
+                                handleCancelTempPasswordGeneration();
+                              }
+                            }}
+                          >
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle className="flex items-center text-amber-600">
+                                  <AlertTriangle className="w-5 h-5 mr-2" />
+                                  Generate Temporary Password
+                                </DialogTitle>
+                              </DialogHeader>
+                              <div className="py-4">
+                                <p className="text-sm text-muted-foreground mb-4">
+                                  You are about to generate a temporary password for <strong>{tempPasswordConfirmDialog.username}</strong>.
+                                </p>
+                                <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-4">
+                                  <div className="text-sm text-amber-800 dark:text-amber-200">
+                                    <strong>⚠️ Warning:</strong> This action is not reversible and will:
+                                    <ul className="ml-4 mt-2 space-y-1 text-xs">
+                                      <li>• Immediately invalidate the user's current password</li>
+                                      <li>• Log the user out of all active sessions immediately</li>
+                                      <li>• Force disconnect the user from the platform</li>
+                                      <li>• Generate a new temporary password that expires in 24 hours</li>
+                                      <li>• Require the user to log in with temp password and change it</li>
+                                    </ul>
+                                  </div>
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                  The user will need to use the temporary password to log in and then set a new permanent password.
+                                </p>
+                              </div>
+                              <div className="flex justify-end space-x-2">
+                                <Button variant="outline" onClick={handleCancelTempPasswordGeneration}>
+                                  Cancel
+                                </Button>
+                                <Button 
+                                  onClick={handleConfirmGenerateTempPassword}
+                                  disabled={generateTempPasswordMutation.isPending}
+                                  className="bg-amber-600 hover:bg-amber-700 text-white"
+                                >
+                                  {generateTempPasswordMutation.isPending ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                                      Generating...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Key className="w-3 h-3 mr-1" />
+                                      Generate Temporary Password
+                                    </>
+                                  )}
+                                </Button>
                               </div>
                             </DialogContent>
                           </Dialog>
@@ -2501,31 +2630,50 @@ export default function AdminDashboard() {
                         
                         {/* Temporary Password Display */}
                         {tempPasswordResult && tempPasswordResult.userId === user.id && (
-                          <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 rounded text-sm">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <strong>Temporary Password:</strong>
-                                <code className="ml-2 px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-800 dark:text-blue-200">
-                                  {tempPasswordResult.password}
-                                </code>
+                          <div className="mt-3 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Key className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                  <span className="font-semibold text-blue-900 dark:text-blue-100">Temporary Password Generated</span>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm text-blue-700 dark:text-blue-300">Password:</span>
+                                  <code className="px-3 py-1.5 bg-blue-100 dark:bg-blue-800 rounded font-mono text-blue-900 dark:text-blue-100 text-sm font-medium">
+                                    {tempPasswordResult.password}
+                                  </code>
+                                </div>
                               </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(tempPasswordResult.password);
-                                  setPasswordNotifications(prev => ({
-                                    ...prev,
-                                    [user.id]: { type: 'success', message: 'Password copied to clipboard!' }
-                                  }));
-                                }}
-                                title="Copy password"
-                              >
-                                <Copy className="w-3 h-3" />
-                              </Button>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(tempPasswordResult.password);
+                                    setPasswordNotifications(prev => ({
+                                      ...prev,
+                                      [user.id]: { type: 'success', message: 'Password copied to clipboard!' }
+                                    }));
+                                  }}
+                                  title="Copy password"
+                                  className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setTempPasswordResult(null)}
+                                  title="Dismiss"
+                                  className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
                             </div>
-                            <div className="text-xs text-blue-600 dark:text-blue-300 mt-1">
-                              This password expires in 24 hours. User should change it after login.
+                            <div className="text-xs text-blue-600 dark:text-blue-300 mt-2 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              <span>This password expires in 24 hours. User should change it after login.</span>
                             </div>
                           </div>
                         )}

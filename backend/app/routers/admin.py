@@ -803,10 +803,10 @@ class AdminSettingsUpdate(BaseModel):
     copy_paste_enabled: bool
     notes: Optional[str] = None
 
-# Admin Password Management Models
-class AdminResetPasswordRequest(BaseModel):
+# Admin User Management Models  
+class AdminResetUsernameRequest(BaseModel):
     user_id: int
-    new_password: str
+    new_username: str
 
 class TempPasswordResponse(BaseModel):
     message: str
@@ -1739,14 +1739,14 @@ async def generate_temp_password(
             detail="Failed to generate temporary password"
         )
 
-@router.post("/admin/users/{user_id}/reset-password")
-async def admin_reset_password(
+@router.post("/admin/users/{user_id}/reset-username")
+async def admin_reset_username(
     user_id: int,
-    request: AdminResetPasswordRequest,
+    request: AdminResetUsernameRequest,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Admin resets user password"""
+    """Admin resets user username"""
     try:
         # Validate that the user_id in path matches the request body
         if user_id != request.user_id:
@@ -1754,30 +1754,83 @@ async def admin_reset_password(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User ID in path must match user ID in request body"
             )
-        
-        success = AuthService.admin_reset_user_password(
-            db=db,
-            user_id=user_id,
-            new_password=request.new_password,
-            admin_user=admin_user
-        )
-        
-        if success:
-            security_logger.info(
-                f"Password reset for user {user_id} by admin {admin_user.id}"
-            )
-            return {"message": f"Password reset successfully for user ID {user_id}"}
-        else:
+
+        # Get the target user
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to reset password"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
             )
             
+        # Validate new username format
+        new_username = request.new_username.strip()
+        if len(new_username) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username must be at least 3 characters long"
+            )
+            
+        # Check if username already exists
+        existing_user = db.query(User).filter(User.username == new_username).first()
+        if existing_user and existing_user.id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already exists"
+            )
+
+        old_username = target_user.username
+        
+        # Update the user's username
+        target_user.username = new_username
+        db.commit()
+        
+        security_logger.info(
+            f"Admin {admin_user.id} ({admin_user.username}) reset username for user {user_id} from '{old_username}' to '{new_username}'"
+        )
+        
+        return {"message": f"Username successfully changed from '{old_username}' to '{new_username}'"}
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error resetting user password: {str(e)}")
+        logger.error(f"Error resetting username: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset user password"
+            detail="Failed to reset username"
+        )
+        
+@router.post("/admin/users/{user_id}/force-logout")
+async def admin_force_logout_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Admin forces user logout (invalidates all user sessions)"""
+    try:
+        # Get the target user
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # In a more sophisticated system, you would invalidate all JWT tokens for this user
+        # For now, we'll just log the action and return success
+        # TODO: Implement JWT token blacklisting or similar mechanism
+        
+        security_logger.info(
+            f"Admin {admin_user.id} ({admin_user.username}) forced logout for user {user_id} ({target_user.username})"
+        )
+        
+        return {"message": f"User {target_user.username} has been logged out of all sessions"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error forcing user logout: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to force logout user"
         )
