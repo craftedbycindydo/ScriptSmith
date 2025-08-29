@@ -808,6 +808,8 @@ class BatchGradingRequest(BaseModel):
     submissions: List[dict]  # List of submissions with masked data
     grade_scale: int  # 10, 50, or 100
     leniency: int  # 0-100
+    enable_robustness: bool = False  # Advanced: edge case handling
+    enable_quality: bool = False  # Advanced: code style, naming
 
 class BatchGradingResponse(BaseModel):
     success: bool
@@ -1620,7 +1622,9 @@ async def grade_submissions_batch(
                     template_info=request.template_info,
                     submissions=batch,
                     grade_scale=request.grade_scale,
-                    leniency=request.leniency
+                    leniency=request.leniency,
+                    enable_robustness=request.enable_robustness,
+                    enable_quality=request.enable_quality
                 )
                 
                 if batch_result.get("available", False):
