@@ -1579,98 +1579,7 @@ export default function AdminDashboard() {
                           </Button>
                         </div>
                       </div>
-                      
-                      {/* Expanded User Details - Desktop */}
-                      {expandedUser === user.id && (
-                        <div className="mt-3 p-4 bg-muted/20 border-t border-muted/50">
-                          <div className="space-y-4">
-                            {/* User Details Grid */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                              <div>
-                                <label className="font-medium text-muted-foreground">Full Name</label>
-                                <div>{user.full_name || 'Not provided'}</div>
-                              </div>
-                              <div>
-                                <label className="font-medium text-muted-foreground">Status</label>
-                                <div className="flex space-x-1 flex-wrap">
-                                  {user.is_active ? (
-                                    <Badge className="badge-success text-xs">Active</Badge>
-                                  ) : (
-                                    <Badge variant="destructive" className="text-xs">Inactive</Badge>
-                                  )}
-                                  {user.is_verified ? (
-                                    <Badge className="badge-info text-xs">Verified</Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-xs">Unverified</Badge>
-                                  )}
-                                </div>
-                              </div>
-                              <div>
-                                <label className="font-medium text-muted-foreground">Last Login</label>
-                                <div>{user.last_login ? formatDate(user.last_login) : 'Never'}</div>
-                              </div>
-                              <div>
-                                <label className="font-medium text-muted-foreground">Member Since</label>
-                                <div>{formatDate(user.created_at)}</div>
-                              </div>
-                            </div>
-                            
-                            {/* Temporary Password Section */}
-                            {tempPasswordResult && tempPasswordResult.userId === user.id && (
-                              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <Key className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                                    <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Temporary Password:</span>
-                                    <div className="flex items-center gap-1">
-                                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded font-mono text-blue-900 dark:text-blue-100 text-sm">
-                                        {tempPasswordVisibility[user.id] ? tempPasswordResult.password : '••••••••'}
-                                      </code>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => setTempPasswordVisibility(prev => ({ ...prev, [user.id]: !prev[user.id] }))}
-                                        title={tempPasswordVisibility[user.id] ? 'Hide password' : 'Show password'}
-                                        className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
-                                      >
-                                        {tempPasswordVisibility[user.id] ? (
-                                          <EyeOff className="w-3 h-3" />
-                                        ) : (
-                                          <Eye className="w-3 h-3" />
-                                        )}
-                                      </Button>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
-                                      title="Copy password"
-                                      className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
-                                    >
-                                      <Copy className="w-3 h-3" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => setTempPasswordResult(null)}
-                                      title="Dismiss"
-                                      className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                                <div className="text-xs text-blue-600 dark:text-blue-300 mt-1 flex items-center gap-1">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  <span>Expires in 24 hours. User should change after login.</span>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
+
                     </div>
                   ))}
                 </div>
@@ -2390,81 +2299,86 @@ export default function AdminDashboard() {
               <CardContent>
                 <div className="space-y-3">
                   {getFilteredUsers().map((user: AdminUser) => (
-                    <div key={user.id} className="border rounded-lg p-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-1">
-                            <span className="font-medium">{user.username}</span>
-                            {!user.is_active && (
-                              <Badge variant="destructive" className="text-xs">Inactive</Badge>
-                            )}
-                            {!user.is_verified && (
-                              <Badge variant="outline" className="text-xs">Unverified</Badge>
-                            )}
+                    <div key={user.id} className="border rounded-lg overflow-hidden">
+                      <div 
+                        className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2 mb-1">
+                              <span className="font-medium">{user.username}</span>
+                              {!user.is_active && (
+                                <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                              )}
+                              {!user.is_verified && (
+                                <Badge variant="outline" className="text-xs">Unverified</Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {user.email}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {user.code_executions} executions • {user.collaboration_sessions} sessions
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Joined: {formatDate(user.created_at)}
+                            </div>
                           </div>
-                          <div className="text-sm text-muted-foreground">
-                            {user.email}
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {user.code_executions} executions • {user.collaboration_sessions} sessions
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Joined: {formatDate(user.created_at)}
-                          </div>
-                        </div>
-                        
-                        <div className="flex space-x-1">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
-                            title="View user details"
-                          >
-                            <Eye className="w-3 h-3" />
-                          </Button>
                           
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => toggleUserActivation(user.id, !user.is_active)}
-                          >
-                            {user.is_active ? (
-                              <UserX className="w-3 h-3" />
-                            ) : (
-                              <UserCheck className="w-3 h-3" />
-                            )}
-                          </Button>
-                          
-                          {/* Generate Temp Password Button */}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleGenerateTempPasswordRequest(user.id, user.username)}
-                            disabled={generateTempPasswordMutation.isPending}
-                            title="Generate temporary password"
-                          >
-                            <Key className="w-3 h-3" />
-                          </Button>
-                          
-                          {/* Reset Username Button */}
-                          <Dialog 
-                            open={resetUsernameDialog.open && resetUsernameDialog.userId === user.id}
-                            onOpenChange={(open) => {
-                              if (!open) {
-                                handleCancelUsernameReset();
-                              }
-                            }}
-                          >
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleResetUsernameRequest(user.id, user.username)}
-                                title="Reset username"
-                              >
-                                <RefreshCcw className="w-3 h-3" />
-                              </Button>
-                            </DialogTrigger>
+                          <div className="flex space-x-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleUserActivation(user.id, !user.is_active);
+                              }}
+                              title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                            >
+                              {user.is_active ? (
+                                <UserX className="w-3 h-3" />
+                              ) : (
+                                <UserCheck className="w-3 h-3" />
+                              )}
+                            </Button>
+                            
+                            {/* Generate Temp Password Button */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleGenerateTempPasswordRequest(user.id, user.username);
+                              }}
+                              disabled={generateTempPasswordMutation.isPending}
+                              title="Generate temporary password"
+                            >
+                              <Key className="w-3 h-3" />
+                            </Button>
+                            
+                            {/* Reset Username Button */}
+                            <Dialog 
+                              open={resetUsernameDialog.open && resetUsernameDialog.userId === user.id}
+                              onOpenChange={(open) => {
+                                if (!open) {
+                                  handleCancelUsernameReset();
+                                }
+                              }}
+                            >
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResetUsernameRequest(user.id, user.username);
+                                  }}
+                                  title="Reset username"
+                                >
+                                  <RefreshCcw className="w-3 h-3" />
+                                </Button>
+                              </DialogTrigger>
                             <DialogContent>
                               <DialogHeader>
                                 <DialogTitle>Reset Username for {resetUsernameDialog.currentUsername}</DialogTitle>
@@ -2583,12 +2497,101 @@ export default function AdminDashboard() {
                               </div>
                             </DialogContent>
                           </Dialog>
+                          </div>
                         </div>
-                        
-
-                        
-
                       </div>
+                      
+                      {/* Expanded User Details */}
+                      {expandedUser === user.id && (
+                        <div className="border-t bg-muted/20 p-4">
+                          <div className="space-y-4">
+                            {/* User Details Grid */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                              <div>
+                                <label className="font-medium text-muted-foreground">Full Name</label>
+                                <div>{user.full_name || 'Not provided'}</div>
+                              </div>
+                              <div>
+                                <label className="font-medium text-muted-foreground">Status</label>
+                                <div className="flex space-x-1 flex-wrap">
+                                  {user.is_active ? (
+                                    <Badge className="badge-success text-xs">Active</Badge>
+                                  ) : (
+                                    <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                                  )}
+                                  {user.is_verified ? (
+                                    <Badge className="badge-info text-xs">Verified</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-xs">Unverified</Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <label className="font-medium text-muted-foreground">Last Login</label>
+                                <div>{user.last_login ? formatDate(user.last_login) : 'Never'}</div>
+                              </div>
+                              <div>
+                                <label className="font-medium text-muted-foreground">Member Since</label>
+                                <div>{formatDate(user.created_at)}</div>
+                              </div>
+                            </div>
+                            
+                            {/* Temporary Password Section */}
+                            {tempPasswordResult && tempPasswordResult.userId === user.id && (
+                              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Key className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                    <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Temporary Password:</span>
+                                    <div className="flex items-center gap-1">
+                                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded font-mono text-blue-900 dark:text-blue-100 text-sm">
+                                        {tempPasswordVisibility[user.id] ? tempPasswordResult.password : '••••••••'}
+                                      </code>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setTempPasswordVisibility(prev => ({ ...prev, [user.id]: !prev[user.id] }))}
+                                        title={tempPasswordVisibility[user.id] ? 'Hide password' : 'Show password'}
+                                        className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
+                                      >
+                                        {tempPasswordVisibility[user.id] ? (
+                                          <EyeOff className="w-3 h-3" />
+                                        ) : (
+                                          <Eye className="w-3 h-3" />
+                                        )}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
+                                      title="Copy password"
+                                      className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setTempPasswordResult(null)}
+                                      title="Dismiss"
+                                      className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-blue-600 dark:text-blue-300 mt-1 flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  <span>Expires in 24 hours. User should change after login.</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -3363,66 +3366,78 @@ export default function AdminDashboard() {
                     <CardContent>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
                         {getFilteredUsers().map((user: AdminUser) => (
-                          <div key={user.id} className="border rounded-lg p-3">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center space-x-2 mb-2">
-                                  <span className="font-medium text-sm truncate">{user.username}</span>
-                                  {!user.is_active && (
-                                    <Badge variant="destructive" className="text-xs shrink-0">Inactive</Badge>
-                                  )}
-                                  {!user.is_verified && (
-                                    <Badge variant="outline" className="text-xs shrink-0">Unverified</Badge>
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted-foreground mb-1 truncate">
-                                  {user.email}
-                                </div>
-                                <div className="text-xs text-muted-foreground mb-1">
-                                  {user.code_executions} executions • {user.collaboration_sessions} sessions
-                              </div>
-                                <div className="text-xs text-muted-foreground">
-                                  Joined: {formatDate(user.created_at)}
-                                </div>
-                                {user.last_login && (
-                                  <div className="text-xs text-muted-foreground">
-                                    Last login: {formatDate(user.last_login)}
+                          <div key={user.id} className="border rounded-lg overflow-hidden">
+                            <div 
+                              className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center space-x-2 mb-2">
+                                    <span className="font-medium text-sm truncate">{user.username}</span>
+                                    {!user.is_active && (
+                                      <Badge variant="destructive" className="text-xs shrink-0">Inactive</Badge>
+                                    )}
+                                    {!user.is_verified && (
+                                      <Badge variant="outline" className="text-xs shrink-0">Unverified</Badge>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                              
-                              <div className="flex flex-col space-y-1 shrink-0 ml-3">
-                                {/* View Details Button */}
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
-                                  className="h-8 w-8 p-0"
-                                  title="View user details"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                </Button>
+                                  <div className="text-xs text-muted-foreground mb-1 truncate">
+                                    {user.email}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground mb-1">
+                                    {user.code_executions} executions • {user.collaboration_sessions} sessions
+                                </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Joined: {formatDate(user.created_at)}
+                                  </div>
+                                  {user.last_login && (
+                                    <div className="text-xs text-muted-foreground">
+                                      Last login: {formatDate(user.last_login)}
+                                    </div>
+                                  )}
+                                </div>
                                 
-                                {/* Toggle Activation Button */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => toggleUserActivation(user.id, !user.is_active)}
-                                  className="h-8 w-8 p-0"
-                                  title={user.is_active ? 'Deactivate user' : 'Activate user'}
-                              >
-                                {user.is_active ? (
-                                  <UserX className="w-3 h-3" />
-                                ) : (
-                                  <UserCheck className="w-3 h-3" />
-                                )}
-                              </Button>
+                                <div className="flex flex-col space-y-1 shrink-0 ml-3">
+                                  {/* Toggle Activation Button */}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleUserActivation(user.id, !user.is_active);
+                                    }}
+                                    className="h-8 w-8 p-0"
+                                    title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                                  >
+                                    {user.is_active ? (
+                                      <UserX className="w-3 h-3" />
+                                    ) : (
+                                      <UserCheck className="w-3 h-3" />
+                                    )}
+                                  </Button>
+                                  
+                                  {/* Generate Temp Password Button */}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleGenerateTempPasswordRequest(user.id, user.username);
+                                    }}
+                                    disabled={generateTempPasswordMutation.isPending}
+                                    title="Generate temporary password"
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Key className="w-3 h-3" />
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                             
                             {/* Expanded User Details - Mobile */}
                             {expandedUser === user.id && (
-                              <div className="mt-3 p-3 bg-muted/20 border-t border-muted/50">
+                              <div className="border-t bg-muted/20 p-3">
                                 <div className="space-y-3">
                                   {/* User Details Grid - Mobile Optimized */}
                                   <div className="grid grid-cols-1 gap-3 text-sm">
@@ -3459,55 +3474,51 @@ export default function AdminDashboard() {
                                   
                                   {/* Temporary Password Section - Mobile */}
                                   {tempPasswordResult && tempPasswordResult.userId === user.id && (
-                                    <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-2">
+                                    <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                                       <div className="space-y-2">
                                         <div className="flex items-center gap-2">
-                                          <Key className="w-3 h-3 text-blue-600 dark:text-blue-400" />
-                                          <span className="text-xs font-medium text-blue-900 dark:text-blue-100">Temp Password:</span>
-                                          <div className="flex items-center gap-1">
-                                            <code className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-800 rounded font-mono text-blue-900 dark:text-blue-100 text-xs">
-                                              {tempPasswordVisibility[user.id] ? tempPasswordResult.password : '••••••••'}
-                                            </code>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              onClick={() => setTempPasswordVisibility(prev => ({ ...prev, [user.id]: !prev[user.id] }))}
-                                              title={tempPasswordVisibility[user.id] ? 'Hide password' : 'Show password'}
-                                              className="h-5 w-5 p-0 text-blue-600 dark:text-blue-400"
-                                            >
-                                              {tempPasswordVisibility[user.id] ? (
-                                                <EyeOff className="w-2 h-2" />
-                                              ) : (
-                                                <Eye className="w-2 h-2" />
-                                              )}
-                                            </Button>
-                                          </div>
+                                          <Key className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                          <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Temporary Password:</span>
                                         </div>
-                                        <div className="flex items-center justify-between">
-                                          <div className="text-xs text-blue-600 dark:text-blue-300 flex items-center gap-1">
-                                            <AlertTriangle className="w-2 h-2" />
-                                            <span>Expires in 24h</span>
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
-                                              title="Copy password"
-                                              className="h-5 w-5 p-0 text-blue-600 dark:text-blue-400"
-                                            >
-                                              <Copy className="w-2 h-2" />
-                                            </Button>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              onClick={() => setTempPasswordResult(null)}
-                                              title="Dismiss"
-                                              className="h-5 w-5 p-0 text-blue-600 dark:text-blue-400"
-                                            >
-                                              <X className="w-2 h-2" />
-                                            </Button>
-                                          </div>
+                                        <div className="flex items-center gap-2">
+                                          <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded font-mono text-blue-900 dark:text-blue-100 text-sm flex-1">
+                                            {tempPasswordVisibility[user.id] ? tempPasswordResult.password : '••••••••••••'}
+                                          </code>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setTempPasswordVisibility(prev => ({ ...prev, [user.id]: !prev[user.id] }))}
+                                            title={tempPasswordVisibility[user.id] ? 'Hide password' : 'Show password'}
+                                            className="h-8 w-8 p-0 text-blue-600 dark:text-blue-400"
+                                          >
+                                            {tempPasswordVisibility[user.id] ? (
+                                              <EyeOff className="w-4 h-4" />
+                                            ) : (
+                                              <Eye className="w-4 h-4" />
+                                            )}
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
+                                            title="Copy password"
+                                            className="h-8 w-8 p-0 text-blue-600 dark:text-blue-400"
+                                          >
+                                            <Copy className="w-4 h-4" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setTempPasswordResult(null)}
+                                            title="Dismiss"
+                                            className="h-8 w-8 p-0 text-blue-600 dark:text-blue-400"
+                                          >
+                                            <X className="w-4 h-4" />
+                                          </Button>
+                                        </div>
+                                        <div className="text-xs text-blue-600 dark:text-blue-300 flex items-center gap-1">
+                                          <AlertTriangle className="w-3 h-3" />
+                                          <span>Expires in 24 hours. User should change after login.</span>
                                         </div>
                                       </div>
                                     </div>
