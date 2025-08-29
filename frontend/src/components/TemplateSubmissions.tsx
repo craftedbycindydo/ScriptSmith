@@ -59,10 +59,8 @@ const TemplateSubmissions: React.FC = () => {
   const [enableQuality, setEnableQuality] = useState(false); // Advanced: code style, naming
   const [showAdvancedCriteria, setShowAdvancedCriteria] = useState(false); // Control collapsible section
   const [isGrading, setIsGrading] = useState(false);
-  const [gradingProgress, setGradingProgress] = useState(0);
   const [_aiGrades, setAiGrades] = useState<{[key: string]: number}>({}); // Store AI grades for potential future use
   const [gradingError, setGradingError] = useState<string>(''); // Store error messages for inline display
-  const [currentBatch, setCurrentBatch] = useState<{current: number, total: number} | null>(null); // Track current batch
   
   // Stats
   const [stats, setStats] = useState<{
@@ -241,13 +239,13 @@ const TemplateSubmissions: React.FC = () => {
     submissionsToGrade: any[], 
     template: any
   ): Promise<{[key: string]: number}> => {
-    setGradingProgress(0);
-    
     if (submissionsToGrade.length === 0) {
       return {};
     }
     
     try {
+      setGradingError(''); // Clear any previous errors
+      
       // Create username mapping for privacy (but keep code intact)
       const usernames = submissionsToGrade.map(s => s.submitted_by_username);
       const usernameMapping = createUsernameMapping(usernames);
@@ -262,112 +260,38 @@ const TemplateSubmissions: React.FC = () => {
         language: submission.language
       }));
       
-      // Calculate optimal batch size (similar to backend logic)
-      const ESTIMATED_TOKENS_PER_CHAR = 4;
-      const MAX_TOKENS = 128000;
-      const RESERVE_TOKENS = 2000;
+      console.log(`Sending ${maskedSubmissions.length} submissions for AI grading`);
       
-      const templateText = `${template.name} ${template.description || ''} ${template.code_content || ''}`;
-      const templateTokens = Math.ceil(templateText.length / ESTIMATED_TOKENS_PER_CHAR);
-      const availableTokens = MAX_TOKENS - templateTokens - RESERVE_TOKENS;
+      const batchRequest = {
+        template_info: {
+          name: template.name,
+          description: template.description || '',
+          language: template.language,
+          code_content: template.code_content || ''
+        },
+        submissions: maskedSubmissions,
+        grade_scale: parseInt(gradeScale),
+        leniency: leniency[0],
+        enable_robustness: enableRobustness,
+        enable_quality: enableQuality
+      };
       
-      // Estimate average submission tokens
-      const avgSubmissionTokens = maskedSubmissions.length > 0 
-        ? Math.ceil(maskedSubmissions.reduce((sum, sub) => 
-            sum + (sub.code.length + (sub.output?.length || 0) + (sub.error_message?.length || 0)), 0
-          ) / maskedSubmissions.length / ESTIMATED_TOKENS_PER_CHAR) + 200 // +200 for overhead
-        : 1000;
+      const result = await apiService.gradeSubmissionsBatch(batchRequest);
       
-      const optimalBatchSize = Math.max(1, Math.min(
-        Math.floor(availableTokens / avgSubmissionTokens),
-        maskedSubmissions.length
-      ));
-      
-      // Split into batches for real progress tracking
-      const batches = [];
-      for (let i = 0; i < maskedSubmissions.length; i += optimalBatchSize) {
-        batches.push(maskedSubmissions.slice(i, i + optimalBatchSize));
-      }
-      
-      console.log(`Processing ${maskedSubmissions.length} submissions in ${batches.length} batches of ~${optimalBatchSize} each`);
-      
-      // Process batches sequentially with real progress updates
-      setGradingProgress(0);
-      setGradingError(''); // Clear any previous errors
-      setCurrentBatch({ current: 0, total: batches.length });
-      
-      const allGrades: {[key: string]: number} = {};
-      const allErrors: string[] = [];
-      
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        const batchNumber = batchIndex + 1;
-        
-        // Update batch tracking
-        setCurrentBatch({ current: batchNumber, total: batches.length });
-        
-        // Update progress based on actual batch completion
-        const progressBefore = (batchIndex / batches.length) * 100;
-        const progressAfter = ((batchIndex + 1) / batches.length) * 100;
-        
-        setGradingProgress(progressBefore);
-        
-        console.log(`Processing batch ${batchNumber}/${batches.length} (${batch.length} submissions)`);
-        
-        try {
-          const batchRequest = {
-            template_info: {
-              name: template.name,
-              description: template.description || '',
-              language: template.language,
-              code_content: template.code_content || ''
-            },
-            submissions: batch,
-            grade_scale: parseInt(gradeScale),
-            leniency: leniency[0],
-            enable_robustness: enableRobustness,
-            enable_quality: enableQuality
-          };
-          
-          const result = await apiService.gradeSubmissionsBatch(batchRequest);
-          
-          if (result.success) {
-            Object.assign(allGrades, result.grades || {});
-            if (result.errors && result.errors.length > 0) {
-              allErrors.push(...result.errors);
-            }
-            console.log(`Batch ${batchNumber} completed successfully`);
-          } else {
-            console.error(`Batch ${batchNumber} failed:`, result.errors);
-            allErrors.push(`Batch ${batchNumber} failed: ${result.errors?.join(', ') || 'Unknown error'}`);
-          }
-        } catch (batchError) {
-          console.error(`Error processing batch ${batchNumber}:`, batchError);
-          allErrors.push(`Batch ${batchNumber} error: ${batchError instanceof Error ? batchError.message : 'Unknown error'}`);
-        }
-        
-        // Update progress after batch completion
-        setGradingProgress(progressAfter);
-      }
-      
-      // Final progress and cleanup
-      setGradingProgress(100);
-      setCurrentBatch(null);
-      
-      if (Object.keys(allGrades).length > 0) {
-        console.log(`All batches completed: ${Object.keys(allGrades).length} grades generated`);
-        if (allErrors.length > 0) {
-          console.warn('Some grading warnings occurred:', allErrors);
+      if (result.success && result.grades) {
+        console.log(`AI grading completed: ${Object.keys(result.grades).length} grades generated`);
+        if (result.errors && result.errors.length > 0) {
+          console.warn('Some grading warnings occurred:', result.errors);
         }
         // Demask the usernames in the grades response
-        const demaskedGrades = demaskUsernames(allGrades, usernameMapping);
+        const demaskedGrades = demaskUsernames(result.grades, usernameMapping);
         return demaskedGrades;
       } else {
-        console.error('All batches failed:', allErrors);
-        throw new Error(`AI grading failed: ${allErrors.join(', ') || 'All batches failed'}`);
+        console.error('AI grading failed:', result.errors);
+        throw new Error(`AI grading failed: ${result.errors?.join(', ') || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error in batch grading:', error);
+      console.error('Error in AI grading:', error);
       // Re-throw the error instead of providing fallback grades
       throw error;
     }
@@ -379,7 +303,7 @@ const TemplateSubmissions: React.FC = () => {
       return;
     }
     setGradingError(''); // Clear any previous errors when opening modal
-    setCurrentBatch(null); // Clear batch tracking
+
     setExportModalOpen(true);
   };
 
@@ -559,9 +483,7 @@ const TemplateSubmissions: React.FC = () => {
     
     // Close modal after successful export and clear states
     setExportModalOpen(false);
-    setGradingProgress(0);
     setGradingError('');
-    setCurrentBatch(null);
   };
 
   const getStatusBadge = (status: string) => {
@@ -853,31 +775,11 @@ const TemplateSubmissions: React.FC = () => {
                     </>
                   )}
 
-                  {/* Progress bar (shown during grading) */}
+                  {/* Loading message (shown during grading) */}
                   {isGrading && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm">
-                          AI Grading Progress
-                          {currentBatch && (
-                            <span className="text-xs text-muted-foreground ml-2">
-                              (Batch {currentBatch.current}/{currentBatch.total})
-                            </span>
-                          )}
-                        </Label>
-                        <span className="text-sm text-muted-foreground">{Math.round(gradingProgress)}%</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
-                        <div 
-                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
-                          style={{ width: `${gradingProgress}%` }}
-                        ></div>
-                      </div>
-                      {currentBatch && (
-                        <div className="text-xs text-muted-foreground text-center">
-                          Processing batch {currentBatch.current} of {currentBatch.total}
-                        </div>
-                      )}
+                    <div className="flex items-center justify-center space-x-2 py-4">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                      <span className="text-sm text-muted-foreground">Waiting for AI to grade submissions...</span>
                     </div>
                   )}
 
@@ -900,8 +802,6 @@ const TemplateSubmissions: React.FC = () => {
                       onClick={() => {
                         setExportModalOpen(false);
                         setGradingError('');
-                        setGradingProgress(0);
-                        setCurrentBatch(null);
                       }}
                       disabled={isGrading}
                     >
