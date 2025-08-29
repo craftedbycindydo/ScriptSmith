@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+
 import { Label } from '@/components/ui/label';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import CodeEditor from './CodeEditor';
@@ -25,7 +25,6 @@ import {
   Copy,
   Check,
   Code2,
-  MoreHorizontal,
   UserPlus,
   UserMinus,
   Users
@@ -151,6 +150,12 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
 
   const handleStartEditing = async (template: TemplateListItem) => {
     try {
+      // If already editing this template, cancel editing
+      if (editingId === template.id) {
+        handleCancelEditing();
+        return;
+      }
+      
       // Load full template data
       const fullTemplate = await apiService.getTemplateAdmin(template.id);
       
@@ -597,14 +602,12 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         </Card>
       )}
 
-      {/* Editor section - shown when creating or editing */}
-      {(isCreating || editingId !== null) && (
+      {/* Create Template Form - Only shown when creating */}
+      {isCreating && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>
-                {isCreating ? 'Create New Template' : 'Edit Template'}
-              </CardTitle>
+              <CardTitle>Create New Template</CardTitle>
               <Button variant="outline" size="sm" onClick={handleCancelEditing}>
                 <X className="w-4 h-4" />
               </Button>
@@ -808,7 +811,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
             <div>
               <div className="flex items-center justify-between">
                 <Label>Code Content *</Label>
-                {isCreating && editingTemplate.description.includes('Uploaded from') && (
+                {editingTemplate.description.includes('Uploaded from') && (
                   <Badge variant="secondary" className="text-xs">
                     <Upload className="w-3 h-3 mr-1" />
                     Loaded from file - Review and edit as needed
@@ -859,117 +862,172 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           ) : (
             <div className="space-y-4">
               {templates.map((template) => (
-                <div key={template.id} className="border rounded-lg p-4">
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium truncate">{template.name}</h3>
-                      {template.description && (
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{template.description}</p>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-2 text-sm text-muted-foreground">
-                        <Badge variant="secondary" className="shrink-0">{getLanguageLabel(template.language)}</Badge>
-                        <span className="truncate">By: {template.creator_username}</span>
-                        <span className="shrink-0">Created: {formatDate(template.created_at)}</span>
-                      </div>
-                      {template.classrooms && template.classrooms.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1 mt-2">
-                          <span className="text-xs text-muted-foreground">Classrooms:</span>
-                          {template.classrooms.map((classroom) => (
-                            <Badge 
-                              key={classroom.id} 
-                              variant="outline" 
-                              className="text-xs"
-                            >
-                              {classroom.name}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                      {(!template.classrooms || template.classrooms.length === 0) && (
-                        <div className="mt-2">
-                          <Badge variant="outline" className="text-xs">
-                            Global Access
-                          </Badge>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Desktop Actions */}
-                    <div className="hidden sm:flex gap-1 shrink-0">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCopyTemplate(template)}
-                        title="Copy template"
-                      >
-                        {copied === template.id ? (
-                          <Check className="w-4 h-4" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
+                <div key={template.id} className="border rounded-lg">
+                  {/* Template Header - Always visible */}
+                  <div className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium truncate">{template.name}</h3>
+                        {template.description && (
+                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{template.description}</p>
                         )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDownloadTemplate(template)}
-                        title="Download template"
-                      >
-                        <Download className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleStartEditing(template)}
-                        title="Edit template"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleDeleteClick(template)}
-                        title="Delete template"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-
-                    {/* Mobile Actions Dropdown */}
-                    <div className="flex sm:hidden">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleCopyTemplate(template)}>
-                            {copied === template.id ? (
-                              <Check className="w-4 h-4 mr-2" />
-                            ) : (
-                              <Copy className="w-4 h-4 mr-2" />
-                            )}
-                            Copy Template
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleDownloadTemplate(template)}>
-                            <Download className="w-4 h-4 mr-2" />
-                            Download
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleStartEditing(template)}>
-                            <Edit className="w-4 h-4 mr-2" />
-                            Edit Template
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => handleDeleteClick(template)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Delete Template
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-2 text-sm text-muted-foreground">
+                          <Badge variant="secondary" className="shrink-0">{getLanguageLabel(template.language)}</Badge>
+                          <span className="truncate">By: {template.creator_username}</span>
+                          <span className="shrink-0">Created: {formatDate(template.created_at)}</span>
+                        </div>
+                        {template.classrooms && template.classrooms.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1 mt-2">
+                            <span className="text-xs text-muted-foreground">Classrooms:</span>
+                            {template.classrooms.map((classroom) => (
+                              <Badge 
+                                key={classroom.id} 
+                                variant="outline" 
+                                className="text-xs"
+                              >
+                                {classroom.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {(!template.classrooms || template.classrooms.length === 0) && (
+                          <div className="mt-2">
+                            <Badge variant="outline" className="text-xs">
+                              Global Access
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Actions */}
+                      <div className="flex gap-1 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCopyTemplate(template)}
+                          title="Copy template"
+                        >
+                          {copied === template.id ? (
+                            <Check className="w-4 h-4" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDownloadTemplate(template)}
+                          title="Download template"
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant={editingId === template.id ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => handleStartEditing(template)}
+                          title={editingId === template.id ? "Cancel editing" : "Edit template"}
+                        >
+                          {editingId === template.id ? (
+                            <X className="w-4 h-4" />
+                          ) : (
+                            <Edit className="w-4 h-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDeleteClick(template)}
+                          title="Delete template"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
+                  
+                  {/* Inline Edit Form - Only shown when editing this specific template */}
+                  {editingId === template.id && (
+                    <div className="border-t bg-muted/20 p-4">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="font-medium">Edit Template</h4>
+                          <Button variant="ghost" size="sm" onClick={handleCancelEditing}>
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        
+                        {/* Template metadata - simplified for inline editing */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor={`edit-name-${template.id}`}>Name *</Label>
+                            <Input
+                              id={`edit-name-${template.id}`}
+                              value={editingTemplate.name}
+                              onChange={(e) => setEditingTemplate(prev => ({...prev, name: e.target.value}))}
+                              placeholder="Enter template name"
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor={`edit-description-${template.id}`}>Description</Label>
+                            <Input
+                              id={`edit-description-${template.id}`}
+                              value={editingTemplate.description}
+                              onChange={(e) => setEditingTemplate(prev => ({...prev, description: e.target.value}))}
+                              placeholder="Enter description (optional)"
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Language Selection */}
+                        <div>
+                          <Label htmlFor={`edit-language-${template.id}`}>Language *</Label>
+                          <Select 
+                            value={editingTemplate.language} 
+                            onValueChange={(value) => setEditingTemplate(prev => ({...prev, language: value}))}
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {supportedLanguages.map((lang) => (
+                                <SelectItem key={lang.value} value={lang.value}>
+                                  {lang.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Code Editor */}
+                        <div>
+                          <Label>Code Content *</Label>
+                          <div className="mt-2 border rounded-lg overflow-hidden">
+                            <div className="h-64">
+                              <CodeEditor
+                                language={editingTemplate.language}
+                                value={editingTemplate.code_content}
+                                onChange={(value) => setEditingTemplate(prev => ({...prev, code_content: value || ''}))}
+                                theme="vs-dark"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Save/Cancel buttons */}
+                        <div className="flex justify-end gap-2 pt-4 border-t">
+                          <Button variant="outline" onClick={handleCancelEditing}>
+                            Cancel
+                          </Button>
+                          <Button onClick={handleSave} disabled={saving}>
+                            <Save className="w-4 h-4 mr-2" />
+                            {saving ? 'Saving...' : 'Save Changes'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
