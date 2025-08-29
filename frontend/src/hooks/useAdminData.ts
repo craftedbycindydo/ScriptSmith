@@ -252,3 +252,29 @@ export function useUpdateClassroomSettings() {
     },
   });
 }
+
+// Password Management Mutation Hooks
+export function useGenerateTempPassword() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (userId: number) => apiService.generateTempPassword(userId),
+    onSuccess: () => {
+      // Invalidate users data to reflect any changes
+      queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+  });
+}
+
+export function useAdminResetPassword() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ userId, newPassword }: { userId: number; newPassword: string }) => 
+      apiService.adminResetPassword(userId, newPassword),
+    onSuccess: () => {
+      // Invalidate users data to reflect any changes
+      queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
+    },
+  });
+}

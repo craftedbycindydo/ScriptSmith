@@ -88,8 +88,11 @@ export default function SignUpPage() {
       return;
     }
 
+    // Normalize email: lowercase and trim whitespace
+    const normalizedEmail = formData.email.toLowerCase().trim();
+    
     const success = await register(
-      formData.email,
+      normalizedEmail,
       formData.username,
       formData.password,
       formData.fullName,

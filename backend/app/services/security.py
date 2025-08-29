@@ -178,3 +178,44 @@ class SecurityService:
             return email
         except JWTError:
             return None
+    
+    @staticmethod
+    def generate_temp_password() -> str:
+        """
+        Generate secure temporary password that meets validation requirements
+        """
+        import random
+        import string
+        
+        # Generate a secure temporary password that meets all validation criteria:
+        # - At least 8 characters
+        # - Contains uppercase letter
+        # - Contains lowercase letter
+        # - Contains digit
+        # - Contains special character
+        
+        # Define character sets
+        uppercase = string.ascii_uppercase
+        lowercase = string.ascii_lowercase
+        digits = string.digits
+        special_chars = "!@#$%^&*(),.?\":{}|<>"
+        
+        # Ensure at least one character from each required set
+        password_parts = [
+            random.choice(uppercase),  # At least one uppercase
+            random.choice(lowercase),  # At least one lowercase
+            random.choice(digits),     # At least one digit
+            random.choice(special_chars),  # At least one special character
+        ]
+        
+        # Fill the rest with random characters from all sets
+        all_chars = uppercase + lowercase + digits + special_chars
+        remaining_length = 8 - len(password_parts)  # Make it at least 8 characters
+        
+        for _ in range(remaining_length):
+            password_parts.append(random.choice(all_chars))
+        
+        # Shuffle to randomize positions
+        random.shuffle(password_parts)
+        
+        return ''.join(password_parts)

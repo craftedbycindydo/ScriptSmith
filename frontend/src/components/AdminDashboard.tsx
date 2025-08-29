@@ -27,7 +27,9 @@ import {
   useDeleteClassroom,
   useAddStudentToClassroom,
   useRemoveClassroomMember,
-  useUpdateClassroomSettings
+  useUpdateClassroomSettings,
+  useGenerateTempPassword,
+  useAdminResetPassword
 } from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
 import { formatDate } from '@/lib/dateUtils';
@@ -66,7 +68,9 @@ import {
   PanelLeft,
   PanelLeftOpen,
   X,
-  Trash2
+  Trash2,
+  Key,
+  RefreshCcw
 } from 'lucide-react';
 
 // Classroom Members List Component
@@ -300,6 +304,10 @@ export default function AdminDashboard() {
   const removeStudentMutation = useRemoveClassroomMember();
   const updateSettingsMutation = useUpdateClassroomSettings();
   
+  // Password management mutations
+  const generateTempPasswordMutation = useGenerateTempPassword();
+  const adminResetPasswordMutation = useAdminResetPassword();
+  
   // INSTANT LOADING - Never block page render, show skeleton instead
   const loading = false; // Always render page immediately
   
@@ -315,6 +323,15 @@ export default function AdminDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  
+  // Password management state
+  const [tempPasswordResult, setTempPasswordResult] = useState<{ userId: number; password: string } | null>(null);
+  const [resetPasswordDialog, setResetPasswordDialog] = useState<{ open: boolean; userId: number | null; newPassword: string }>({
+    open: false,
+    userId: null,
+    newPassword: ''
+  });
+  const [passwordNotifications, setPasswordNotifications] = useState<{ [userId: number]: { type: 'success' | 'error'; message: string } }>({});
   
   // Activity filters
   const [activityUserFilter, setActivityUserFilter] = useState('all');
@@ -440,6 +457,57 @@ export default function AdminDashboard() {
       await toggleUserMutation.mutateAsync({ userId, activate });
     } catch (err: any) {
       console.error(`Failed to ${activate ? 'activate' : 'deactivate'} user:`, err);
+    }
+  };
+
+  // Password management handlers
+  const handleGenerateTempPassword = async (userId: number) => {
+    try {
+      const result = await generateTempPasswordMutation.mutateAsync(userId);
+      setTempPasswordResult({ userId, password: result.temp_password });
+      setPasswordNotifications(prev => ({
+        ...prev,
+        [userId]: { type: 'success', message: 'Temporary password generated successfully!' }
+      }));
+      
+      // Clear notification after 5 seconds
+      setTimeout(() => {
+        setPasswordNotifications(prev => {
+          const { [userId]: _, ...rest } = prev;
+          return rest;
+        });
+      }, 5000);
+    } catch (err: any) {
+      console.error('Failed to generate temporary password:', err);
+      setPasswordNotifications(prev => ({
+        ...prev,
+        [userId]: { type: 'error', message: err?.response?.data?.detail || 'Failed to generate temporary password' }
+      }));
+    }
+  };
+
+  const handleResetPassword = async (userId: number, newPassword: string) => {
+    try {
+      await adminResetPasswordMutation.mutateAsync({ userId, newPassword });
+      setResetPasswordDialog({ open: false, userId: null, newPassword: '' });
+      setPasswordNotifications(prev => ({
+        ...prev,
+        [userId]: { type: 'success', message: 'Password reset successfully!' }
+      }));
+      
+      // Clear notification after 5 seconds
+      setTimeout(() => {
+        setPasswordNotifications(prev => {
+          const { [userId]: _, ...rest } = prev;
+          return rest;
+        });
+      }, 5000);
+    } catch (err: any) {
+      console.error('Failed to reset password:', err);
+      setPasswordNotifications(prev => ({
+        ...prev,
+        [userId]: { type: 'error', message: err?.response?.data?.detail || 'Failed to reset password' }
+      }));
     }
   };
 
@@ -2355,7 +2423,112 @@ export default function AdminDashboard() {
                               <UserCheck className="w-3 h-3" />
                             )}
                           </Button>
+                          
+                          {/* Generate Temp Password Button */}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleGenerateTempPassword(user.id)}
+                            disabled={generateTempPasswordMutation.isPending}
+                            title="Generate temporary password"
+                          >
+                            <Key className="w-3 h-3" />
+                          </Button>
+                          
+                          {/* Reset Password Button */}
+                          <Dialog 
+                            open={resetPasswordDialog.open && resetPasswordDialog.userId === user.id}
+                            onOpenChange={(open) => {
+                              if (!open) {
+                                setResetPasswordDialog({ open: false, userId: null, newPassword: '' });
+                              }
+                            }}
+                          >
+                            <DialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setResetPasswordDialog({ open: true, userId: user.id, newPassword: '' })}
+                                title="Reset password"
+                              >
+                                <RefreshCcw className="w-3 h-3" />
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle>Reset Password for {user.username}</DialogTitle>
+                              </DialogHeader>
+                              <div className="space-y-4">
+                                <div>
+                                  <Label htmlFor="newPassword">New Password</Label>
+                                  <Input
+                                    id="newPassword"
+                                    type="password"
+                                    value={resetPasswordDialog.newPassword}
+                                    onChange={(e) => setResetPasswordDialog(prev => ({ ...prev, newPassword: e.target.value }))}
+                                    placeholder="Enter new password"
+                                  />
+                                </div>
+                                <div className="flex justify-end space-x-2">
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => setResetPasswordDialog({ open: false, userId: null, newPassword: '' })}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleResetPassword(user.id, resetPasswordDialog.newPassword)}
+                                    disabled={!resetPasswordDialog.newPassword || adminResetPasswordMutation.isPending}
+                                  >
+                                    Reset Password
+                                  </Button>
+                                </div>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
                         </div>
+                        
+                        {/* Password Management Notifications */}
+                        {passwordNotifications[user.id] && (
+                          <div className={`mt-2 p-2 rounded text-xs ${
+                            passwordNotifications[user.id].type === 'success' 
+                              ? 'bg-green-50 dark:bg-green-900/50 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' 
+                              : 'bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                          }`}>
+                            {passwordNotifications[user.id].message}
+                          </div>
+                        )}
+                        
+                        {/* Temporary Password Display */}
+                        {tempPasswordResult && tempPasswordResult.userId === user.id && (
+                          <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 rounded text-sm">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <strong>Temporary Password:</strong>
+                                <code className="ml-2 px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-800 dark:text-blue-200">
+                                  {tempPasswordResult.password}
+                                </code>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(tempPasswordResult.password);
+                                  setPasswordNotifications(prev => ({
+                                    ...prev,
+                                    [user.id]: { type: 'success', message: 'Password copied to clipboard!' }
+                                  }));
+                                }}
+                                title="Copy password"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="text-xs text-blue-600 dark:text-blue-300 mt-1">
+                              This password expires in 24 hours. User should change it after login.
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

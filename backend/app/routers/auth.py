@@ -71,6 +71,14 @@ class EmailVerification(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+class ChangeUsernameRequest(BaseModel):
+    new_username: str
+
 # Dependency to get current user from token or cookie
 async def get_current_user(
     db: Session = Depends(get_db),
@@ -536,3 +544,75 @@ async def logout(
     
     # In a more sophisticated setup, you might want to blacklist the token
     return {"message": "Successfully logged out and cookies cleared"}
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    request: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Change user password"""
+    # Validate password confirmation
+    if request.new_password != request.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password and confirmation password do not match"
+        )
+    
+    # Validate input security
+    validate_input_security(password=request.new_password)
+    
+    try:
+        success = AuthService.change_password(
+            db=db,
+            user_id=current_user.id,
+            current_password=request.current_password,
+            new_password=request.new_password
+        )
+        
+        if success:
+            return {"message": "Password changed successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to change password"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while changing password"
+        )
+
+@router.post("/change-username", status_code=status.HTTP_200_OK)
+async def change_username(
+    request: ChangeUsernameRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Change username"""
+    # Validate input security
+    validate_input_security(username=request.new_username)
+    
+    try:
+        success = AuthService.change_username(
+            db=db,
+            user_id=current_user.id,
+            new_username=request.new_username
+        )
+        
+        if success:
+            return {"message": "Username changed successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to change username"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while changing username"
+        )

@@ -337,6 +337,20 @@ export const apiService = {
     await api.post('/auth/logout');
   },
 
+  async changePassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void> {
+    await api.post('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    });
+  },
+
+  async changeUsername(newUsername: string): Promise<void> {
+    await api.post('/auth/change-username', {
+      new_username: newUsername,
+    });
+  },
+
   // Collaboration endpoints
   async createSession(request: CreateSessionRequest): Promise<SessionResponse> {
     const response = await api.post('/collaboration/sessions', request);
@@ -413,6 +427,19 @@ export const apiService = {
 
   async activateUser(userId: number): Promise<void> {
     await api.post(`/admin/users/${userId}/activate`);
+  },
+
+  // Admin Password Management
+  async generateTempPassword(userId: number): Promise<{ message: string; temp_password: string; expires_in_hours: number }> {
+    const response = await api.post(`/admin/users/${userId}/generate-temp-password`);
+    return response.data;
+  },
+
+  async adminResetPassword(userId: number, newPassword: string): Promise<void> {
+    await api.post(`/admin/users/${userId}/reset-password`, {
+      user_id: userId,
+      new_password: newPassword,
+    });
   },
 
   // AI Grading endpoint
