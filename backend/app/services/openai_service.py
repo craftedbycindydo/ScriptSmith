@@ -242,7 +242,9 @@ Code to analyze:
         template_info: Dict[str, Any],
         submissions: list,
         grade_scale: int,
-        leniency: int
+        leniency: int,
+        enable_robustness: bool = False,
+        enable_quality: bool = False
     ) -> Dict[str, Any]:
         """
         Grade multiple code submissions in a single API call
@@ -252,6 +254,8 @@ Code to analyze:
             submissions: List of student submissions to grade
             grade_scale: Grading scale (10, 50, or 100)
             leniency: Leniency percentage (0-100)
+            enable_robustness: Whether to grade robustness (advanced)
+            enable_quality: Whether to grade code quality (advanced)
             
         Returns:
             Dict with grades for each student and any errors
@@ -269,7 +273,7 @@ Code to analyze:
         try:
             # Create the batch grading prompt
             prompt = self._create_batch_grading_prompt(
-                template_info, submissions, grade_scale, leniency
+                template_info, submissions, grade_scale, leniency, enable_robustness, enable_quality
             )
             
             # Create SSL context for secure connections
@@ -344,7 +348,9 @@ Code to analyze:
         template_info: Dict[str, Any], 
         submissions: list, 
         grade_scale: int, 
-        leniency: int
+        leniency: int,
+        enable_robustness: bool = False,
+        enable_quality: bool = False
     ) -> str:
         """Create a deterministic, evidence-based prompt for batch grading"""
         
@@ -353,13 +359,39 @@ Code to analyze:
         language = template_info.get('language', 'Unknown')
         description = template_info.get('description', 'No description provided')
         
-        # Base scoring weights (sum to 1.0)
-        base_weights = {
-            "correctness": 0.65,  # Did it fulfill template instructions/requirements?
-            "robustness": 0.10,   # Handles edge cases, avoids crashes
-            "quality": 0.15,      # Variable/function naming, code structure (NOT student comments)
-            "effort": 0.10        # Complexity of attempt, debugging signs (NOT student comments)
-        }
+        # Base scoring weights (adjusted based on enabled criteria)
+        if enable_robustness and enable_quality:
+            # All criteria enabled - use full weights
+            base_weights = {
+                "correctness": 0.65,  # Did it fulfill template instructions/requirements?
+                "robustness": 0.10,   # Handles edge cases, avoids crashes
+                "quality": 0.15,      # Variable/function naming, code structure (NOT student comments)
+                "effort": 0.10        # Complexity of attempt, debugging signs (NOT student comments)
+            }
+        elif enable_robustness and not enable_quality:
+            # Only robustness enabled - redistribute quality weight
+            base_weights = {
+                "correctness": 0.73,  # 0.65 + 0.15*0.53 (most of quality weight)
+                "robustness": 0.10,   # Keep robustness
+                "quality": 0.0,       # Disabled
+                "effort": 0.17        # 0.10 + 0.15*0.47 (some of quality weight)
+            }
+        elif enable_quality and not enable_robustness:
+            # Only quality enabled - redistribute robustness weight
+            base_weights = {
+                "correctness": 0.73,  # 0.65 + 0.10*0.8 (most of robustness weight)
+                "robustness": 0.0,    # Disabled
+                "quality": 0.15,      # Keep quality
+                "effort": 0.12        # 0.10 + 0.10*0.2 (some of robustness weight)
+            }
+        else:
+            # Both disabled - focus only on correctness and effort
+            base_weights = {
+                "correctness": 0.85,  # 0.65 + 0.25*0.8 (most of advanced weights)
+                "robustness": 0.0,    # Disabled
+                "quality": 0.0,       # Disabled
+                "effort": 0.15        # 0.10 + 0.25*0.2 (some of advanced weights)
+            }
         
         prompt = f"""
 You are an expert {language} instructor grading {len(submissions)} code submissions **individually**.
@@ -384,22 +416,72 @@ GRADING SCALE
 You must compute sub-scores first, then the final score:
 
 - **correctness**: did it fulfill the template instructions and produce expected behavior/output?
-- **robustness**: handles edge cases, avoids crashes for plausible inputs  
-- **quality**: clarity, structure, modularity, meaningful naming (IGNORE student comments completely)
-- **effort**: evidence of thoughtful attempt (non-trivial logic, meaningful approach, debugging attempts - IGNORE student comments)
+- **effort**: evidence of thoughtful attempt (non-trivial logic, meaningful approach, debugging attempts - IGNORE student comments)"""
+
+        # Add optional criteria only if enabled
+        if enable_quality:
+            prompt += f"""
+- **quality**: clarity, structure, modularity, meaningful naming (IGNORE student comments completely)"""
+        
+        if enable_robustness:
+            prompt += f"""
+- **robustness**: handles edge cases, avoids crashes for plausible inputs"""
+        
+        # Add note about disabled criteria
+        disabled_criteria = []
+        if not enable_quality:
+            disabled_criteria.append("code quality")
+        if not enable_robustness:
+            disabled_criteria.append("robustness")
+        
+        if disabled_criteria:
+            prompt += f"""
+
+⚠️  **DISABLED CRITERIA**: {', '.join(disabled_criteria)} scoring is disabled - focus on correctness and effort only."""
+        
+        prompt += f"""
 
 LENIENCY = {leniency}% (0–100)
 
-Leniency adjusts only quality and robustness weightings (not correctness).
+Leniency adjusts only enabled quality and robustness weightings (not correctness).
 
-Recalculate effective weights as:
+Recalculate effective weights as:"""
+
+        if enable_quality and enable_robustness:
+            prompt += f"""
 - quality_eff = {base_weights['quality']} * (1 - {leniency}/100)
 - robustness_eff = {base_weights['robustness']} * (1 - {leniency}/100)
 
 Shift the removed mass equally to correctness and effort:
 - delta = ({base_weights['quality']} * ({leniency}/100) + {base_weights['robustness']} * ({leniency}/100))
 - correctness_eff = {base_weights['correctness']} + delta * 0.85
-- effort_eff = {base_weights['effort']} + delta * 0.15
+- effort_eff = {base_weights['effort']} + delta * 0.15"""
+        elif enable_quality and not enable_robustness:
+            prompt += f"""
+- quality_eff = {base_weights['quality']} * (1 - {leniency}/100)
+- robustness_eff = 0 (disabled)
+
+Shift the removed mass equally to correctness and effort:
+- delta = ({base_weights['quality']} * ({leniency}/100))
+- correctness_eff = {base_weights['correctness']} + delta * 0.85
+- effort_eff = {base_weights['effort']} + delta * 0.15"""
+        elif enable_robustness and not enable_quality:
+            prompt += f"""
+- quality_eff = 0 (disabled)
+- robustness_eff = {base_weights['robustness']} * (1 - {leniency}/100)
+
+Shift the removed mass equally to correctness and effort:
+- delta = ({base_weights['robustness']} * ({leniency}/100))
+- correctness_eff = {base_weights['correctness']} + delta * 0.85
+- effort_eff = {base_weights['effort']} + delta * 0.15"""
+        else:
+            prompt += f"""
+- quality_eff = 0 (disabled)
+- robustness_eff = 0 (disabled)
+- correctness_eff = {base_weights['correctness']} (no leniency adjustment needed)
+- effort_eff = {base_weights['effort']} (no leniency adjustment needed)"""
+        
+        prompt += f"""
 
 Normalize so all effective weights sum to 1.0 before scoring.
 
@@ -414,9 +496,18 @@ b. **Implementation vs Instructions**: compare student's approach to template re
 Compute sub-scores on a 0–1 scale:
 
 - **correctness**: 1.0 for fully correct implementation of template instructions (which may be in template comments); partial credit if major functions pass or output matches requirements; 0 if non-running or unrelated to template requirements.
-- **robustness**: credit for handling edge cases, avoiding obvious crashes, reasonable error handling.
-- **quality**: meaningful variable/function names, code decomposition/structure, readable flow (do NOT consider STUDENT comments at all; do not nitpick cosmetic style).
-- **effort**: credit non-trivial attempts (e.g., multiple functions, visible debugging attempts, tests, iterative logic), even if buggy (do NOT consider STUDENT comments as effort indicators).
+- **effort**: credit non-trivial attempts (e.g., multiple functions, visible debugging attempts, tests, iterative logic), even if buggy (do NOT consider STUDENT comments as effort indicators)."""
+
+        # Add enabled criteria descriptions
+        if enable_quality:
+            prompt += f"""
+- **quality**: meaningful variable/function names, code decomposition/structure, readable flow (do NOT consider STUDENT comments at all; do not nitpick cosmetic style)."""
+        
+        if enable_robustness:
+            prompt += f"""
+- **robustness**: credit for handling edge cases, avoiding obvious crashes, reasonable error handling."""
+        
+        prompt += f"""
 
 Final score = round( {grade_scale} * Σ(effective_weight_i * subscore_i) , 1 ).
 
@@ -450,9 +541,16 @@ Return only this JSON (no prose outside JSON). Use an array so we can handle any
       "score": "<number 0–{grade_scale} rounded to 1 decimal>",
       "subscores": {{
         "correctness": "<0–1>",
-        "robustness": "<0–1>", 
-        "quality": "<0–1>",
-        "effort": "<0–1>"
+        "effort": "<0–1>"""
+
+        # Add enabled criteria to subscores format
+        if enable_quality:
+            prompt += ',\n        "quality": "<0–1>"'
+        
+        if enable_robustness:
+            prompt += ',\n        "robustness": "<0–1>"'
+        
+        prompt += f"""
       }},
       "evidence": {{
         "output_match": "describe exact matches/diffs vs expected (or 'no expected output provided')",

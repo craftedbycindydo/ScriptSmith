@@ -21,7 +21,9 @@ import {
   Clock,
   Download,
   Users,
-  Brain
+  Brain,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
 
@@ -53,6 +55,9 @@ const TemplateSubmissions: React.FC = () => {
   const [useAIGrading, setUseAIGrading] = useState(false);
   const [gradeScale, setGradeScale] = useState<'10' | '50' | '100'>('100');
   const [leniency, setLeniency] = useState([50]); // 0-100 scale
+  const [enableRobustness, setEnableRobustness] = useState(false); // Advanced: edge cases, crashes
+  const [enableQuality, setEnableQuality] = useState(false); // Advanced: code style, naming
+  const [showAdvancedCriteria, setShowAdvancedCriteria] = useState(false); // Control collapsible section
   const [isGrading, setIsGrading] = useState(false);
   const [gradingProgress, setGradingProgress] = useState(0);
   const [_aiGrades, setAiGrades] = useState<{[key: string]: number}>({}); // Store AI grades for potential future use
@@ -319,7 +324,9 @@ const TemplateSubmissions: React.FC = () => {
             },
             submissions: batch,
             grade_scale: parseInt(gradeScale),
-            leniency: leniency[0]
+            leniency: leniency[0],
+            enable_robustness: enableRobustness,
+            enable_quality: enableQuality
           };
           
           const result = await apiService.gradeSubmissionsBatch(batchRequest);
@@ -769,6 +776,79 @@ const TemplateSubmissions: React.FC = () => {
                           <span>Strict</span>
                           <span>Lenient</span>
                         </div>
+                      </div>
+
+                      {/* Advanced Grading Criteria - Collapsible */}
+                      <div className="pt-4 border-t">
+                        {/* Collapsible Header */}
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvancedCriteria(!showAdvancedCriteria)}
+                          className="w-full flex items-center justify-between p-3 text-left bg-orange-50 hover:bg-orange-100 dark:bg-orange-950 dark:hover:bg-orange-900 rounded-lg transition-colors border border-orange-200 dark:border-orange-700"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <Label className="text-base font-medium text-orange-600 dark:text-orange-400 cursor-pointer">
+                              Advanced Criteria (Optional)
+                            </Label>
+                            {(enableQuality || enableRobustness) && (
+                              <span className="px-2 py-1 bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 text-xs rounded-full">
+                                {[enableQuality && 'Quality', enableRobustness && 'Robustness'].filter(Boolean).join(', ')} enabled
+                              </span>
+                            )}
+                          </div>
+                          {showAdvancedCriteria ? (
+                            <ChevronUp className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                          )}
+                        </button>
+                        
+                        {/* Collapsible Content */}
+                        {showAdvancedCriteria && (
+                          <div className="space-y-3 mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <p className="text-xs text-muted-foreground">
+                              These are advanced concepts - disable for beginners learning basic programming
+                            </p>
+                            
+                            {/* Code Quality Toggle */}
+                            <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-600">
+                              <div className="flex-1">
+                                <Label htmlFor="quality-toggle" className="text-sm font-medium cursor-pointer">
+                                  Code Quality Assessment
+                                </Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Variable naming, code structure, readability, best practices
+                                </p>
+                              </div>
+                              <input
+                                id="quality-toggle"
+                                type="checkbox"
+                                checked={enableQuality}
+                                onChange={(e) => setEnableQuality(e.target.checked)}
+                                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                              />
+                            </div>
+
+                            {/* Robustness Toggle */}
+                            <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-600">
+                              <div className="flex-1">
+                                <Label htmlFor="robustness-toggle" className="text-sm font-medium cursor-pointer">
+                                  Robustness Assessment
+                                </Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Edge case handling, error management, crash prevention
+                                </p>
+                              </div>
+                              <input
+                                id="robustness-toggle"
+                                type="checkbox"
+                                checked={enableRobustness}
+                                onChange={(e) => setEnableRobustness(e.target.checked)}
+                                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
