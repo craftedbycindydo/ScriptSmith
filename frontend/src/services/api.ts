@@ -415,6 +415,17 @@ export const apiService = {
     await api.post(`/admin/users/${userId}/activate`);
   },
 
+  // AI Grading endpoint
+  async gradeSubmissionsBatch(request: {
+    template_info: any;
+    submissions: any[];
+    grade_scale: number;
+    leniency: number;
+  }): Promise<any> {
+    const response = await api.post('/admin/grade-submissions-batch', request);
+    return response.data;
+  },
+
   // Template endpoints
   async getTemplates(language?: string): Promise<TemplateListItem[]> {
     const params = language ? `?language=${encodeURIComponent(language)}` : '';
