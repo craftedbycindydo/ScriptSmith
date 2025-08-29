@@ -266,15 +266,21 @@ export function useGenerateTempPassword() {
   });
 }
 
-export function useAdminResetPassword() {
+export function useAdminResetUsername() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ userId, newPassword }: { userId: number; newPassword: string }) => 
-      apiService.adminResetPassword(userId, newPassword),
+    mutationFn: ({ userId, newUsername }: { userId: number; newUsername: string }) => 
+      apiService.adminResetUsername(userId, newUsername),
     onSuccess: () => {
       // Invalidate users data to reflect any changes
       queryClient.invalidateQueries({ queryKey: adminQueryKeys.users });
     },
+  });
+}
+
+export function useAdminForceLogoutUser() {
+  return useMutation({
+    mutationFn: (userId: number) => apiService.adminForceLogoutUser(userId),
   });
 }
