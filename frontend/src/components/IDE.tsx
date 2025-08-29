@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-
-
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import CodeEditor from './CodeEditor';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
@@ -16,7 +13,7 @@ import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
-import { Play, Save, Download, Share2, Users, MoreHorizontal, Send, CheckCircle } from 'lucide-react';
+import { Play, Save, Download, Share2, Users, Send, CheckCircle } from 'lucide-react';
 
 export default function IDE() {
   const navigate = useNavigate();
@@ -457,90 +454,188 @@ export default function IDE() {
         <div className="px-4 py-3 md:px-6 lg:px-8">
           <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between space-y-3 xl:space-y-0 xl:space-x-6">
             {/* Language and Template selectors */}
-            <div className="flex flex-col lg:flex-row items-start lg:items-center space-y-2 lg:space-y-0 lg:space-x-4 w-full lg:w-auto">
-              {/* Language selector */}
-              <div className="w-full sm:w-auto sm:min-w-[180px] lg:min-w-[200px]">
-                <LanguageSelector
-                  selectedLanguage={language}
-                  languages={languages}
-                  onLanguageChange={setLanguage}
-                />
-              </div>
-              
-              {/* Template selector - only for authenticated users */}
-              {isAuthenticated && (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full lg:w-auto">
-                  <div className="w-full sm:w-auto sm:flex-1 sm:max-w-[200px] lg:max-w-[220px]">
-                    <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
-                      <SelectTrigger 
-                        size="sm" 
-                        disabled={loadingTemplates}
-                        className="w-full"
-                      >
-                        <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedAdminTemplateName && (
-                          <SelectItem value="clear-admin">
-                            <span className="text-muted-foreground">Clear selection</span>
-                          </SelectItem>
-                        )}
-                        {!templates || templates.length === 0 ? (
-                          <SelectItem value="no-templates" disabled>
-                            No professor templates available
-                          </SelectItem>
-                        ) : (
-                          templates.map((template) => template && template.id ? (
-                            <SelectItem key={template.id} value={template.id.toString()}>
-                              {template.name || 'Untitled Template'}
-                              {template.description && (
-                                <span className="text-muted-foreground text-xs ml-1">
-                                  - {template.description}
-                                </span>
-                              )}
-                            </SelectItem>
-                          ) : null)
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="w-full sm:w-auto sm:flex-1 sm:max-w-[200px] lg:max-w-[220px]">
-                    <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
-                      <SelectTrigger 
-                        size="sm" 
-                        disabled={loadingUserTemplates}
-                        className="w-full"
-                      >
-                        <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedUserTemplateName && (
-                          <SelectItem value="clear-user">
-                            <span className="text-muted-foreground">Clear selection</span>
-                          </SelectItem>
-                        )}
-                        {!userTemplates || userTemplates.length === 0 ? (
-                          <SelectItem value="no-user-templates" disabled>
-                            No personal templates saved
-                          </SelectItem>
-                        ) : (
-                          userTemplates.map((template) => template && template.id ? (
-                            <SelectItem key={template.id} value={template.id.toString()}>
-                              {template.name || 'Untitled Template'}
-                              {template.description && (
-                                <span className="text-muted-foreground text-xs ml-1">
-                                  - {template.description}
-                                </span>
-                              )}
-                            </SelectItem>
-                          ) : null)
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
+            <div className="w-full lg:w-auto">
+              {/* Mobile: Compact grid layout */}
+              <div className="grid grid-cols-3 gap-1.5 lg:hidden">
+                {/* Language selector */}
+                <div className="col-span-1">
+                  <LanguageSelector
+                    selectedLanguage={language}
+                    languages={languages}
+                    onLanguageChange={setLanguage}
+                  />
                 </div>
-              )}
+                
+                {/* Template selectors - only for authenticated users */}
+                {isAuthenticated && (
+                  <>
+                    <div className="col-span-1">
+                      <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
+                        <SelectTrigger 
+                          size="sm" 
+                          disabled={loadingTemplates}
+                          className="w-full"
+                        >
+                          <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedAdminTemplateName && (
+                            <SelectItem value="clear-admin">
+                              <span className="text-muted-foreground">Clear selection</span>
+                            </SelectItem>
+                          )}
+                          {!templates || templates.length === 0 ? (
+                            <SelectItem value="no-templates" disabled>
+                              No professor templates available
+                            </SelectItem>
+                          ) : (
+                            templates.map((template) => template && template.id ? (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name || 'Untitled Template'}
+                                {template.description && (
+                                  <span className="text-muted-foreground text-xs ml-1">
+                                    - {template.description}
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ) : null)
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="col-span-1">
+                      <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
+                        <SelectTrigger 
+                          size="sm" 
+                          disabled={loadingUserTemplates}
+                          className="w-full"
+                        >
+                          <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedUserTemplateName && (
+                            <SelectItem value="clear-user">
+                              <span className="text-muted-foreground">Clear selection</span>
+                            </SelectItem>
+                          )}
+                          {!userTemplates || userTemplates.length === 0 ? (
+                            <SelectItem value="no-user-templates" disabled>
+                              No personal templates saved
+                            </SelectItem>
+                          ) : (
+                            userTemplates.map((template) => template && template.id ? (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name || 'Untitled Template'}
+                                {template.description && (
+                                  <span className="text-muted-foreground text-xs ml-1">
+                                    - {template.description}
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ) : null)
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                )}
+                
+                {/* Fill empty space when not authenticated */}
+                {!isAuthenticated && (
+                  <>
+                    <div className="col-span-1"></div>
+                    <div className="col-span-1"></div>
+                  </>
+                )}
+              </div>
+
+              {/* Desktop: Original horizontal layout */}
+              <div className="hidden lg:flex lg:items-center lg:space-x-4">
+                {/* Language selector */}
+                <div className="min-w-[200px]">
+                  <LanguageSelector
+                    selectedLanguage={language}
+                    languages={languages}
+                    onLanguageChange={setLanguage}
+                  />
+                </div>
+                
+                {/* Template selector - only for authenticated users */}
+                {isAuthenticated && (
+                  <div className="flex items-center gap-4">
+                    <div className="max-w-[220px]">
+                      <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
+                        <SelectTrigger 
+                          size="sm" 
+                          disabled={loadingTemplates}
+                          className="w-full"
+                        >
+                          <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedAdminTemplateName && (
+                            <SelectItem value="clear-admin">
+                              <span className="text-muted-foreground">Clear selection</span>
+                            </SelectItem>
+                          )}
+                          {!templates || templates.length === 0 ? (
+                            <SelectItem value="no-templates" disabled>
+                              No professor templates available
+                            </SelectItem>
+                          ) : (
+                            templates.map((template) => template && template.id ? (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name || 'Untitled Template'}
+                                {template.description && (
+                                  <span className="text-muted-foreground text-xs ml-1">
+                                    - {template.description}
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ) : null)
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="max-w-[220px]">
+                      <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
+                        <SelectTrigger 
+                          size="sm" 
+                          disabled={loadingUserTemplates}
+                          className="w-full"
+                        >
+                          <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedUserTemplateName && (
+                            <SelectItem value="clear-user">
+                              <span className="text-muted-foreground">Clear selection</span>
+                            </SelectItem>
+                          )}
+                          {!userTemplates || userTemplates.length === 0 ? (
+                            <SelectItem value="no-user-templates" disabled>
+                              No personal templates saved
+                            </SelectItem>
+                          ) : (
+                            userTemplates.map((template) => template && template.id ? (
+                              <SelectItem key={template.id} value={template.id.toString()}>
+                                {template.name || 'Untitled Template'}
+                                {template.description && (
+                                  <span className="text-muted-foreground text-xs ml-1">
+                                    - {template.description}
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ) : null)
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             
             {/* Action buttons */}
@@ -548,7 +643,7 @@ export default function IDE() {
               <Button
                 onClick={handleRunCode}
                 disabled={isLoading}
-                className="btn-success flex-1 sm:flex-none"
+                className="btn-success flex sm:inline-flex"
                 size="sm"
               >
                 <Play className="w-4 h-4 mr-1 lg:mr-2" />
@@ -563,7 +658,7 @@ export default function IDE() {
                   disabled={!canSubmit}
                   variant={hasSubmitted && !canSubmit ? "secondary" : "default"}
                   size="sm"
-                  className="flex-1 sm:flex-none"
+                  className="flex sm:inline-flex"
                   title={(hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : ''}
                 >
                   {hasSubmitted && !canSubmit ? (
@@ -589,7 +684,7 @@ export default function IDE() {
                   size="sm" 
                   onClick={handleCreateShare}
                   disabled={creating}
-                  className="flex-1 sm:flex-none"
+                  className="flex sm:inline-flex"
                 >
                   <Share2 className="w-4 h-4 mr-1 sm:mr-2" />
                   <span className="hidden sm:inline">{creating ? 'Creating...' : 'Share'}</span>
@@ -597,40 +692,19 @@ export default function IDE() {
                 </Button>
               )}
 
-              {/* Save button - only for authenticated users */}
+              {/* Save button - visible on mobile with text */}
               {isAuthenticated && (
-                <Button variant="outline" onClick={handleSave} size="sm" className="hidden md:flex">
+                <Button variant="outline" onClick={handleSave} size="sm" className="flex sm:inline-flex">
                   <Save className="w-4 h-4 mr-2" />
-                  Save
+                  <span>Save</span>
                 </Button>
               )}
-              <Button variant="outline" onClick={handleDownload} size="sm" className="hidden lg:flex">
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
               
-                             {/* Mobile dropdown for extra actions */}
-               <div className="block md:hidden">
-                 <DropdownMenu>
-                   <DropdownMenuTrigger asChild>
-                     <Button variant="outline" size="sm" className="px-2">
-                       <MoreHorizontal className="w-4 h-4" />
-                     </Button>
-                   </DropdownMenuTrigger>
-                   <DropdownMenuContent align="end">
-                     {isAuthenticated && (
-                       <DropdownMenuItem onClick={handleSave}>
-                         <Save className="w-4 h-4 mr-2" />
-                         Save Template
-                       </DropdownMenuItem>
-                     )}
-                     <DropdownMenuItem onClick={handleDownload}>
-                       <Download className="w-4 h-4 mr-2" />
-                       Download Code
-                     </DropdownMenuItem>
-                   </DropdownMenuContent>
-                 </DropdownMenu>
-               </div>
+              {/* Download button - visible on mobile with text */}
+              <Button variant="outline" onClick={handleDownload} size="sm" className="flex sm:inline-flex">
+                <Download className="w-4 h-4 mr-2" />
+                <span>Download</span>
+              </Button>
             </div>
           </div>
         </div>

@@ -86,9 +86,12 @@ export default function Navbar() {
         <div className="flex h-14 items-center">
           {/* Logo */}
           <div className="flex items-center space-x-2">
-            <Code2 className="h-6 w-6 text-primary" />
+            <Code2 
+              className="h-6 w-6 text-primary cursor-pointer hover:text-primary/80 transition-colors" 
+              onClick={() => handleNavigation('/')}
+            />
             <span 
-              className="hidden font-bold sm:inline-block cursor-pointer hover:text-primary transition-colors"
+              className="font-bold cursor-pointer hover:text-primary transition-colors text-sm sm:text-base"
               onClick={() => handleNavigation('/')}
             >
               Scripting Smith
@@ -152,7 +155,7 @@ export default function Navbar() {
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                       <User className="h-4 w-4" />
                     </div>
-                    <span className="hidden sm:inline text-sm font-medium">
+                    <span className="text-sm font-medium max-w-[80px] sm:max-w-none truncate">
                       {user?.username}
                     </span>
                     {isAdmin && (
