@@ -962,34 +962,38 @@ export default function AdminDashboard() {
                   <ChevronDown className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
-                <DropdownMenuItem onClick={() => setActiveTab('overview')}>
-                  <BarChart3 className="w-4 h-4 mr-2" />
-                  System Overview
+              <DropdownMenuContent 
+                className="w-[calc(100vw-2rem)] max-w-none" 
+                align="start" 
+                sideOffset={4}
+              >
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('overview')}>
+                  <BarChart3 className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">System Overview</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('classrooms')}>
-                  <Shield className="w-4 h-4 mr-2" />
-                  Classrooms
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('classrooms')}>
+                  <Shield className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Classrooms</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('templates')}>
-                  <FileText className="w-4 h-4 mr-2" />
-                  Professor Templates
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('templates')}>
+                  <FileText className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Professor Templates</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('assignments')}>
-                  <Code className="w-4 h-4 mr-2" />
-                  Assignments
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('assignments')}>
+                  <Code className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Assignments</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('template-executions')}>
-                  <Play className="w-4 h-4 mr-2" />
-                  Executions
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('template-executions')}>
+                  <Play className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Executions</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('template-submissions')}>
-                  <Send className="w-4 h-4 mr-2" />
-                  Submissions
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('template-submissions')}>
+                  <Send className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Submissions</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setActiveTab('users')}>
-                  <Users className="w-4 h-4 mr-2" />
-                  Users
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('users')}>
+                  <Users className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Users</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2847,8 +2851,8 @@ export default function AdminDashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
                         <span className="flex items-center">
-                          <Play className="w-5 h-5 mr-2" />
-                          Template Executions
+                        <Play className="w-5 h-5 mr-2" />
+                        Template Executions
                         </span>
                         <Badge variant="outline" className="text-xs">
                           {getFilteredTemplateExecutions().length} shown
@@ -3084,8 +3088,8 @@ export default function AdminDashboard() {
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
                         <span className="flex items-center">
-                          <Users className="w-5 h-5 mr-2" />
-                          User Management
+                        <Users className="w-5 h-5 mr-2" />
+                        User Management
                         </span>
                         <Badge variant="outline" className="text-xs">
                           {getFilteredUsers().length} shown
@@ -3144,7 +3148,7 @@ export default function AdminDashboard() {
                                 </div>
                                 <div className="text-xs text-muted-foreground mb-1">
                                   {user.code_executions} executions • {user.collaboration_sessions} sessions
-                                </div>
+                              </div>
                                 <div className="text-xs text-muted-foreground">
                                   Joined: {formatDate(user.created_at)}
                                 </div>
@@ -3231,19 +3235,19 @@ export default function AdminDashboard() {
                                 </Dialog>
                                 
                                 {/* Toggle Activation Button */}
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => toggleUserActivation(user.id, !user.is_active)}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleUserActivation(user.id, !user.is_active)}
                                   className="h-8 w-8 p-0"
                                   title={user.is_active ? 'Deactivate user' : 'Activate user'}
-                                >
-                                  {user.is_active ? (
-                                    <UserX className="w-3 h-3" />
-                                  ) : (
-                                    <UserCheck className="w-3 h-3" />
-                                  )}
-                                </Button>
+                              >
+                                {user.is_active ? (
+                                  <UserX className="w-3 h-3" />
+                                ) : (
+                                  <UserCheck className="w-3 h-3" />
+                                )}
+                              </Button>
                               </div>
                             </div>
                           </div>
@@ -3256,7 +3260,7 @@ export default function AdminDashboard() {
                             <p className="text-xs">
                               {userSearch ? 'Try adjusting your search terms' : 'User data will appear here once users register'}
                             </p>
-                          </div>
+                      </div>
                         )}
                       </div>
                       
