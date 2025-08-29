@@ -906,7 +906,7 @@ export default function Settings() {
                             {passwordLoading ? 'Changing Password...' : 'Change Password'}
                           </Button>
                           <p className="text-xs text-muted-foreground">
-                            ⚠️ Security Notice: Changing your password will automatically log you out of all sessions. You'll need to log back in with your new password.
+                            Note: Changing your password will automatically log you out of all sessions. You'll need to log back in with your new password.
                           </p>
                         </form>
                       </div>
@@ -969,7 +969,7 @@ export default function Settings() {
                             {usernameLoading ? 'Changing Username...' : 'Change Username'}
                           </Button>
                           <p className="text-xs text-muted-foreground">
-                            ℹ️ Note: Username changes don't require logout. Only password changes will log you out for security.
+                            Note: Username changes don't require logout. Only password changes will log you out.
                           </p>
                         </form>
                       </div>
