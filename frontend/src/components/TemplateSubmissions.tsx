@@ -87,7 +87,7 @@ const TemplateSubmissions: React.FC = () => {
 
   useEffect(() => {
     applyFilters();
-  }, [submissions, templateFilter, userFilter, languageFilter, statusFilter, classroomFilter]);
+  }, [submissions, templateFilter, userFilter, languageFilter, statusFilter, classroomFilter, classroomMembers]);
 
   // Fetch classroom members when classroom filter changes
   useEffect(() => {
@@ -182,9 +182,15 @@ const TemplateSubmissions: React.FC = () => {
     }
 
     // Filter by classroom - show submissions only from users in the selected classroom
-    if (classroomFilter !== 'all' && classroomMembers.length > 0) {
-      const classroomUsernames = classroomMembers.map(member => member.username);
-      filtered = filtered.filter(s => classroomUsernames.includes(s.submitted_by_username));
+    if (classroomFilter !== 'all') {
+      if (classroomMembers.length > 0) {
+        const classroomUsernames = classroomMembers.map(member => member.username);
+        filtered = filtered.filter(s => classroomUsernames.includes(s.submitted_by_username));
+      } else {
+        // If classroom is selected but members haven't loaded yet, show empty results
+        // This prevents showing all submissions while loading
+        filtered = [];
+      }
     }
 
     setFilteredSubmissions(filtered);
