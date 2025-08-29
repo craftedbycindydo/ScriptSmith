@@ -1,10 +1,14 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
-from pydantic import BaseModel
-from typing import Optional, List
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, validator
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, and_, or_, text
 from datetime import datetime, timedelta
 import httpx
+import logging
+import time
+from collections import defaultdict
 
 from app.core.config import settings
 from app.database.base import get_db
@@ -18,6 +22,7 @@ from app.models.classroom import Classroom, UserClassroom
 from app.services.admin_service import AdminService
 from app.services.classroom_service import ClassroomService
 from app.services.railway_optimization_service import railway_performance_monitor
+from app.services.openai_service import openai_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,132 @@ router = APIRouter()
 
 # Initialize admin service
 admin_service = AdminService(settings)
+
+# Security logger for audit trails
+security_logger = logging.getLogger("security.admin")
+
+# Rate limiting storage (in production, use Redis)
+grading_rate_limiter = defaultdict(list)
+GRADING_RATE_LIMIT = 20  # Max 20 grading requests per admin per hour
+GRADING_RATE_WINDOW = 3600  # 1 hour in seconds
+
+# Request size limits for grading endpoint
+MAX_SUBMISSIONS_PER_REQUEST = 100
+MAX_SUBMISSION_CODE_SIZE = 50000  # 50KB per submission
+MAX_TEMPLATE_SIZE = 100000  # 100KB for template code
+
+def check_grading_rate_limit(admin_user_id: int, request_ip: str) -> None:
+    """
+    Check if admin user has exceeded rate limit for grading requests.
+    Raises HTTPException if rate limit exceeded.
+    """
+    current_time = time.time()
+    user_requests = grading_rate_limiter[admin_user_id]
+    
+    # Remove old requests outside the time window
+    user_requests[:] = [req_time for req_time in user_requests if current_time - req_time < GRADING_RATE_WINDOW]
+    
+    if len(user_requests) >= GRADING_RATE_LIMIT:
+        security_logger.warning(
+            f"Rate limit exceeded for admin user {admin_user_id} from IP {request_ip}. "
+            f"Attempted {len(user_requests)} requests in last hour (limit: {GRADING_RATE_LIMIT})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Maximum {GRADING_RATE_LIMIT} grading requests per hour allowed."
+        )
+    
+    # Add current request timestamp
+    user_requests.append(current_time)
+    
+    security_logger.info(
+        f"Grading request approved for admin user {admin_user_id} from IP {request_ip}. "
+        f"Request count in last hour: {len(user_requests)}/{GRADING_RATE_LIMIT}"
+    )
+
+def validate_grading_request_security(request: 'BatchGradingRequest', admin_user: User) -> None:
+    """
+    Perform comprehensive security validation on grading request.
+    Raises HTTPException if validation fails.
+    """
+    # Validate number of submissions
+    if len(request.submissions) > MAX_SUBMISSIONS_PER_REQUEST:
+        security_logger.warning(
+            f"Admin user {admin_user.id} attempted to grade {len(request.submissions)} submissions "
+            f"(limit: {MAX_SUBMISSIONS_PER_REQUEST})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many submissions. Maximum {MAX_SUBMISSIONS_PER_REQUEST} submissions per request."
+        )
+    
+    # Validate template size
+    template_content = request.template_info.get('code_content', '')
+    if len(template_content.encode('utf-8')) > MAX_TEMPLATE_SIZE:
+        security_logger.warning(
+            f"Admin user {admin_user.id} attempted to submit template code of size "
+            f"{len(template_content.encode('utf-8'))} bytes (limit: {MAX_TEMPLATE_SIZE})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Template code too large. Maximum {MAX_TEMPLATE_SIZE} bytes allowed."
+        )
+    
+    # Validate each submission size
+    for i, submission in enumerate(request.submissions):
+        code_size = len(submission.get('code', '').encode('utf-8'))
+        if code_size > MAX_SUBMISSION_CODE_SIZE:
+            security_logger.warning(
+                f"Admin user {admin_user.id} attempted to submit code of size {code_size} bytes "
+                f"for submission {i} (limit: {MAX_SUBMISSION_CODE_SIZE})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Submission {i} code too large. Maximum {MAX_SUBMISSION_CODE_SIZE} bytes per submission."
+            )
+    
+    # Validate grade scale and leniency ranges
+    if request.grade_scale not in [10, 50, 100]:
+        security_logger.warning(
+            f"Admin user {admin_user.id} attempted invalid grade scale: {request.grade_scale}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Grade scale must be 10, 50, or 100"
+        )
+    
+    if not (0 <= request.leniency <= 100):
+        security_logger.warning(
+            f"Admin user {admin_user.id} attempted invalid leniency: {request.leniency}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Leniency must be between 0 and 100"
+        )
+    
+    security_logger.info(
+        f"Grading request validation passed for admin user {admin_user.id}. "
+        f"Submissions: {len(request.submissions)}, Grade scale: {request.grade_scale}, "
+        f"Leniency: {request.leniency}"
+    )
+
+def get_client_ip(request: Request) -> str:
+    """
+    Safely extract client IP address from request headers.
+    """
+    # Check for forwarded IP (behind proxy/load balancer)
+    forwarded_for = request.headers.get('x-forwarded-for')
+    if forwarded_for:
+        # Take the first IP in the chain (client IP)
+        return forwarded_for.split(',')[0].strip()
+    
+    # Check for real IP header
+    real_ip = request.headers.get('x-real-ip')
+    if real_ip:
+        return real_ip.strip()
+    
+    # Fallback to client host
+    return request.client.host if request.client else 'unknown'
 
 class UserActivityItem(BaseModel):
     id: int
@@ -670,6 +801,20 @@ async def get_admin_settings(
 class AdminSettingsUpdate(BaseModel):
     copy_paste_enabled: bool
     notes: Optional[str] = None
+
+# AI Grading Models
+class BatchGradingRequest(BaseModel):
+    template_info: dict  # Template details (name, description, language)
+    submissions: List[dict]  # List of submissions with masked data
+    grade_scale: int  # 10, 50, or 100
+    leniency: int  # 0-100
+
+class BatchGradingResponse(BaseModel):
+    success: bool
+    grades: dict  # username -> grade mapping
+    reasoning: Optional[str] = None
+    errors: List[str] = []
+    batches_processed: int = 1
 
 
 @router.put("/admin/settings")
@@ -1377,3 +1522,170 @@ async def clear_admin_cache(
             "error": str(e),
             "message": "Failed to clear cache"
         }
+
+@router.post("/admin/grade-submissions-batch", response_model=BatchGradingResponse)
+async def grade_submissions_batch(
+    request: BatchGradingRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Grade multiple code submissions using AI with smart batching.
+    Optimizes API calls by batching submissions based on token limits.
+    
+    Security Features:
+    - Requires admin authentication with proper role verification
+    - Rate limiting: 20 requests per admin per hour
+    - Request size validation and limits
+    - Security audit logging
+    - Input validation and sanitization
+    """
+    try:
+        # Extract client IP for security logging
+        client_ip = get_client_ip(http_request)
+        
+        # Security audit log - request start
+        security_logger.info(
+            f"AI grading request initiated by admin user {admin_user.id} ({admin_user.username}) "
+            f"from IP {client_ip}. Request contains {len(request.submissions)} submissions."
+        )
+        
+        # Check rate limiting
+        check_grading_rate_limit(admin_user.id, client_ip)
+        
+        # Comprehensive security validation
+        validate_grading_request_security(request, admin_user)
+        
+        # Additional authentication verification (double-check admin status)
+        if not admin_service.has_admin_access(admin_user):
+            security_logger.warning(
+                f"Unauthorized grading attempt by user {admin_user.id} ({admin_user.username}) "
+                f"from IP {client_ip} - insufficient admin privileges"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient admin privileges for AI grading"
+            )
+        if not request.submissions:
+            return BatchGradingResponse(
+                success=True,
+                grades={},
+                reasoning="No submissions to grade",
+                errors=[],
+                batches_processed=0
+            )
+        
+        # Validate grade scale
+        if request.grade_scale not in [10, 50, 100]:
+            raise HTTPException(
+                status_code=400,
+                detail="Grade scale must be 10, 50, or 100"
+            )
+        
+        # Validate leniency
+        if not (0 <= request.leniency <= 100):
+            raise HTTPException(
+                status_code=400,
+                detail="Leniency must be between 0 and 100"
+            )
+        
+        logger.info(f"Starting batch grading for {len(request.submissions)} submissions")
+        
+        # Calculate optimal batch size based on token limits (including template code)
+        template_info_str = f"{request.template_info.get('name', '')} {request.template_info.get('description', '')} {request.template_info.get('code_content', '')}"
+        optimal_batch_size = openai_service.calculate_batch_size(template_info_str, request.submissions)
+        
+        logger.info(f"Calculated optimal batch size: {optimal_batch_size}")
+        
+        # Split submissions into batches
+        batches = []
+        for i in range(0, len(request.submissions), optimal_batch_size):
+            batch = request.submissions[i:i + optimal_batch_size]
+            batches.append(batch)
+        
+        logger.info(f"Split into {len(batches)} batches")
+        
+        # Process each batch
+        all_grades = {}
+        all_errors = []
+        successful_batches = 0
+        
+        for batch_num, batch in enumerate(batches, 1):
+            logger.info(f"Processing batch {batch_num}/{len(batches)} with {len(batch)} submissions")
+            
+            try:
+                # Process batch with AI
+                batch_result = await openai_service.grade_code_batch(
+                    template_info=request.template_info,
+                    submissions=batch,
+                    grade_scale=request.grade_scale,
+                    leniency=request.leniency
+                )
+                
+                if batch_result.get("available", False):
+                    all_grades.update(batch_result.get("grades", {}))
+                    if batch_result.get("errors"):
+                        all_errors.extend(batch_result["errors"])
+                    successful_batches += 1
+                    logger.info(f"Batch {batch_num} completed successfully")
+                else:
+                    # AI service failed, no fallback
+                    logger.warning(f"Batch {batch_num} failed: {batch_result.get('errors', ['AI grading failed'])}")
+                    all_errors.extend(batch_result.get("errors", ["AI grading failed for this batch"]))
+                
+            except Exception as batch_error:
+                logger.error(f"Error processing batch {batch_num}: {str(batch_error)}")
+                # No fallback grading - just record the error
+                all_errors.append(f"Batch {batch_num} failed: {str(batch_error)}")
+        
+        # Determine overall success - only successful if AI actually graded
+        success = successful_batches > 0 and len(all_grades) > 0
+        
+        reasoning = f"Processed {len(batches)} batches. "
+        if successful_batches == len(batches):
+            reasoning += "All batches completed successfully with AI grading."
+        elif successful_batches > 0:
+            reasoning += f"{successful_batches}/{len(batches)} batches completed successfully with AI grading."
+        else:
+            reasoning += "AI grading failed for all batches."
+        
+        logger.info(f"Batch grading completed: {len(all_grades)} grades generated")
+        
+        # Security audit log - request completed successfully
+        security_logger.info(
+            f"AI grading request completed successfully for admin user {admin_user.id} "
+            f"from IP {client_ip}. Generated {len(all_grades)} grades from {successful_batches}/{len(batches)} batches."
+        )
+        
+        return BatchGradingResponse(
+            success=success,
+            grades=all_grades,
+            reasoning=reasoning,
+            errors=all_errors,
+            batches_processed=len(batches)
+        )
+        
+    except HTTPException as he:
+        # Security audit log - request failed due to client error or authentication issue
+        if he.status_code in [400, 401, 403, 429]:
+            security_logger.warning(
+                f"AI grading request rejected for admin user {admin_user.id if 'admin_user' in locals() else 'unknown'} "
+                f"from IP {client_ip if 'client_ip' in locals() else 'unknown'}. "
+                f"Status: {he.status_code}, Detail: {he.detail}"
+            )
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch grading endpoint: {str(e)}")
+        
+        # Security audit log - unexpected error
+        security_logger.error(
+            f"AI grading request failed with unexpected error for admin user "
+            f"{admin_user.id if 'admin_user' in locals() else 'unknown'} "
+            f"from IP {client_ip if 'client_ip' in locals() else 'unknown'}. Error: {str(e)}"
+        )
+        
+        raise HTTPException(
+            status_code=500,
+            detail="AI grading service temporarily unavailable"  # Don't expose internal error details
+        )
