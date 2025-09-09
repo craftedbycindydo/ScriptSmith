@@ -575,10 +575,10 @@ class TemplateService:
         """Get submissions with filters (similar to executions)"""
         query = db.query(TemplateSubmission)
         
-        if template_id:
+        if template_id is not None:
             query = query.filter(TemplateSubmission.template_id == template_id)
         
-        if user_id:
+        if user_id is not None:
             query = query.filter(TemplateSubmission.user_id == user_id)
         
         if status:
@@ -594,7 +594,7 @@ class TemplateService:
         """Get submission statistics"""
         query = db.query(TemplateSubmission)
         
-        if template_id:
+        if template_id is not None:
             query = query.filter(TemplateSubmission.template_id == template_id)
         
         total_submissions = query.count()
@@ -607,7 +607,7 @@ class TemplateService:
             func.count(TemplateSubmission.id).label('count')
         )
         
-        if template_id:
+        if template_id is not None:
             language_stats = language_stats.filter(TemplateSubmission.template_id == template_id)
         
         language_stats = language_stats.group_by(TemplateSubmission.language).all()

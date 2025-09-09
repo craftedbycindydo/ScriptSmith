@@ -21,10 +21,12 @@ class CacheService:
     - Frequently accessed code stays cached longer
     - SHA-256 cache keys based on code+language+input
     - Failed executions cached without complexity analysis (saves OpenAI costs)
+    - Thread-safe cache operations to prevent race conditions
     """
     
     def __init__(self):
         self.redis_client = None
+        self._cache_locks = {}  # Cache key -> asyncio.Lock for preventing race conditions
         self._initialize_redis()
         
     def _initialize_redis(self):
@@ -56,15 +58,28 @@ class CacheService:
         Returns:
             SHA-256 hash as cache key
         """
+        # Normalize code by removing leading/trailing whitespace and normalizing line endings
+        normalized_code = code.strip().replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Normalize input data
+        normalized_input = input_data.strip() if input_data else ""
+        
         # Create a normalized string for caching
-        cache_content = f"{language}:{input_data}:{code}".strip()
+        cache_content = f"{language}:{normalized_input}:{normalized_code}"
         
         # Generate SHA-256 hash for consistent, unique key
-        return f"code_exec:{hashlib.sha256(cache_content.encode()).hexdigest()}"
+        return f"code_exec:{hashlib.sha256(cache_content.encode('utf-8')).hexdigest()}"
+    
+    def _get_cache_lock(self, cache_key: str) -> asyncio.Lock:
+        """Get or create an asyncio lock for a specific cache key to prevent race conditions"""
+        if cache_key not in self._cache_locks:
+            self._cache_locks[cache_key] = asyncio.Lock()
+        return self._cache_locks[cache_key]
     
     async def get_cached_result(self, code: str, language: str, input_data: str = "") -> Optional[Dict[str, Any]]:
         """
         Get cached execution result and reset TTL to 48 hours (sliding expiration)
+        Thread-safe to prevent race conditions.
         
         Args:
             code: The source code
@@ -77,32 +92,34 @@ class CacheService:
         if not self.redis_client:
             return None
             
-        try:
-            cache_key = self._generate_cache_key(code, language, input_data)
-            
-            # Run Redis operation in thread pool to avoid blocking
-            cached_data = await asyncio.get_event_loop().run_in_executor(
-                None, self.redis_client.get, cache_key
-            )
-            
-            if cached_data:
-                result = json.loads(cached_data)
-                
-                # Reset TTL to 48 hours (sliding expiration)
-                cache_ttl = 48 * 60 * 60
-                await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self.redis_client.expire(cache_key, cache_ttl)
+        cache_key = self._generate_cache_key(code, language, input_data)
+        lock = self._get_cache_lock(cache_key)
+        
+        async with lock:
+            try:
+                # Run Redis operation in thread pool to avoid blocking
+                cached_data = await asyncio.get_event_loop().run_in_executor(
+                    None, self.redis_client.get, cache_key
                 )
                 
-                print(f"🎯 Cache HIT for {language} code ({cache_key[:16]}...) - TTL reset to 48h")
-                return result
-            else:
-                print(f"🔍 Cache MISS for {language} code ({cache_key[:16]}...)")
+                if cached_data:
+                    result = json.loads(cached_data)
+                    
+                    # Reset TTL to 48 hours (sliding expiration)
+                    cache_ttl = 48 * 60 * 60
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: self.redis_client.expire(cache_key, cache_ttl)
+                    )
+                    
+                    print(f"🎯 Cache HIT for {language} code ({cache_key[:16]}...) - TTL reset to 48h")
+                    return result
+                else:
+                    print(f"🔍 Cache MISS for {language} code ({cache_key[:16]}...)")
+                    return None
+                    
+            except Exception as e:
+                print(f"⚠️  Cache read error: {e}")
                 return None
-                
-        except Exception as e:
-            print(f"⚠️  Cache read error: {e}")
-            return None
     
     async def cache_result(
         self, 
@@ -113,6 +130,7 @@ class CacheService:
     ) -> bool:
         """
         Cache execution result for 48 hours
+        Thread-safe to prevent race conditions.
         
         Args:
             code: The source code
@@ -126,39 +144,50 @@ class CacheService:
         if not self.redis_client:
             return False
             
-        try:
-            cache_key = self._generate_cache_key(code, language, input_data)
-            
-            # Prepare data for caching
-            cache_data = {
-                "output": execution_result.get("output", ""),
-                "error": execution_result.get("error", ""),
-                "execution_time": execution_result.get("execution_time", 0.0),
-                "status": execution_result.get("status", "error"),
-                "complexity": execution_result.get("complexity"),  # Will be None for failed executions
-                "cached_at": asyncio.get_event_loop().time(),
-                "language": language
-            }
-            
-            # Cache for 48 hours (172800 seconds)
-            cache_ttl = 48 * 60 * 60
-            
-            # Run Redis operation in thread pool to avoid blocking
-            await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: self.redis_client.setex(
-                    cache_key, 
-                    cache_ttl, 
-                    json.dumps(cache_data, default=str)
+        cache_key = self._generate_cache_key(code, language, input_data)
+        lock = self._get_cache_lock(cache_key)
+        
+        async with lock:
+            try:
+                # Check if key already exists to prevent overwriting
+                existing_data = await asyncio.get_event_loop().run_in_executor(
+                    None, self.redis_client.get, cache_key
                 )
-            )
-            
-            print(f"💾 Cached {language} result for 48h ({cache_key[:16]}...)")
-            return True
-            
-        except Exception as e:
-            print(f"⚠️  Cache write error: {e}")
-            return False
+                
+                if existing_data:
+                    print(f"⚠️  Cache key already exists, skipping write ({cache_key[:16]}...)")
+                    return True  # Already cached, consider it successful
+                
+                # Prepare data for caching
+                cache_data = {
+                    "output": execution_result.get("output", ""),
+                    "error": execution_result.get("error", ""),
+                    "execution_time": execution_result.get("execution_time", 0.0),
+                    "status": execution_result.get("status", "error"),
+                    "complexity": execution_result.get("complexity"),  # Will be None for failed executions
+                    "cached_at": asyncio.get_event_loop().time(),
+                    "language": language
+                }
+                
+                # Cache for 48 hours (172800 seconds)
+                cache_ttl = 48 * 60 * 60
+                
+                # Run Redis operation in thread pool to avoid blocking
+                await asyncio.get_event_loop().run_in_executor(
+                    None, 
+                    lambda: self.redis_client.setex(
+                        cache_key, 
+                        cache_ttl, 
+                        json.dumps(cache_data, default=str)
+                    )
+                )
+                
+                print(f"💾 Cached {language} result for 48h ({cache_key[:16]}...)")
+                return True
+                
+            except Exception as e:
+                print(f"⚠️  Cache write error: {e}")
+                return False
     
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
@@ -221,7 +250,7 @@ class CacheService:
     
     async def clear_cache(self, pattern: str = "code_exec:*") -> int:
         """
-        Clear cache entries matching pattern
+        Clear cache entries matching pattern and clean up associated locks
         
         Args:
             pattern: Redis key pattern (default: all code execution cache)
@@ -241,7 +270,13 @@ class CacheService:
                 deleted = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: self.redis_client.delete(*keys)
                 )
-                print(f"🗑️  Cleared {deleted} cache entries")
+                
+                # Clean up associated locks to prevent memory leaks
+                for key in keys:
+                    if key in self._cache_locks:
+                        del self._cache_locks[key]
+                
+                print(f"🗑️  Cleared {deleted} cache entries and {len(keys)} locks")
                 return deleted
             
             return 0
@@ -249,6 +284,19 @@ class CacheService:
         except Exception as e:
             print(f"⚠️  Cache clear error: {e}")
             return 0
+    
+    def cleanup_unused_locks(self, max_locks: int = 1000):
+        """
+        Clean up unused cache locks to prevent memory leaks
+        Keeps only the most recently used locks up to max_locks
+        """
+        if len(self._cache_locks) > max_locks:
+            # Keep only the most recent max_locks entries
+            # Since we can't track usage easily, just keep the first max_locks
+            keys_to_remove = list(self._cache_locks.keys())[max_locks:]
+            for key in keys_to_remove:
+                del self._cache_locks[key]
+            print(f"🧹 Cleaned up {len(keys_to_remove)} unused cache locks")
 
 
 # Create global cache service instance

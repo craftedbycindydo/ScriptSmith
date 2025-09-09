@@ -180,21 +180,19 @@ async def execute_code(
             complexity=complexity_analysis
         )
         
-        # Cache the result asynchronously (don't wait for it to complete)
+        # Cache the result synchronously to prevent race conditions
         try:
-            asyncio.create_task(
-                cache_service.cache_result(
-                    request.code,
-                    request.language, 
-                    input_data,
-                    {
-                        "output": result["output"],
-                        "error": result["error"],
-                        "execution_time": execution_time,
-                        "status": result["status"],
-                        "complexity": complexity_analysis.dict() if complexity_analysis else None
-                    }
-                )
+            await cache_service.cache_result(
+                request.code,
+                request.language, 
+                input_data,
+                {
+                    "output": result["output"],
+                    "error": result["error"],
+                    "execution_time": execution_time,
+                    "status": result["status"],
+                    "complexity": complexity_analysis.dict() if complexity_analysis else None
+                }
             )
         except Exception:
             # Cache errors should not affect the response
