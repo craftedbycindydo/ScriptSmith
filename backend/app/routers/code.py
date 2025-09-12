@@ -88,8 +88,9 @@ async def execute_code(
             detail=f"Code size ({code_size_kb:.1f}KB) exceeds maximum allowed size ({settings.max_code_size_kb}KB)"
         )
     
-    # Check cache first to avoid redundant execution
-    input_data = request.input_data or ""
+    # Check cache first to avoid redundant execution  
+    # Use exact input_data to ensure bit-perfect caching
+    input_data = request.input_data if request.input_data is not None else ""
     cached_result = await cache_service.get_cached_result(
         request.code, 
         request.language, 
