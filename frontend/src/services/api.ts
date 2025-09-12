@@ -136,6 +136,8 @@ export interface TemplateListItem {
   classrooms: ClassroomInfo[];
   created_at: string;
   updated_at: string;
+  can_submit?: boolean;
+  deadline_info?: string;
 }
 
 export interface TemplateCreate {

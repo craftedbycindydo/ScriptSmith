@@ -490,7 +490,7 @@ export default function IDE() {
                         >
                           <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
                         </SelectTrigger>
-                        <SelectContent className="max-h-60 overflow-y-auto">
+                        <SelectContent className="max-h-80 overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
@@ -505,7 +505,14 @@ export default function IDE() {
                               <SelectItem key={template.id} value={template.id.toString()}>
                                 <div className="flex flex-col">
                                   <div className="flex justify-between items-center">
-                                    <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                      {template.can_submit === false && (
+                                        <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-full">
+                                          Submissions Closed
+                                        </span>
+                                      )}
+                                    </div>
                                     <span className="text-xs text-muted-foreground ml-2">
                                       {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
                                        template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
@@ -593,7 +600,7 @@ export default function IDE() {
                         >
                           <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
                         </SelectTrigger>
-                        <SelectContent className="max-h-60 overflow-y-auto">
+                        <SelectContent className="max-h-80 overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
@@ -608,7 +615,14 @@ export default function IDE() {
                               <SelectItem key={template.id} value={template.id.toString()}>
                                 <div className="flex flex-col">
                                   <div className="flex justify-between items-center">
-                                    <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                      {template.can_submit === false && (
+                                        <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-full">
+                                          Submissions Closed
+                                        </span>
+                                      )}
+                                    </div>
                                     <span className="text-xs text-muted-foreground ml-2">
                                       {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
                                        template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}

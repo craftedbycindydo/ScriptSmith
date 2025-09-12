@@ -73,6 +73,8 @@ class TemplateListResponse(BaseModel):
     classrooms: List[ClassroomInfo] = []
     created_at: datetime
     updated_at: datetime
+    can_submit: Optional[bool] = None  # Whether user can submit to this template
+    deadline_info: Optional[str] = None  # Deadline information if applicable
 
     class Config:
         from_attributes = True
@@ -168,7 +170,9 @@ def _prepare_template_list_response(template: Template) -> TemplateListResponse:
         "creator_username": getattr(template, 'creator_username', 'Unknown'),
         "classrooms": classroom_info,
         "created_at": template.created_at,
-        "updated_at": template.updated_at
+        "updated_at": template.updated_at,
+        "can_submit": getattr(template, 'can_submit', None),
+        "deadline_info": getattr(template, 'deadline_info', None)
     }
     
     return TemplateListResponse(**response_data)
@@ -472,19 +476,25 @@ async def get_templates_for_users(
 ):
     """Get templates for logged-in users based on their classroom memberships"""
     try:
+        # Note: Returns ALL available templates (no limit), UI handles display pagination
         templates = TemplateService.get_templates_for_user(
             db=db, 
             user_id=current_user.id,
             language=language
         )
         
-        # Prepare response with creator usernames and classroom info
+        # Prepare response with creator usernames, classroom info, and submission status
         result = []
         for template in templates:
             try:
                 template.creator_username = template.creator.username if template.creator else "Unknown"
             except AttributeError:
                 template.creator_username = "Unknown"
+            
+            # Check if user can submit to this template
+            can_submit, deadline_info = TemplateService.can_user_submit(db, template.id, current_user.id)
+            template.can_submit = can_submit
+            template.deadline_info = deadline_info
             
             result.append(_prepare_template_list_response(template))
         
