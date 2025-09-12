@@ -503,26 +503,22 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                <div className="flex flex-col">
-                                  <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium">{template.name || 'Untitled Template'}</span>
-                                      {template.can_submit === false && (
-                                        <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-full">
-                                          Submissions Closed
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className="text-xs text-muted-foreground ml-2">
-                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                <div className="flex flex-col gap-1.5 py-1">
+                                  {/* First row: Template name only */}
+                                  <div className="flex items-center">
+                                    <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
+                                  </div>
+                                  {/* Second row: Date and submission status */}
+                                  <div className="flex items-center text-xs text-muted-foreground pl-0">
+                                    <span className="inline-flex items-center gap-1">
+                                      <span>{template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                             template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}</span>
+                                      <span>•</span>
+                                      <span className={template.can_submit === false ? "text-red-600 dark:text-red-400 font-medium" : "text-green-600 dark:text-green-400 font-medium"}>
+                                        {template.can_submit === false ? "submissions closed" : "submissions open"}
+                                      </span>
                                     </span>
                                   </div>
-                                  {template.description && (
-                                    <span className="text-muted-foreground text-xs">
-                                      {template.description}
-                                    </span>
-                                  )}
                                 </div>
                               </SelectItem>
                             ) : null)
@@ -613,26 +609,22 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                <div className="flex flex-col">
-                                  <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium">{template.name || 'Untitled Template'}</span>
-                                      {template.can_submit === false && (
-                                        <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-full">
-                                          Submissions Closed
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className="text-xs text-muted-foreground ml-2">
-                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                <div className="flex flex-col gap-1.5 py-1">
+                                  {/* First row: Template name only */}
+                                  <div className="flex items-center">
+                                    <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
+                                  </div>
+                                  {/* Second row: Date and submission status */}
+                                  <div className="flex items-center text-xs text-muted-foreground pl-0">
+                                    <span className="inline-flex items-center gap-1">
+                                      <span>{template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                             template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}</span>
+                                      <span>•</span>
+                                      <span className={template.can_submit === false ? "text-red-600 dark:text-red-400 font-medium" : "text-green-600 dark:text-green-400 font-medium"}>
+                                        {template.can_submit === false ? "submissions closed" : "submissions open"}
+                                      </span>
                                     </span>
                                   </div>
-                                  {template.description && (
-                                    <span className="text-muted-foreground text-xs">
-                                      {template.description}
-                                    </span>
-                                  )}
                                 </div>
                               </SelectItem>
                             ) : null)
