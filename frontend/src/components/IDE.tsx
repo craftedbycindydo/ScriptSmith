@@ -79,6 +79,21 @@ export default function IDE() {
   const [templateDescription, setTemplateDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Format template name to add leading zeros to dates
+  const formatTemplateName = (name: string): string => {
+    // Match date pattern at the start: M/D/YYYY or MM/DD/YYYY etc
+    const datePattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*-\s*(.+)$/;
+    const match = name.match(datePattern);
+    
+    if (match) {
+      const [, month, day, year, title] = match;
+      const formattedMonth = month.padStart(2, '0');
+      const formattedDay = day.padStart(2, '0');
+      return `${formattedMonth}/${formattedDay}/${year} - ${title}`;
+    }
+    
+    return name;
+  };
 
   // Load languages and admin settings on component mount
   useEffect(() => {
@@ -507,10 +522,14 @@ export default function IDE() {
                                 <div className="flex flex-col gap-1.5 py-1">
                                   {/* First row: Template name only */}
                                   <div className="flex items-center">
-                                    <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
+                                    <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
                                   </div>
-                                  {/* Second row: Submission status badge */}
-                                  <div className="flex items-center text-xs pl-0">
+                                  {/* Second row: Date and submission status badge */}
+                                  <div className="flex items-center justify-between text-xs pl-0">
+                                    <span className="text-muted-foreground">
+                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                    </span>
                                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
@@ -612,10 +631,14 @@ export default function IDE() {
                                 <div className="flex flex-col gap-1.5 py-1">
                                   {/* First row: Template name only */}
                                   <div className="flex items-center">
-                                    <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
+                                    <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
                                   </div>
-                                  {/* Second row: Submission status badge */}
-                                  <div className="flex items-center text-xs pl-0">
+                                  {/* Second row: Date and submission status badge */}
+                                  <div className="flex items-center justify-between text-xs pl-0">
+                                    <span className="text-muted-foreground">
+                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                    </span>
                                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
