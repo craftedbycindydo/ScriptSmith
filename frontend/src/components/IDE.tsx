@@ -539,28 +539,24 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="min-w-0 w-full">
+                                <div className="w-full max-w-full">
                                   {/* Template name */}
                                   <div className="font-medium text-sm mb-2 truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row - completely independent layout */}
-                                  <div className="w-full flex items-center text-xs">
-                                    <div className="w-[100px] flex-shrink-0">
-                                      <span className="text-muted-foreground font-mono text-xs">
-                                        {formatDate(template)}
-                                      </span>
-                                    </div>
-                                    <div className="flex-1 min-w-0"></div>
-                                    <div className="flex-shrink-0">
-                                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                        template.can_submit === false 
-                                          ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
-                                          : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                                      }`}>
-                                        {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
-                                      </span>
-                                    </div>
+                                  {/* Date and status row - CSS Grid for perfect alignment */}
+                                  <div className="grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                    <span className="text-muted-foreground font-mono text-xs">
+                                      {formatDate(template)}
+                                    </span>
+                                    <span></span>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                                      template.can_submit === false 
+                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
+                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                    }`}>
+                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
+                                    </span>
                                   </div>
                                 </div>
                               </SelectItem>
@@ -658,28 +654,24 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="min-w-0 w-full">
+                                <div className="w-full max-w-full">
                                   {/* Template name */}
                                   <div className="font-medium text-sm mb-2 truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row - completely independent layout */}
-                                  <div className="w-full flex items-center text-xs">
-                                    <div className="w-[100px] flex-shrink-0">
-                                      <span className="text-muted-foreground font-mono text-xs">
-                                        {formatDate(template)}
-                                      </span>
-                                    </div>
-                                    <div className="flex-1 min-w-0"></div>
-                                    <div className="flex-shrink-0">
-                                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                        template.can_submit === false 
-                                          ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
-                                          : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                                      }`}>
-                                        {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
-                                      </span>
-                                    </div>
+                                  {/* Date and status row - CSS Grid for perfect alignment */}
+                                  <div className="grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                    <span className="text-muted-foreground font-mono text-xs">
+                                      {formatDate(template)}
+                                    </span>
+                                    <span></span>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                                      template.can_submit === false 
+                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
+                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                    }`}>
+                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
+                                    </span>
                                   </div>
                                 </div>
                               </SelectItem>
