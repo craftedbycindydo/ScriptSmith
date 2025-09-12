@@ -539,13 +539,13 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="w-full max-w-full">
-                                  {/* Template name */}
-                                  <div className="font-medium text-sm mb-2 truncate">
+                                <div className="grid grid-rows-[auto_auto] gap-2 w-full">
+                                  {/* Row 1: Template name - independent */}
+                                  <div className="row-start-1 font-medium text-sm truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row - CSS Grid for perfect alignment */}
-                                  <div className="grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                  {/* Row 2: Date and status - completely independent with fixed structure */}
+                                  <div className="row-start-2 grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
@@ -654,13 +654,13 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="w-full max-w-full">
-                                  {/* Template name */}
-                                  <div className="font-medium text-sm mb-2 truncate">
+                                <div className="grid grid-rows-[auto_auto] gap-2 w-full">
+                                  {/* Row 1: Template name - independent */}
+                                  <div className="row-start-1 font-medium text-sm truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row - CSS Grid for perfect alignment */}
-                                  <div className="grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                  {/* Row 2: Date and status - completely independent with fixed structure */}
+                                  <div className="row-start-2 grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
