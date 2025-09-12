@@ -95,6 +95,20 @@ export default function IDE() {
     return name;
   };
 
+  // Format date consistently for row 2 display
+  const formatDate = (template: any): string => {
+    const date = template.updated_at ? new Date(template.updated_at) : 
+                 template.created_at ? new Date(template.created_at) : null;
+    
+    if (!date) return '';
+    
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const year = date.getFullYear();
+    
+    return `${month}/${day}/${year}`;
+  };
+
   // Load languages and admin settings on component mount
   useEffect(() => {
     loadLanguages();
@@ -519,18 +533,17 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                <div className="flex flex-col gap-1.5 py-1">
+                                <div className="w-full">
                                   {/* First row: Template name only */}
-                                  <div className="flex items-center">
-                                    <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
+                                  <div className="font-medium text-sm leading-tight mb-1">
+                                    {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
                                   {/* Second row: Date and submission status badge */}
-                                  <div className="flex items-center justify-between text-xs pl-0 min-h-[20px]">
-                                    <span className="text-muted-foreground font-mono text-xs flex-shrink-0 min-w-[80px]">
-                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                                      {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ml-2 ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
@@ -628,18 +641,17 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                <div className="flex flex-col gap-1.5 py-1">
+                                <div className="w-full">
                                   {/* First row: Template name only */}
-                                  <div className="flex items-center">
-                                    <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
+                                  <div className="font-medium text-sm leading-tight mb-1">
+                                    {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
                                   {/* Second row: Date and submission status badge */}
-                                  <div className="flex items-center justify-between text-xs pl-0 min-h-[20px]">
-                                    <span className="text-muted-foreground font-mono text-xs flex-shrink-0 min-w-[80px]">
-                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                                      {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ml-2 ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
