@@ -522,7 +522,7 @@ export default function IDE() {
                             {selectedAdminTemplateName || "Professor Templates"}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto">
+                        <SelectContent className="max-h-[480px] overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
@@ -636,7 +636,7 @@ export default function IDE() {
                             {selectedAdminTemplateName || "Professor Templates"}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto">
+                        <SelectContent className="max-h-[480px] overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
