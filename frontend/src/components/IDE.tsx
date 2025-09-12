@@ -183,7 +183,7 @@ export default function IDE() {
         setCode(template.code_content);
         setSelectedTemplate(parseInt(templateId));
         setSelectedAdminTemplate(templateId);
-        setSelectedAdminTemplateName(template.name || 'Untitled Template');
+        setSelectedAdminTemplateName(formatTemplateName(template.name || 'Untitled Template'));
         // Clear user template selection
         setSelectedUserTemplate('');
         setSelectedUserTemplateName('');
@@ -525,12 +525,12 @@ export default function IDE() {
                                     <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
                                   </div>
                                   {/* Second row: Date and submission status badge */}
-                                  <div className="flex items-center justify-between text-xs pl-0">
-                                    <span className="text-muted-foreground">
+                                  <div className="flex items-center justify-between text-xs pl-0 min-h-[20px]">
+                                    <span className="text-muted-foreground font-mono text-xs flex-shrink-0 min-w-[80px]">
                                       {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
                                        template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
                                     </span>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ml-2 ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
@@ -634,12 +634,12 @@ export default function IDE() {
                                     <span className="font-medium text-sm leading-tight">{formatTemplateName(template.name || 'Untitled Template')}</span>
                                   </div>
                                   {/* Second row: Date and submission status badge */}
-                                  <div className="flex items-center justify-between text-xs pl-0">
-                                    <span className="text-muted-foreground">
+                                  <div className="flex items-center justify-between text-xs pl-0 min-h-[20px]">
+                                    <span className="text-muted-foreground font-mono text-xs flex-shrink-0 min-w-[80px]">
                                       {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
                                        template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
                                     </span>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ml-2 ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
