@@ -539,17 +539,16 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="grid grid-rows-[auto_auto] gap-2 w-full">
-                                  {/* Row 1: Template name - independent */}
-                                  <div className="row-start-1 font-medium text-sm truncate">
+                                <div className="flex flex-col gap-1.5 w-full">
+                                  {/* Row 1: Template name */}
+                                  <div className="font-medium text-sm truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Row 2: Date and status - completely independent with fixed structure */}
-                                  <div className="row-start-2 grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                  {/* Row 2: Date and status in a simple flex layout */}
+                                  <div className="flex items-center justify-between text-xs w-full">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
-                                    <span></span>
                                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
@@ -654,17 +653,16 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="grid grid-rows-[auto_auto] gap-2 w-full">
-                                  {/* Row 1: Template name - independent */}
-                                  <div className="row-start-1 font-medium text-sm truncate">
+                                <div className="flex flex-col gap-1.5 w-full">
+                                  {/* Row 1: Template name */}
+                                  <div className="font-medium text-sm truncate">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Row 2: Date and status - completely independent with fixed structure */}
-                                  <div className="row-start-2 grid grid-cols-[100px_1fr_auto] gap-2 items-center text-xs w-full">
+                                  {/* Row 2: Date and status in a simple flex layout */}
+                                  <div className="flex items-center justify-between text-xs w-full">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
-                                    <span></span>
                                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
