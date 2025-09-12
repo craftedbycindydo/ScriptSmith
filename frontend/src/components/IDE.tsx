@@ -79,6 +79,7 @@ export default function IDE() {
   const [templateDescription, setTemplateDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+
   // Load languages and admin settings on component mount
   useEffect(() => {
     loadLanguages();
@@ -508,15 +509,14 @@ export default function IDE() {
                                   <div className="flex items-center">
                                     <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
                                   </div>
-                                  {/* Second row: Date and submission status */}
-                                  <div className="flex items-center text-xs text-muted-foreground pl-0">
-                                    <span className="inline-flex items-center gap-1">
-                                      <span>{template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                             template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}</span>
-                                      <span>•</span>
-                                      <span className={template.can_submit === false ? "text-red-600 dark:text-red-400 font-medium" : "text-green-600 dark:text-green-400 font-medium"}>
-                                        {template.can_submit === false ? "submissions closed" : "submissions open"}
-                                      </span>
+                                  {/* Second row: Submission status badge */}
+                                  <div className="flex items-center text-xs pl-0">
+                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                      template.can_submit === false 
+                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
+                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                    }`}>
+                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
                                     </span>
                                   </div>
                                 </div>
@@ -614,15 +614,14 @@ export default function IDE() {
                                   <div className="flex items-center">
                                     <span className="font-medium text-sm leading-tight">{template.name || 'Untitled Template'}</span>
                                   </div>
-                                  {/* Second row: Date and submission status */}
-                                  <div className="flex items-center text-xs text-muted-foreground pl-0">
-                                    <span className="inline-flex items-center gap-1">
-                                      <span>{template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
-                                             template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}</span>
-                                      <span>•</span>
-                                      <span className={template.can_submit === false ? "text-red-600 dark:text-red-400 font-medium" : "text-green-600 dark:text-green-400 font-medium"}>
-                                        {template.can_submit === false ? "submissions closed" : "submissions open"}
-                                      </span>
+                                  {/* Second row: Submission status badge */}
+                                  <div className="flex items-center text-xs pl-0">
+                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                      template.can_submit === false 
+                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
+                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                    }`}>
+                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
                                     </span>
                                   </div>
                                 </div>
