@@ -539,13 +539,13 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="flex flex-col gap-1.5 w-full">
+                                <div className="flex flex-col gap-1.5 w-80 min-w-80">
                                   {/* Row 1: Template name */}
-                                  <div className="font-medium text-sm truncate">
+                                  <div className="font-medium text-sm truncate w-full">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Row 2: Date and status in a simple flex layout */}
-                                  <div className="flex items-center justify-between text-xs w-full">
+                                  {/* Row 2: Date and status - fixed width independent of row 1 */}
+                                  <div className="flex items-center justify-between text-xs w-80">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
@@ -653,13 +653,13 @@ export default function IDE() {
                                 value={template.id.toString()}
                                 textValue={formatTemplateName(template.name || 'Untitled Template')}
                               >
-                                <div className="flex flex-col gap-1.5 w-full">
+                                <div className="flex flex-col gap-1.5 w-80 min-w-80">
                                   {/* Row 1: Template name */}
-                                  <div className="font-medium text-sm truncate">
+                                  <div className="font-medium text-sm truncate w-full">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Row 2: Date and status in a simple flex layout */}
-                                  <div className="flex items-center justify-between text-xs w-full">
+                                  {/* Row 2: Date and status - fixed width independent of row 1 */}
+                                  <div className="flex items-center justify-between text-xs w-80">
                                     <span className="text-muted-foreground font-mono text-xs">
                                       {formatDate(template)}
                                     </span>
