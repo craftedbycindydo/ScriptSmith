@@ -71,6 +71,7 @@ export default function IDE() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [hasExecutedCode, setHasExecutedCode] = useState<boolean>(false);
   const [lastExecutionResult, setLastExecutionResult] = useState<any>(null);
+  const [lastExecutedCode, setLastExecutedCode] = useState<string>("");  // Track what code was last executed
   
   // Save template inline form state
   const [showSaveForm, setShowSaveForm] = useState(false);
@@ -113,6 +114,7 @@ export default function IDE() {
     // Reset execution tracking when code changes
     setHasExecutedCode(false);
     setLastExecutionResult(null);
+    setLastExecutedCode("");  // Reset last executed code tracking
   }, [code, selectedAdminTemplate, selectedUserTemplate]);
 
   // Load templates for current language
@@ -212,6 +214,7 @@ export default function IDE() {
       await executeCode();
       // Mark that code has been executed and capture the result
       setHasExecutedCode(true);
+      setLastExecutedCode(code);  // Store the exact code that was executed
       setLastExecutionResult({
         output,
         error,
@@ -220,6 +223,7 @@ export default function IDE() {
       });
     } catch (err) {
       setHasExecutedCode(true);
+      setLastExecutedCode(code);  // Store the exact code that was executed even on error
       setLastExecutionResult({
         output: '',
         error: String(err),
@@ -238,20 +242,28 @@ export default function IDE() {
       return;
     }
     
+    // Check if current code matches last executed code
+    if (code.trim() !== lastExecutedCode.trim()) {
+      setShowRunFirstModal(true);
+      return;
+    }
+    
     setShowSubmitModal(true);
   };
 
   const handleConfirmSubmit = async () => {
-    if (!selectedAdminTemplate || !hasExecutedCode) return;
+    if (!selectedAdminTemplate || !hasExecutedCode || !lastExecutionResult) return;
     
     setSubmitting(true);
     try {
+      // FIXED: Only use lastExecutionResult to ensure code and results are from same execution
+      // No fallback mixing to prevent race conditions
       await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
         code_content: code,
-        execution_output: lastExecutionResult?.output || output,
-        execution_status: lastExecutionResult?.status || (error ? 'error' : 'success'),
-        execution_time: lastExecutionResult?.execution_time || executionTime,
-        error_message: lastExecutionResult?.error || error
+        execution_output: lastExecutionResult.output || "",
+        execution_status: lastExecutionResult.status || "error", 
+        execution_time: lastExecutionResult.execution_time || 0,
+        error_message: lastExecutionResult.error || ""
       });
       
       // Refresh template data to get updated submission status
@@ -656,22 +668,33 @@ export default function IDE() {
                 <Button
                   onClick={handleSubmitTemplate}
                   disabled={!canSubmit}
-                  variant={hasSubmitted && !canSubmit ? "secondary" : "default"}
+                  variant={hasSubmitted && !canSubmit ? "secondary" : 
+                          (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? "outline" : "default"}
                   size="sm"
-                  className="flex sm:inline-flex"
-                  title={(hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : ''}
+                  className={`flex sm:inline-flex ${(!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? 
+                    'border-amber-300 text-amber-600 hover:bg-amber-50' : ''}`}
+                  title={
+                    !hasExecutedCode ? 'Run your code first before submitting' :
+                    code.trim() !== lastExecutedCode.trim() ? 'You changed your code after running it. Run again to submit current code.' :
+                    (hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : 
+                    'Ready to submit'
+                  }
                 >
                   {hasSubmitted && !canSubmit ? (
                     <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
+                  ) : (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? (
+                    <div className="w-4 h-4 mr-1 sm:mr-2 text-amber-500">⚠️</div>
                   ) : (
                     <Send className="w-4 h-4 mr-1 sm:mr-2" />
                   )}
                   <span className="hidden sm:inline">
                     {hasSubmitted && !canSubmit ? 'Submitted' : 
+                     (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? 'Run First' :
                      hasSubmitted && canSubmit ? 'Submit Again' : 'Submit'}
                   </span>
                   <span className="sm:hidden">
                     {hasSubmitted && !canSubmit ? 'Done' : 
+                     (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? '⚠️' : 
                      hasSubmitted && canSubmit ? 'Again' : 'Submit'}
                   </span>
                 </Button>
@@ -1047,33 +1070,62 @@ export default function IDE() {
       {/* Run Code First Modal */}
       {showRunFirstModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full mx-4">
             <div className="p-6">
               <div className="flex items-center mb-4">
-                <div className="w-6 h-6 mr-3 text-amber-500">
+                <div className="w-8 h-8 mr-3 text-amber-500 bg-amber-100 dark:bg-amber-900 rounded-full flex items-center justify-center">
                   ⚠️
                 </div>
-                <h2 className="text-lg font-semibold">Run Code Required</h2>
+                <h2 className="text-xl font-semibold">Must Run Code Before Submit</h2>
               </div>
               
-              <div className="mb-6">
-                <p className="text-gray-600 dark:text-gray-300 mb-4">
-                  You must run your code before submitting it.
-                </p>
+              <div className="mb-6 space-y-3">
+                {!hasExecutedCode ? (
+                  <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                    <p className="text-red-800 dark:text-red-200 font-medium">
+                      🚫 No code has been executed yet
+                    </p>
+                    <p className="text-red-600 dark:text-red-300 text-sm mt-1">
+                      You must run your code at least once before submitting.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-orange-50 dark:bg-orange-900 border border-orange-200 dark:border-orange-700 rounded-lg p-4">
+                    <p className="text-orange-800 dark:text-orange-200 font-medium">
+                      📝 Code has been modified since last run
+                    </p>
+                    <p className="text-orange-600 dark:text-orange-300 text-sm mt-1">
+                      You've changed your code after running it. The <strong>last executed results</strong> will be submitted, not your current code changes.
+                    </p>
+                  </div>
+                )}
                 
-                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    <strong>💡 Tip:</strong> Click the green "Run" button to execute your code, then try submitting again.
+                <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                  <p className="text-blue-800 dark:text-blue-200 font-medium">
+                    💡 Why is this required?
+                  </p>
+                  <p className="text-blue-600 dark:text-blue-300 text-sm mt-1">
+                    This ensures your submitted code and execution results always match exactly. It prevents submitting outdated results with new code.
                   </p>
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-end space-x-3">
                 <Button
                   onClick={handleCloseRunFirstModal}
-                  className="bg-blue-500 hover:bg-blue-600 text-white"
+                  variant="outline"
                 >
-                  Got it!
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    setShowRunFirstModal(false);
+                    await handleRunCode();
+                  }}
+                  className="bg-green-500 hover:bg-green-600 text-white"
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Running..." : "🏃 Run Code Now"}
                 </Button>
               </div>
             </div>
