@@ -544,12 +544,13 @@ export default function IDE() {
                                   <div className="font-medium text-sm mb-2">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row with consistent spacing */}
-                                  <div className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground font-mono w-24">
+                                  {/* Date and status row with perfect spacing */}
+                                  <div className="flex items-center text-xs">
+                                    <span className="text-muted-foreground font-mono text-xs w-[100px] flex-shrink-0">
                                       {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    <div className="flex-1"></div>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
@@ -658,12 +659,13 @@ export default function IDE() {
                                   <div className="font-medium text-sm mb-2">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Date and status row with consistent spacing */}
-                                  <div className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground font-mono w-24">
+                                  {/* Date and status row with perfect spacing */}
+                                  <div className="flex items-center text-xs">
+                                    <span className="text-muted-foreground font-mono text-xs w-[100px] flex-shrink-0">
                                       {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    <div className="flex-1"></div>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
