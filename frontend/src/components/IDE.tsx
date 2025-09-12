@@ -518,7 +518,9 @@ export default function IDE() {
                           disabled={loadingTemplates}
                           className="w-full"
                         >
-                          <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
+                          <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
+                            {selectedAdminTemplateName || "Professor Templates"}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="max-h-80 overflow-y-auto">
                           {selectedAdminTemplateName && (
@@ -532,18 +534,22 @@ export default function IDE() {
                             </SelectItem>
                           ) : (
                             templates.map((template) => template && template.id ? (
-                              <SelectItem key={template.id} value={template.id.toString()}>
+                              <SelectItem 
+                                key={template.id} 
+                                value={template.id.toString()}
+                                textValue={formatTemplateName(template.name || 'Untitled Template')}
+                              >
                                 <div className="w-full">
-                                  {/* First row: Template name only */}
-                                  <div className="font-medium text-sm leading-tight mb-1">
+                                  {/* Template name */}
+                                  <div className="font-medium text-sm mb-2">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Second row: Date and submission status badge */}
+                                  {/* Date and status row with consistent spacing */}
                                   <div className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                                    <span className="text-muted-foreground font-mono w-24">
                                       {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
@@ -626,7 +632,9 @@ export default function IDE() {
                           disabled={loadingTemplates}
                           className="w-full"
                         >
-                          <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
+                          <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
+                            {selectedAdminTemplateName || "Professor Templates"}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="max-h-80 overflow-y-auto">
                           {selectedAdminTemplateName && (
@@ -640,18 +648,22 @@ export default function IDE() {
                             </SelectItem>
                           ) : (
                             templates.map((template) => template && template.id ? (
-                              <SelectItem key={template.id} value={template.id.toString()}>
+                              <SelectItem 
+                                key={template.id} 
+                                value={template.id.toString()}
+                                textValue={formatTemplateName(template.name || 'Untitled Template')}
+                              >
                                 <div className="w-full">
-                                  {/* First row: Template name only */}
-                                  <div className="font-medium text-sm leading-tight mb-1">
+                                  {/* Template name */}
+                                  <div className="font-medium text-sm mb-2">
                                     {formatTemplateName(template.name || 'Untitled Template')}
                                   </div>
-                                  {/* Second row: Date and submission status badge */}
+                                  {/* Date and status row with consistent spacing */}
                                   <div className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                                    <span className="text-muted-foreground font-mono w-24">
                                       {formatDate(template)}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                       template.can_submit === false 
                                         ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
                                         : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
