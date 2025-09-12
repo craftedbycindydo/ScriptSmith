@@ -135,6 +135,7 @@ export interface TemplateListItem {
   creator_username: string;
   classrooms: ClassroomInfo[];
   created_at: string;
+  updated_at: string;
 }
 
 export interface TemplateCreate {

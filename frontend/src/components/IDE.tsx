@@ -490,7 +490,7 @@ export default function IDE() {
                         >
                           <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-60 overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
@@ -503,12 +503,20 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                {template.name || 'Untitled Template'}
-                                {template.description && (
-                                  <span className="text-muted-foreground text-xs ml-1">
-                                    - {template.description}
-                                  </span>
-                                )}
+                                <div className="flex flex-col">
+                                  <div className="flex justify-between items-center">
+                                    <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                    </span>
+                                  </div>
+                                  {template.description && (
+                                    <span className="text-muted-foreground text-xs">
+                                      {template.description}
+                                    </span>
+                                  )}
+                                </div>
                               </SelectItem>
                             ) : null)
                           )}
@@ -585,7 +593,7 @@ export default function IDE() {
                         >
                           <SelectValue placeholder={loadingTemplates ? "Loading..." : selectedAdminTemplateName || "Professor Templates"} />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-60 overflow-y-auto">
                           {selectedAdminTemplateName && (
                             <SelectItem value="clear-admin">
                               <span className="text-muted-foreground">Clear selection</span>
@@ -598,12 +606,20 @@ export default function IDE() {
                           ) : (
                             templates.map((template) => template && template.id ? (
                               <SelectItem key={template.id} value={template.id.toString()}>
-                                {template.name || 'Untitled Template'}
-                                {template.description && (
-                                  <span className="text-muted-foreground text-xs ml-1">
-                                    - {template.description}
-                                  </span>
-                                )}
+                                <div className="flex flex-col">
+                                  <div className="flex justify-between items-center">
+                                    <span className="font-medium">{template.name || 'Untitled Template'}</span>
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      {template.updated_at ? new Date(template.updated_at).toLocaleDateString() : 
+                                       template.created_at ? new Date(template.created_at).toLocaleDateString() : ''}
+                                    </span>
+                                  </div>
+                                  {template.description && (
+                                    <span className="text-muted-foreground text-xs">
+                                      {template.description}
+                                    </span>
+                                  )}
+                                </div>
                               </SelectItem>
                             ) : null)
                           )}

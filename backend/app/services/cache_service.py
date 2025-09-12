@@ -103,35 +103,35 @@ class CacheService:
                     None, self.redis_client.get, cache_key
                 )
                 
-            if cached_data:
-                result = json.loads(cached_data)
-                
-                # PARANOID VALIDATION: Verify cached code matches requested code
-                cached_code_hash = result.get("code_hash")
-                requested_code_hash = hashlib.sha256(code.encode('utf-8')).hexdigest()
-                
-                if cached_code_hash != requested_code_hash:
-                    print(f"🚨 CACHE CORRUPTION DETECTED! Cached code hash {cached_code_hash[:8]}... != requested {requested_code_hash[:8]}...")
-                    # Delete corrupted cache entry
-                    await asyncio.get_event_loop().run_in_executor(
-                        None, self.redis_client.delete, cache_key
-                    )
-                    return None  # Force fresh execution
-                
-                # Reset TTL to 48 hours (sliding expiration)
-                cache_ttl = 48 * 60 * 60
-                await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self.redis_client.expire(cache_key, cache_ttl)
-                )
-                
-                print(f"🎯 Cache HIT for {language} code ({cache_key[:16]}...) - TTL reset to 48h")
-                return result
-            else:
-                print(f"🔍 Cache MISS for {language} code ({cache_key[:16]}...)")
-                return None
+                if cached_data:
+                    result = json.loads(cached_data)
                     
-        except Exception as e:
-            print(f"⚠️  Cache read error: {e}")
+                    # PARANOID VALIDATION: Verify cached code matches requested code
+                    cached_code_hash = result.get("code_hash")
+                    requested_code_hash = hashlib.sha256(code.encode('utf-8')).hexdigest()
+                    
+                    if cached_code_hash != requested_code_hash:
+                        print(f"🚨 CACHE CORRUPTION DETECTED! Cached code hash {cached_code_hash[:8]}... != requested {requested_code_hash[:8]}...")
+                        # Delete corrupted cache entry
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, self.redis_client.delete, cache_key
+                        )
+                        return None  # Force fresh execution
+                    
+                    # Reset TTL to 48 hours (sliding expiration)
+                    cache_ttl = 48 * 60 * 60
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: self.redis_client.expire(cache_key, cache_ttl)
+                    )
+                    
+                    print(f"🎯 Cache HIT for {language} code ({cache_key[:16]}...) - TTL reset to 48h")
+                    return result
+                else:
+                    print(f"🔍 Cache MISS for {language} code ({cache_key[:16]}...)")
+                    return None
+                        
+            except Exception as e:
+                print(f"⚠️  Cache read error: {e}")
             return None
     
     async def cache_result(

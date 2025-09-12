@@ -134,7 +134,7 @@ class TemplateService:
         user_id: int, 
         language: Optional[str] = None,
         skip: int = 0, 
-        limit: int = 100
+        limit: int = 10  # Default to 10 for professor templates
     ) -> List[Template]:
         """Get templates accessible to a specific user based on their classroom memberships"""
         try:
@@ -175,11 +175,15 @@ class TemplateService:
                 
                 templates = list(all_templates.values())
                 
-                # 4. Apply language filter and sorting manually
+                # 4. Apply language filter
                 if language:
                     templates = [t for t in templates if t.language == language]
                 
-                templates.sort(key=lambda t: (t.language, t.name))
+                # 5. Sort by updated_at desc (most recently updated first), then created_at desc as fallback
+                templates.sort(key=lambda t: (t.updated_at or t.created_at, t.created_at), reverse=True)
+                
+                # 6. Apply pagination
+                return templates[skip:skip + limit]
                 
             else:
                 # User not in any classroom - only global templates
@@ -194,9 +198,11 @@ class TemplateService:
                 if language:
                     templates = [t for t in templates if t.language == language]
                 
-                templates.sort(key=lambda t: (t.language, t.name))
-            
-            return templates
+                # Sort by updated_at desc (most recently updated first), then created_at desc as fallback
+                templates.sort(key=lambda t: (t.updated_at or t.created_at, t.created_at), reverse=True)
+                
+                # Apply pagination
+                return templates[skip:skip + limit]
             
         except Exception as e:
             print(f"Error getting templates for user {user_id}: {str(e)}")

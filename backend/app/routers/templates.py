@@ -72,6 +72,7 @@ class TemplateListResponse(BaseModel):
     creator_username: str
     classrooms: List[ClassroomInfo] = []
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -166,7 +167,8 @@ def _prepare_template_list_response(template: Template) -> TemplateListResponse:
         "created_by": template.created_by,
         "creator_username": getattr(template, 'creator_username', 'Unknown'),
         "classrooms": classroom_info,
-        "created_at": template.created_at
+        "created_at": template.created_at,
+        "updated_at": template.updated_at
     }
     
     return TemplateListResponse(**response_data)
