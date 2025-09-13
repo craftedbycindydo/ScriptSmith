@@ -268,7 +268,8 @@ async def load_routers():
         ("admin", "/api", ["admin"]),
         ("assignments", "/api", ["assignments"]),
         ("templates", "/api", ["templates"]),
-        ("classroom", "/api", ["classroom"])
+        ("classroom", "/api", ["classroom"]),
+        ("analytics", "/api", ["analytics"])
     ]
     
     loaded_routers = []
@@ -303,6 +304,9 @@ async def load_routers():
             elif router_name == "classroom":
                 from app.routers import classroom
                 app.include_router(classroom.router, prefix=prefix, tags=tags)
+            elif router_name == "analytics":
+                from app.routers import analytics
+                app.include_router(analytics.router, prefix=prefix, tags=tags)
             
             loaded_routers.append(router_name)
             print(f"  ✅ {router_name} router loaded successfully")
@@ -324,12 +328,6 @@ async def load_routers():
     
     print("🔗 WebSocket service running separately on dedicated microservice")
 
-# Startup event to load routers
-@app.on_event("startup")
-async def startup_event():
-    """Load all routers on application startup"""
-    print("🚀 Loading application routers...")
-    await load_routers()
 
 # Root endpoint - Simplified for Railway
 @app.get("/")

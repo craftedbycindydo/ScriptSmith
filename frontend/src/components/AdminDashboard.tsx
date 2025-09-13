@@ -40,6 +40,7 @@ import TemplateManager from './TemplateManager';
 import CodeEditor from './CodeEditor';
 import OutputConsole from './OutputConsole';
 import TemplateSubmissions from './TemplateSubmissions';
+import AdminAnalytics from './AdminAnalytics';
 import { 
   Users, 
   Activity, 
@@ -1172,6 +1173,7 @@ export default function AdminDashboard() {
                     {activeTab === 'assignments' && 'Assignments'}
                     {activeTab === 'template-executions' && 'Executions'}
                     {activeTab === 'template-submissions' && 'Submissions'}
+                    {activeTab === 'analytics' && 'Analytics'}
                     {activeTab === 'users' && 'Users'}
                   </span>
                   <ChevronDown className="w-4 h-4" />
@@ -1205,6 +1207,10 @@ export default function AdminDashboard() {
                 <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('template-submissions')}>
                   <Send className="w-4 h-4 mr-3 flex-shrink-0" />
                   <span className="flex-1 text-left">Submissions</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('analytics')}>
+                  <TrendingUp className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Analytics</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('users')}>
                   <Users className="w-4 h-4 mr-3 flex-shrink-0" />
@@ -1305,8 +1311,19 @@ export default function AdminDashboard() {
                     onClick={() => setActiveTab('template-submissions')}
                     title={sidebarCollapsed ? 'Submissions' : ''}
                   >
-                    <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" />
                     {!sidebarCollapsed && <span className="ml-3">Submissions</span>}
+                  </Button>
+                  <Button
+                    variant={activeTab === 'analytics' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('analytics')}
+                    title={sidebarCollapsed ? 'Analytics' : ''}
+                  >
+            <TrendingUp className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Analytics</span>}
                   </Button>
                   <Button
                     variant={activeTab === 'users' ? 'default' : 'ghost'}
@@ -1316,7 +1333,7 @@ export default function AdminDashboard() {
                     onClick={() => setActiveTab('users')}
                     title={sidebarCollapsed ? 'Users' : ''}
                   >
-                    <Users className="w-4 h-4" />
+            <Users className="w-4 h-4" />
                     {!sidebarCollapsed && <span className="ml-3">Users</span>}
                   </Button>
                 </nav>
@@ -2403,6 +2420,12 @@ export default function AdminDashboard() {
                   <TemplateSubmissions />
                 </div>
               )}
+
+              {activeTab === 'analytics' && (
+                <div className="space-y-6">
+                  <AdminAnalytics />
+                </div>
+              )}
               
               {activeTab === 'users' && (
                 <div className="space-y-6">
@@ -3445,6 +3468,12 @@ export default function AdminDashboard() {
               {activeTab === 'template-submissions' && (
                 <div className="space-y-6">
                   <TemplateSubmissions />
+                </div>
+              )}
+
+              {activeTab === 'analytics' && (
+                <div className="space-y-6">
+                  <AdminAnalytics />
                 </div>
               )}
 

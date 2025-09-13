@@ -28,6 +28,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def safe_datetime_format(dt_value):
+    """Handle datetime formatting for both SQLite (string) and PostgreSQL (datetime)"""
+    if dt_value is None:
+        return None
+    if isinstance(dt_value, str):
+        return dt_value  # Already a string
+    if hasattr(dt_value, 'isoformat'):
+        return dt_value.isoformat()  # Datetime object
+    return str(dt_value)  # Fallback
+
 router = APIRouter()
 
 # Initialize admin service
@@ -248,8 +258,10 @@ async def get_admin_stats(
     # Calculate dates
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # POSTGRESQL OPTIMIZED: Single query with FILTER (fixed nested aggregates)
-    stats_query = text("""
+    # SQLite/PostgreSQL compatible: Dynamic IN clause with individual parameters
+    classroom_placeholders = ', '.join([f':classroom_id_{i}' for i in range(len(classroom_ids))])
+    
+    stats_query = text(f"""
         WITH user_stats AS (
             -- Get classroom users efficiently
             SELECT 
@@ -258,30 +270,30 @@ async def get_admin_stats(
                 CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
             FROM users u
             INNER JOIN user_classrooms uc ON u.id = uc.user_id
-            WHERE uc.classroom_id IN :classroom_ids
+            WHERE uc.classroom_id IN ({classroom_placeholders})
               AND uc.is_active = true
         ),
         submission_stats AS (
-            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            -- PostgreSQL FILTER for better performance
             SELECT 
                 COUNT(cs.id) as total_executions,
                 COUNT(cs.id) FILTER (WHERE cs.created_at >= :today_start) as executions_today,
                 COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions
             FROM code_submissions cs
-            WHERE (cs.classroom_id IN :classroom_ids 
+            WHERE (cs.classroom_id IN ({classroom_placeholders}) 
                    OR cs.user_id IN (SELECT id FROM user_stats))
         ),
         session_stats AS (
-            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            -- PostgreSQL FILTER for better performance
             SELECT 
                 COUNT(col.id) as total_sessions,
                 COUNT(col.id) FILTER (WHERE col.is_active = true) as active_sessions
             FROM collaboration_sessions col
-            WHERE (col.classroom_id IN :classroom_ids
+            WHERE (col.classroom_id IN ({classroom_placeholders})
                    OR col.owner_id IN (SELECT id FROM user_stats))
         ),
         language_stats AS (
-            -- Language stats without nested aggregates
+            -- Language stats with PostgreSQL JSONB
             SELECT 
                 jsonb_object_agg(language, lang_count) as language_counts
             FROM (
@@ -289,14 +301,14 @@ async def get_admin_stats(
                     cs.language,
                     COUNT(cs.id) as lang_count
                 FROM code_submissions cs
-                WHERE (cs.classroom_id IN :classroom_ids 
+                WHERE (cs.classroom_id IN ({classroom_placeholders}) 
                        OR cs.user_id IN (SELECT id FROM user_stats))
                   AND cs.language IS NOT NULL
                 GROUP BY cs.language
             ) lang_summary
         )
         SELECT 
-            -- POSTGRESQL OPTIMIZED: COUNT(id) instead of COUNT(*) for better performance
+            -- Simplified aggregations
             (SELECT COUNT(id) FROM user_stats) as total_users,
             (SELECT SUM(is_new_today) FROM user_stats) as new_users_today,
             COALESCE(ss.total_executions, 0) as total_executions,
@@ -304,24 +316,26 @@ async def get_admin_stats(
             COALESCE(ss.error_executions, 0) as error_executions,
             COALESCE(cs.total_sessions, 0) as total_sessions,
             COALESCE(cs.active_sessions, 0) as active_sessions,
-            COALESCE(ls.language_counts, '{}'::jsonb) as language_counts
+            COALESCE(ls.language_counts, '{{}}'::jsonb) as language_counts
         FROM submission_stats ss 
         CROSS JOIN session_stats cs 
         CROSS JOIN language_stats ls
     """)
     
-    # Execute with tuple for PostgreSQL IN clause compatibility
-    result = db.execute(stats_query, {
-        'classroom_ids': tuple(classroom_ids) if classroom_ids else (0,),
-        'today_start': today_start
-    }).fetchone()
+    # Build parameter dict with individual classroom IDs
+    params = {'today_start': today_start}
+    for i, classroom_id in enumerate(classroom_ids):
+        params[f'classroom_id_{i}'] = classroom_id
+    
+    # Execute with individual parameters
+    result = db.execute(stats_query, params).fetchone()
     
     # Calculate error rate
     total_executions = result.total_executions or 0
     error_executions = result.error_executions or 0
     error_rate = (error_executions / total_executions * 100) if total_executions > 0 else 0
     
-    # Extract popular languages from JSONB (already fetched in main query)
+    # Extract popular languages from PostgreSQL JSONB
     language_counts = result.language_counts or {}
     popular_languages = [
         {"language": lang, "count": count}
@@ -499,7 +513,7 @@ async def get_user_activities(
             email=activity["email"],
             activity_type=activity["activity_type"],
             activity_data=activity["activity_data"],
-            timestamp=activity["timestamp"].isoformat() if activity["timestamp"] else None,
+            timestamp=safe_datetime_format(activity["timestamp"]),
             status=activity["status"],
             error_message=activity["error_message"]
         ))
@@ -532,11 +546,13 @@ async def get_all_users(
     if not classroom_ids:
         return []
     
-    # Build PostgreSQL-optimized query with window functions
+    # Build database-agnostic query with dynamic IN clause
     offset = (page - 1) * page_size
     
-    # POSTGRESQL OPTIMIZED: Include actual counts with LEFT JOINs for accuracy
-    user_query = text("""
+    # Create placeholders for IN clause (SQLite/PostgreSQL compatible)
+    classroom_placeholders = ','.join([f':classroom_id_{i}' for i in range(len(classroom_ids))])
+    
+    user_query = text(f"""
         SELECT DISTINCT
             u.id,
             u.username,
@@ -553,41 +569,46 @@ async def get_all_users(
         LEFT JOIN (
             SELECT user_id, COUNT(id) as execution_count
             FROM code_submissions
-            WHERE (classroom_id IN :classroom_ids OR user_id IN (
+            WHERE (classroom_id IN ({classroom_placeholders}) OR user_id IN (
                 SELECT DISTINCT user_id FROM user_classrooms 
-                WHERE classroom_id IN :classroom_ids AND is_active = true
+                WHERE classroom_id IN ({classroom_placeholders}) AND is_active = true
             ))
             GROUP BY user_id
         ) cs ON u.id = cs.user_id
         LEFT JOIN (
             SELECT owner_id, COUNT(id) as session_count
             FROM collaboration_sessions
-            WHERE (classroom_id IN :classroom_ids OR owner_id IN (
+            WHERE (classroom_id IN ({classroom_placeholders}) OR owner_id IN (
                 SELECT DISTINCT user_id FROM user_classrooms 
-                WHERE classroom_id IN :classroom_ids AND is_active = true
+                WHERE classroom_id IN ({classroom_placeholders}) AND is_active = true
             ))
             GROUP BY owner_id
         ) col ON u.id = col.owner_id
-        WHERE uc.classroom_id IN :classroom_ids
+        WHERE uc.classroom_id IN ({classroom_placeholders})
           AND uc.is_active = true
           AND (:search IS NULL OR 
-               u.username ILIKE :search_pattern OR 
-               u.email ILIKE :search_pattern OR 
-               u.full_name ILIKE :search_pattern)
+               u.username LIKE :search_pattern OR 
+               u.email LIKE :search_pattern OR 
+               u.full_name LIKE :search_pattern)
         ORDER BY u.created_at DESC
         LIMIT :page_size OFFSET :offset
     """)
     
     search_pattern = f"%{search}%" if search else None
     
-    # Convert to tuple for PostgreSQL IN clause compatibility
-    results = db.execute(user_query, {
-        'classroom_ids': tuple(classroom_ids) if classroom_ids else (0,),
+    # Build parameters dictionary with individual classroom IDs
+    params = {
         'search': search,
         'search_pattern': search_pattern,
         'page_size': page_size,
         'offset': offset
-    }).fetchall()
+    }
+    
+    # Add individual classroom ID parameters
+    for i, classroom_id in enumerate(classroom_ids):
+        params[f'classroom_id_{i}'] = classroom_id
+    
+    results = db.execute(user_query, params).fetchall()
     
     return [
         {
@@ -597,8 +618,8 @@ async def get_all_users(
             "full_name": row.full_name,
             "is_active": row.is_active,
             "is_verified": row.is_verified,
-            "created_at": row.created_at.isoformat() if row.created_at else "",
-            "last_login": row.last_login.isoformat() if row.last_login else None,
+            "created_at": safe_datetime_format(row.created_at) or "",
+            "last_login": safe_datetime_format(row.last_login),
             "code_executions": row.code_executions,
             "collaboration_sessions": row.collaboration_sessions
         }
@@ -652,7 +673,7 @@ async def get_user_details(
                 "code_size": len(execution.code) if execution.code else 0,
                 "execution_time": execution.execution_time
             },
-            timestamp=execution.created_at.isoformat() if execution.created_at else "",
+            timestamp=safe_datetime_format(execution.created_at) or "",
             status=execution.status,
             error_message=execution.error_message
         ))
@@ -665,8 +686,8 @@ async def get_user_details(
         "is_active": user.is_active,
         "is_verified": user.is_verified,
         "is_superuser": user.is_superuser,
-        "created_at": user.created_at.isoformat() if user.created_at else "",
-        "last_login": user.last_login.isoformat() if user.last_login else None,
+        "created_at": safe_datetime_format(user.created_at) or "",
+        "last_login": safe_datetime_format(user.last_login),
         "bio": user.bio,
         "avatar_url": user.avatar_url
     }
@@ -1226,8 +1247,8 @@ async def get_template_executions(
             error_message=execution.error_message,
             execution_time=execution.execution_time,
             status=execution.status,
-            created_at=execution.created_at.isoformat() if execution.created_at else "",
-            executed_at=execution.executed_at.isoformat() if execution.executed_at else None
+            created_at=safe_datetime_format(execution.created_at) or "",
+            executed_at=safe_datetime_format(execution.executed_at)
         ))
     
     return TemplateExecutionResponse(
