@@ -130,16 +130,33 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_admin_analytics_overview(db: Session, admin_user_id: int) -> Dict[str, Any]:
+    def get_admin_analytics_overview(db: Session, admin_user: User) -> Dict[str, Any]:
         """Get analytics overview for admin dashboard"""
         
-        # Get classrooms created by this admin
+        # Import here to avoid circular imports
+        from app.routers.admin import get_user_classroom_ids
+        
+        # Get all classrooms the admin has access to (not just created by them)
+        classroom_ids = get_user_classroom_ids(admin_user)
+        
+        if not classroom_ids:
+            return {
+                "overview": {
+                    "total_students": 0,
+                    "average_success_rate": 0,
+                    "total_submissions": 0,
+                    "active_students_count": 0
+                },
+                "classrooms": [],
+                "language_performance": [],
+                "student_performance": []
+            }
+        
+        # Get classroom objects for context
         admin_classrooms = db.query(Classroom).filter(
-            Classroom.created_by_id == admin_user_id,
+            Classroom.id.in_(classroom_ids),
             Classroom.is_active == True
         ).all()
-        
-        classroom_ids = [c.id for c in admin_classrooms]
         
         # Get all students in admin's classrooms
         student_memberships = db.query(UserClassroom).filter(
@@ -232,16 +249,17 @@ class AnalyticsService:
         }
     
     @staticmethod
-    def get_student_analytics_for_admin(db: Session, admin_user_id: int, student_id: int) -> Dict[str, Any]:
+    def get_student_analytics_for_admin(db: Session, admin_user: User, student_id: int) -> Dict[str, Any]:
         """Get detailed analytics for a specific student (admin view)"""
         
-        # Verify admin has access to this student
-        admin_classrooms = db.query(Classroom).filter(
-            Classroom.created_by_id == admin_user_id,
-            Classroom.is_active == True
-        ).all()
+        # Import here to avoid circular imports
+        from app.routers.admin import get_user_classroom_ids
         
-        classroom_ids = [c.id for c in admin_classrooms]
+        # Get all classrooms the admin has access to
+        classroom_ids = get_user_classroom_ids(admin_user)
+        
+        if not classroom_ids:
+            return {"error": "No classrooms found for admin"}
         
         student_in_classroom = db.query(UserClassroom).filter(
             UserClassroom.user_id == student_id,
@@ -295,13 +313,20 @@ class AnalyticsService:
         return student_analytics
     
     @staticmethod
-    def get_classroom_analytics(db: Session, admin_user_id: int, classroom_id: int) -> Dict[str, Any]:
+    def get_classroom_analytics(db: Session, admin_user: User, classroom_id: int) -> Dict[str, Any]:
         """Get detailed analytics for a specific classroom"""
         
-        # Verify admin owns this classroom
+        # Import here to avoid circular imports
+        from app.routers.admin import get_user_classroom_ids
+        
+        # Verify admin has access to this classroom
+        classroom_ids = get_user_classroom_ids(admin_user)
+        
+        if classroom_id not in classroom_ids:
+            return {"error": "Classroom not found or access denied"}
+            
         classroom = db.query(Classroom).filter(
             Classroom.id == classroom_id,
-            Classroom.created_by_id == admin_user_id,
             Classroom.is_active == True
         ).first()
         
