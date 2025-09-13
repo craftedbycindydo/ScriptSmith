@@ -23,7 +23,9 @@ import {
   Users,
   Brain,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Play,
+  Loader2
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
 
@@ -49,6 +51,9 @@ const TemplateSubmissions: React.FC = () => {
   
   // Expanded submission for detailed view
   const [expandedSubmission, setExpandedSubmission] = useState<number | null>(null);
+  
+  // Run Code functionality
+  const [runningSubmissions, setRunningSubmissions] = useState<Set<number>>(new Set());
   
   // AI Grading Modal States
   const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -162,6 +167,38 @@ const TemplateSubmissions: React.FC = () => {
     } catch (error) {
       console.error('Failed to fetch classroom members:', error);
       setClassroomMembers([]);
+    }
+  };
+
+  const handleRunCode = async (submissionId: number) => {
+    try {
+      setRunningSubmissions(prev => new Set(prev).add(submissionId));
+      const response = await apiService.rerunSubmission(submissionId);
+      
+      if (response.success) {
+        // Update the submission in the local state
+        setSubmissions(prev => prev.map(sub => 
+          sub.id === submissionId 
+            ? {
+                ...sub,
+                output: response.output,
+                error_message: response.error_message,
+                execution_time: response.execution_time,
+                status: response.status
+              }
+            : sub
+        ));
+      } else {
+        console.error(`Failed to run code: ${response.message || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to run code:', err.response?.data?.detail || err.message);
+    } finally {
+      setRunningSubmissions(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(submissionId);
+        return newSet;
+      });
     }
   };
 
@@ -1032,8 +1069,28 @@ const TemplateSubmissions: React.FC = () => {
 
                           {/* Output Panel */}
                           <div className="flex flex-col bg-background border rounded-lg shadow-sm">
-                            <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
+                            <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg flex items-center justify-between">
                               <h4 className="text-sm font-medium">Output</h4>
+                              <Button
+                                onClick={() => handleRunCode(submission.id)}
+                                disabled={runningSubmissions.has(submission.id)}
+                                className="btn-success flex sm:inline-flex"
+                                size="sm"
+                              >
+                                {runningSubmissions.has(submission.id) ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 mr-1 lg:mr-2 animate-spin" />
+                                    <span className="hidden sm:inline">Running...</span>
+                                    <span className="sm:hidden">...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-4 h-4 mr-1 lg:mr-2" />
+                                    <span className="hidden sm:inline">Run Code</span>
+                                    <span className="sm:hidden">Run</span>
+                                  </>
+                                )}
+                              </Button>
                             </div>
                             <div className="flex-1 overflow-hidden rounded-b-lg">
                               <OutputConsole

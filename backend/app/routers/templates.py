@@ -4,6 +4,7 @@ from typing import Optional, List, Dict
 from sqlalchemy.orm import Session
 from datetime import datetime
 import os
+import time
 
 from app.database.base import get_db
 from app.routers.auth import get_current_user
@@ -12,6 +13,7 @@ from app.models.template import Template, TemplateSubmission
 from app.models.user_template import UserTemplate
 from app.models.classroom import Classroom, UserClassroom
 from app.services.template_service import TemplateService
+from app.services.code_execution import code_execution_service
 from app.services.user_template_service import UserTemplateService
 from app.services.admin_service import AdminService
 from app.core.config import settings
@@ -916,4 +918,89 @@ async def delete_user_template(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete template: {str(e)}"
+        )
+
+
+class RerunSubmissionResponse(BaseModel):
+    success: bool
+    message: str
+    output: Optional[str] = None
+    error_message: Optional[str] = None
+    execution_time: Optional[float] = None
+    status: str
+
+
+@router.post("/admin/submissions/{submission_id}/rerun", response_model=RerunSubmissionResponse)
+async def rerun_submission(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Re-run a specific submission and update its output (Admin only)"""
+    try:
+        # Get the submission
+        submission = db.query(TemplateSubmission).filter(
+            TemplateSubmission.id == submission_id
+        ).first()
+        
+        if not submission:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+        
+        # Verify admin has access to this submission (through classroom ownership)
+        if submission.template:
+            # Check if admin created/owns the template's classrooms
+            template_classrooms = [c.id for c in submission.template.classrooms]
+            admin_classrooms = db.query(Classroom.id).filter(
+                Classroom.created_by_id == admin_user.id,
+                Classroom.is_active == True
+            ).all()
+            admin_classroom_ids = [c.id for c in admin_classrooms]
+            
+            if not any(classroom_id in admin_classroom_ids for classroom_id in template_classrooms):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You don't have access to this submission"
+                )
+        
+        # Execute the code and measure execution time
+        start_time = time.time()
+        
+        execution_result = await code_execution_service.execute_code(
+            code=submission.submitted_code,
+            language=submission.language or "python",
+            input_data=""
+        )
+        
+        end_time = time.time()
+        actual_execution_time = round(end_time - start_time, 3)
+        
+        # Update the submission with new execution results
+        submission.output = execution_result.get("output", "")
+        submission.error_message = execution_result.get("error", "")
+        submission.execution_time = actual_execution_time
+        # The microservice returns status: "success", "error", or "timeout"
+        submission.status = execution_result.get("status", "error")
+        
+        # Save changes
+        db.commit()
+        
+        return RerunSubmissionResponse(
+            success=True,
+            message="Submission re-run successfully",
+            output=submission.output,
+            error_message=submission.error_message,
+            execution_time=submission.execution_time,
+            status=submission.status
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to re-run submission: {str(e)}"
         )
