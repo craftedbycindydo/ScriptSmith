@@ -864,6 +864,38 @@ export const apiService = {
     const response = await api.post(`/collaboration/sessions/${shareId}/batch-admission`, requests);
     return response.data;
   },
+
+  // Analytics endpoints
+  async getPersonalAnalytics(): Promise<any> {
+    const response = await api.get('/analytics/user/personal');
+    return response.data;
+  },
+
+  // Admin analytics endpoints
+  async getAdminAnalyticsOverview(): Promise<any> {
+    const response = await api.get('/analytics/admin/overview');
+    return response.data;
+  },
+
+  async getStudentAnalyticsForAdmin(studentId: number): Promise<any> {
+    const response = await api.get(`/analytics/admin/student/${studentId}`);
+    return response.data;
+  },
+
+  async getClassroomAnalytics(classroomId: number): Promise<any> {
+    const response = await api.get(`/analytics/admin/classroom/${classroomId}`);
+    return response.data;
+  },
+
+  async getFilteredStudentAnalytics(params: {
+    classroom_id?: number;
+    risk_level?: string;
+    min_success_rate?: number;
+    max_success_rate?: number;
+  }): Promise<any> {
+    const response = await api.get('/analytics/admin/students', { params });
+    return response.data;
+  },
 };
 
 // Axios interceptor to add auth token

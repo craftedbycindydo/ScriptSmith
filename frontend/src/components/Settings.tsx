@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import CodeHistory from './CodeHistory';
 import UserSubmissions from './UserSubmissions';
+import UserAnalytics from './UserAnalytics';
 import { useAuthStore } from '@/store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useCodeStore } from '@/store/codeStore';
@@ -36,7 +37,8 @@ import {
   AlertCircle,
   X,
   Eye,
-  EyeOff
+  EyeOff,
+  BarChart3
 } from 'lucide-react';
 
 export default function Settings() {
@@ -249,6 +251,7 @@ export default function Settings() {
                     <Menu className="w-4 h-4 mr-2" />
                     {activeTab === 'history' && 'Code History'}
                     {activeTab === 'submissions' && 'Submissions'}
+                    {activeTab === 'analytics' && 'Analytics'}
                     {activeTab === 'profile' && 'Profile'}
                     {activeTab === 'preferences' && 'Preferences'}
                   </span>
@@ -267,6 +270,10 @@ export default function Settings() {
                 <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('submissions')}>
                   <Send className="w-4 h-4 mr-3 flex-shrink-0" />
                   <span className="flex-1 text-left">Submissions</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('analytics')}>
+                  <BarChart3 className="w-4 h-4 mr-3 flex-shrink-0" />
+                  <span className="flex-1 text-left">Analytics</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center py-3 px-4" onClick={() => setActiveTab('profile')}>
                   <User className="w-4 h-4 mr-3 flex-shrink-0" />
@@ -331,6 +338,17 @@ export default function Settings() {
                     {!sidebarCollapsed && <span className="ml-3">Submissions</span>}
                   </Button>
                   <Button
+                    variant={activeTab === 'analytics' ? 'default' : 'ghost'}
+                    className={`w-full h-12 px-4 ${
+                      sidebarCollapsed ? 'justify-center' : 'justify-start'
+                    }`}
+                    onClick={() => setActiveTab('analytics')}
+                    title={sidebarCollapsed ? 'Analytics' : ''}
+                  >
+            <BarChart3 className="w-4 h-4" />
+                    {!sidebarCollapsed && <span className="ml-3">Analytics</span>}
+                  </Button>
+                  <Button
                     variant={activeTab === 'profile' ? 'default' : 'ghost'}
                     className={`w-full h-12 px-4 ${
                       sidebarCollapsed ? 'justify-center' : 'justify-start'
@@ -378,6 +396,12 @@ export default function Settings() {
                       templates={templates}
                       loading={submissionsLoading || statsLoading || templatesLoading}
                     />
+                  </div>
+                )}
+
+                {activeTab === 'analytics' && (
+                  <div className="space-y-4">
+                    <UserAnalytics />
                   </div>
                 )}
 
@@ -727,6 +751,12 @@ export default function Settings() {
                     templates={templates}
                     loading={submissionsLoading || statsLoading || templatesLoading}
                   />
+                </div>
+              )}
+
+              {activeTab === 'analytics' && (
+                <div className="space-y-4">
+                  <UserAnalytics />
                 </div>
               )}
 

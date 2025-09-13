@@ -160,6 +160,15 @@ async def get_current_active_user(current_user = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
+# Dependency to get current admin user
+async def get_admin_user(current_user = Depends(get_current_user)):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Admin privileges required."
+        )
+    return current_user
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register_user(
     user: UserCreate, 
