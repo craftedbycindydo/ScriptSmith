@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
@@ -90,9 +89,6 @@ export default function AdminAnalytics() {
 
   // Filter states
   const [selectedClassroom, setSelectedClassroom] = useState<string>('all');
-  const [selectedRiskLevel, setSelectedRiskLevel] = useState<string>('all');
-  const [minSuccessRate, setMinSuccessRate] = useState<string>('');
-  const [maxSuccessRate, setMaxSuccessRate] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>('all');
 
   // Simplified filtering handlers (classroom-student relationship needs backend enhancement)
@@ -159,35 +155,9 @@ export default function AdminAnalytics() {
   const applyFilters = () => {
     if (!analyticsData) return [];
 
-    let filteredStudents = [...analyticsData.student_performance];
-
-    // Apply risk level filter
-    if (selectedRiskLevel !== 'all') {
-      filteredStudents = filteredStudents.filter(student => 
-        student.risk_level === selectedRiskLevel
-      );
-    }
-
-    // Apply success rate filters
-    if (minSuccessRate) {
-      const min = parseFloat(minSuccessRate);
-      if (!isNaN(min)) {
-        filteredStudents = filteredStudents.filter(student => 
-          student.success_rate >= min
-        );
-      }
-    }
-
-    if (maxSuccessRate) {
-      const max = parseFloat(maxSuccessRate);
-      if (!isNaN(max)) {
-        filteredStudents = filteredStudents.filter(student => 
-          student.success_rate <= max
-        );
-      }
-    }
-
-    return filteredStudents;
+    // For now, return all students since we only have basic dropdown filtering
+    // Future enhancement: filter students by selected classroom when backend provides the relationship
+    return analyticsData.student_performance;
   };
 
   // For now, return all students (will enhance when backend provides student-classroom mapping)
@@ -365,14 +335,15 @@ export default function AdminAnalytics() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-            <div className="col-span-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Student Dropdown - More space for long names */}
+            <div className="md:col-span-1">
               <Label htmlFor="student">Select Student</Label>
               <Select value={selectedStudentId} onValueChange={handleStudentChange}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
+                <SelectTrigger className="mt-1 w-full">
+                  <SelectValue placeholder="All Students" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[400px]">
                   <SelectItem value="all">All Students</SelectItem>
                   {getStudentsForDropdown().map((student) => (
                     <SelectItem key={student.user_id} value={student.user_id.toString()}>
@@ -383,13 +354,14 @@ export default function AdminAnalytics() {
               </Select>
             </div>
 
-            <div className="col-span-1">
+            {/* Classroom Dropdown - More space for long classroom names */}
+            <div className="md:col-span-1">
               <Label htmlFor="classroom">Classroom</Label>
               <Select value={selectedClassroom} onValueChange={handleClassroomChange}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
+                <SelectTrigger className="mt-1 w-full">
+                  <SelectValue placeholder="All Classrooms" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[350px]">
                   <SelectItem value="all">All Classrooms</SelectItem>
                   {analyticsData.classrooms.map((classroom) => (
                     <SelectItem key={classroom.id} value={classroom.id.toString()}>
@@ -400,47 +372,17 @@ export default function AdminAnalytics() {
               </Select>
             </div>
 
-            <div className="col-span-1">
-              <Label htmlFor="riskLevel">Risk Level</Label>
-              <Select value={selectedRiskLevel} onValueChange={setSelectedRiskLevel}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Levels</SelectItem>
-                  <SelectItem value="high">High Risk</SelectItem>
-                  <SelectItem value="medium">Medium Risk</SelectItem>
-                  <SelectItem value="low">Low Risk</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="col-span-1">
-              <Label htmlFor="minSuccess">Min Success Rate %</Label>
-              <Input
-                id="minSuccess"
-                type="number"
-                placeholder="0"
-                min="0"
-                max="100"
-                value={minSuccessRate}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMinSuccessRate(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-
-            <div className="col-span-1">
-              <Label htmlFor="maxSuccess">Max Success Rate %</Label>
-              <Input
-                id="maxSuccess"
-                type="number"
-                placeholder="100"
-                min="0"
-                max="100"
-                value={maxSuccessRate}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxSuccessRate(e.target.value)}
-                className="mt-1"
-              />
+            {/* Clear Filters Button */}
+            <div className="md:col-span-1 flex items-end">
+              <button
+                onClick={() => {
+                  setSelectedStudentId('all');
+                  setSelectedClassroom('all');
+                }}
+                className="mt-1 px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 rounded-md transition-colors w-full"
+              >
+                Clear Filters
+              </button>
             </div>
           </div>
         </CardContent>
