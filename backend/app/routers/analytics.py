@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database.base import get_db
 from app.models.user import User
-from app.routers.auth import get_current_user, get_admin_user
+from app.routers.auth import get_current_user
+from app.routers.admin import get_admin_user
 from app.services.analytics_service import AnalyticsService
 
 router = APIRouter(tags=["analytics"])
