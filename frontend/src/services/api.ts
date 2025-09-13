@@ -564,6 +564,11 @@ export const apiService = {
     return response.data;
   },
 
+  async rerunSubmission(submissionId: number): Promise<any> {
+    const response = await api.post(`/admin/submissions/${submissionId}/rerun`);
+    return response.data;
+  },
+
   // User submissions endpoints (for regular users to see their own submissions)
   async getUserSubmissions(
     templateName?: string,
