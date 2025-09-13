@@ -1022,6 +1022,176 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                           </Select>
                         </div>
 
+                        {/* Submission deadline */}
+                        <div>
+                          <Label htmlFor={`edit-deadline-${template.id}`}>Submission Deadline (Optional)</Label>
+                          <div className="mt-1">
+                            <DateTimePicker
+                              value={editingTemplate.submission_deadline}
+                              onChange={(date) => setEditingTemplate(prev => ({...prev, submission_deadline: date}))}
+                              placeholder="Pick a submission deadline"
+                            />
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Set a deadline for when students can submit this template. Leave empty for no deadline.
+                            {editingTemplate.classroom_ids.length > 0 && !editingTemplate.submission_deadline && (
+                              <span className="font-medium text-blue-600 dark:text-blue-400"> Setting a deadline will enable student-specific exclusions.</span>
+                            )}
+                          </p>
+                        </div>
+
+                        {/* Classroom Selection */}
+                        <div>
+                          <Label htmlFor={`edit-classrooms-${template.id}`}>Classroom Access</Label>
+                          <div className="mt-2 space-y-2">
+                            <p className="text-sm text-muted-foreground">
+                              Select classrooms that can access this template. Leave empty for global access.
+                            </p>
+                            <div className="space-y-2 max-h-32 overflow-y-auto">
+                              {availableClassrooms.map((classroom) => (
+                                <div key={classroom.id} className="flex items-center space-x-2">
+                                  <input
+                                    type="checkbox"
+                                    id={`edit-classroom-${template.id}-${classroom.id}`}
+                                    checked={editingTemplate.classroom_ids.includes(classroom.id)}
+                                    onChange={(e) => {
+                                      const isChecked = e.target.checked;
+                                      setEditingTemplate(prev => ({
+                                        ...prev,
+                                        classroom_ids: isChecked
+                                          ? [...prev.classroom_ids, classroom.id]
+                                          : prev.classroom_ids.filter(id => id !== classroom.id)
+                                      }));
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                  <Label 
+                                    htmlFor={`edit-classroom-${template.id}-${classroom.id}`}
+                                    className="text-sm font-normal cursor-pointer"
+                                  >
+                                    {classroom.name} <span className="text-muted-foreground">({classroom.classroom_key})</span>
+                                  </Label>
+                                </div>
+                              ))}
+                              {availableClassrooms.length === 0 && (
+                                <p className="text-sm text-muted-foreground italic">
+                                  No classrooms available. This template will be globally accessible.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Show warning if exclusions exist but no classrooms selected */}
+                        {editingTemplate.classroom_ids.length === 0 && editingTemplate.exclusions.length > 0 && (
+                          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                            <p className="text-sm text-amber-800 dark:text-amber-200">
+                              <strong>Warning:</strong> This template has {editingTemplate.exclusions.length} student exclusion(s) but no classrooms are selected. 
+                              Select classrooms to manage exclusions or they will be removed when saved.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Exclusion List (User-specific deadlines) */}
+                        {editingTemplate.classroom_ids.length > 0 && (
+                          <div>
+                            <Label>Exclusion List (Optional)</Label>
+                            <div className="mt-2 space-y-3">
+                              <p className="text-sm text-muted-foreground">
+                                Give specific students custom submission deadlines that override the general deadline.
+                                {!editingTemplate.submission_deadline && (
+                                  <span className="font-medium text-amber-600 dark:text-amber-400"> Set a submission deadline above to add new exclusions.</span>
+                                )}
+                              </p>
+
+                              {/* Current exclusions */}
+                              {editingTemplate.exclusions.length > 0 && (
+                                <div className="space-y-2">
+                                  <h4 className="text-sm font-medium flex items-center">
+                                    <Users className="w-4 h-4 mr-2" />
+                                    Students with Custom Deadlines ({editingTemplate.exclusions.length})
+                                  </h4>
+                                  <div className="space-y-2 max-h-32 overflow-y-auto bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                                    {editingTemplate.exclusions.map((exclusion) => (
+                                      <div key={exclusion.user_id} className="flex items-center gap-3 p-2 bg-white dark:bg-gray-800 rounded border">
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium truncate">{exclusion.username}</p>
+                                        </div>
+                                        <div className="flex-shrink-0">
+                                          <DateTimePicker
+                                            value={parseDate(exclusion.deadline) || new Date()}
+                                            onChange={(date) => date && updateExclusionDeadline(exclusion.user_id, date)}
+                                            placeholder="Custom deadline"
+                                          />
+                                        </div>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => removeUserFromExclusions(exclusion.user_id)}
+                                          className="flex-shrink-0"
+                                        >
+                                          <UserMinus className="w-4 h-4" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Add user to exclusions - Only show if deadline is set */}
+                              {editingTemplate.submission_deadline && (
+                                <div className="space-y-2">
+                                  <h4 className="text-sm font-medium">Add Student to Exclusion List</h4>
+                                  {loadingUsers ? (
+                                    <p className="text-sm text-muted-foreground">Loading students...</p>
+                                  ) : (
+                                    <div className="space-y-2 max-h-24 overflow-y-auto">
+                                      {getAvailableUsers()
+                                        .filter(user => !editingTemplate.exclusions.some(e => e.user_id === user.id))
+                                        .map((user) => (
+                                          <div key={user.id} className="flex items-center justify-between p-2 border rounded">
+                                            <div>
+                                              <p className="text-sm font-medium">{user.username}</p>
+                                              {user.first_name && user.last_name && (
+                                                <p className="text-xs text-muted-foreground">{user.first_name} {user.last_name}</p>
+                                              )}
+                                            </div>
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              onClick={() => addUserToExclusions(user)}
+                                            >
+                                              <UserPlus className="w-4 h-4 mr-1" />
+                                              Add
+                                            </Button>
+                                          </div>
+                                        ))
+                                      }
+                                      {getAvailableUsers().filter(user => !editingTemplate.exclusions.some(e => e.user_id === user.id)).length === 0 && (
+                                        <p className="text-sm text-muted-foreground italic p-2">
+                                          {getAvailableUsers().length === 0 
+                                            ? "No students found in selected classrooms"
+                                            : "All students from selected classrooms have been added to exclusions"
+                                          }
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Show notice when deadline is needed for adding new exclusions */}
+                              {!editingTemplate.submission_deadline && editingTemplate.exclusions.length === 0 && (
+                                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                                    <strong>Note:</strong> Set a submission deadline above to add student-specific exclusions.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Code Editor */}
                         <div>
                           <Label>Code Content *</Label>
