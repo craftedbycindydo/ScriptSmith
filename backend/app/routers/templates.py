@@ -949,15 +949,28 @@ async def rerun_submission(
                 detail="Submission not found"
             )
         
-        # Verify admin has access to this submission (through classroom ownership)
+        # Verify admin has access to this submission (same pattern as analytics service)
         if submission.template:
-            # Check if admin created/owns the template's classrooms
-            template_classrooms = [c.id for c in submission.template.classrooms]
-            admin_classrooms = db.query(Classroom.id).filter(
-                Classroom.created_by_id == admin_user.id,
-                Classroom.is_active == True
+            # Get classrooms where admin is a teacher (includes ones they created)
+            teacher_classrooms = db.query(Classroom).join(UserClassroom).filter(
+                Classroom.is_active == True,
+                UserClassroom.user_id == admin_user.id,
+                UserClassroom.is_active == True,
+                UserClassroom.role == "TEACHER"
             ).all()
-            admin_classroom_ids = [c.id for c in admin_classrooms]
+            
+            # Also include classrooms they created (in case they're not explicitly a member)
+            created_classrooms = db.query(Classroom).filter(
+                Classroom.is_active == True,
+                Classroom.created_by_id == admin_user.id
+            ).all()
+            
+            # Combine and deduplicate
+            all_classrooms_dict = {c.id: c for c in teacher_classrooms + created_classrooms}
+            admin_classroom_ids = list(all_classrooms_dict.keys())
+            
+            # Check if template is assigned to any of admin's accessible classrooms
+            template_classrooms = [c.id for c in submission.template.classrooms]
             
             if not any(classroom_id in admin_classroom_ids for classroom_id in template_classrooms):
                 raise HTTPException(
