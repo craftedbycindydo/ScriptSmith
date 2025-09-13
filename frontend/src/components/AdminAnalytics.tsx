@@ -95,6 +95,16 @@ export default function AdminAnalytics() {
   const [maxSuccessRate, setMaxSuccessRate] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>('all');
 
+  // Simplified filtering handlers (classroom-student relationship needs backend enhancement)
+  const handleClassroomChange = (classroomId: string) => {
+    setSelectedClassroom(classroomId);
+    // For now, keep student selection as is - we'll enhance this when backend provides student-classroom mapping
+  };
+
+  const handleStudentChange = (studentId: string) => {
+    setSelectedStudentId(studentId);
+  };
+
   // Selected student analytics data
   const [selectedStudentAnalytics, setSelectedStudentAnalytics] = useState<StudentAnalyticsDetails | null>(null);
   const [studentDetailsLoading, setStudentDetailsLoading] = useState(false);
@@ -178,6 +188,12 @@ export default function AdminAnalytics() {
     }
 
     return filteredStudents;
+  };
+
+  // For now, return all students (will enhance when backend provides student-classroom mapping)
+  const getStudentsForDropdown = () => {
+    if (!analyticsData) return [];
+    return analyticsData.student_performance;
   };
 
 
@@ -349,16 +365,16 @@ export default function AdminAnalytics() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            <div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+            <div className="col-span-1">
               <Label htmlFor="student">Select Student</Label>
-              <Select value={selectedStudentId} onValueChange={setSelectedStudentId}>
+              <Select value={selectedStudentId} onValueChange={handleStudentChange}>
                 <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Students</SelectItem>
-                  {analyticsData?.student_performance.map((student) => (
+                  {getStudentsForDropdown().map((student) => (
                     <SelectItem key={student.user_id} value={student.user_id.toString()}>
                       {student.full_name || student.username} (@{student.username})
                     </SelectItem>
@@ -367,9 +383,9 @@ export default function AdminAnalytics() {
               </Select>
             </div>
 
-            <div>
+            <div className="col-span-1">
               <Label htmlFor="classroom">Classroom</Label>
-              <Select value={selectedClassroom} onValueChange={setSelectedClassroom}>
+              <Select value={selectedClassroom} onValueChange={handleClassroomChange}>
                 <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
@@ -384,7 +400,7 @@ export default function AdminAnalytics() {
               </Select>
             </div>
 
-            <div>
+            <div className="col-span-1">
               <Label htmlFor="riskLevel">Risk Level</Label>
               <Select value={selectedRiskLevel} onValueChange={setSelectedRiskLevel}>
                 <SelectTrigger className="mt-1">
@@ -399,7 +415,7 @@ export default function AdminAnalytics() {
               </Select>
             </div>
 
-            <div>
+            <div className="col-span-1">
               <Label htmlFor="minSuccess">Min Success Rate %</Label>
               <Input
                 id="minSuccess"
@@ -413,7 +429,7 @@ export default function AdminAnalytics() {
               />
             </div>
 
-            <div>
+            <div className="col-span-1">
               <Label htmlFor="maxSuccess">Max Success Rate %</Label>
               <Input
                 id="maxSuccess"
