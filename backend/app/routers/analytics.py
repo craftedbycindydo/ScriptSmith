@@ -39,7 +39,7 @@ async def get_admin_analytics_overview(
 ):
     """Get analytics overview for admin - all classrooms and students"""
     try:
-        analytics_data = AnalyticsService.get_admin_analytics_overview(db, admin_user.id)
+        analytics_data = AnalyticsService.get_admin_analytics_overview(db, admin_user)
         return {
             "success": True,
             "data": analytics_data
@@ -60,7 +60,7 @@ async def get_student_analytics_for_admin(
     """Get detailed analytics for a specific student (admin view)"""
     try:
         analytics_data = AnalyticsService.get_student_analytics_for_admin(
-            db, admin_user.id, student_id
+            db, admin_user, student_id
         )
         
         if "error" in analytics_data:
@@ -91,7 +91,7 @@ async def get_classroom_analytics(
     """Get detailed analytics for a specific classroom"""
     try:
         analytics_data = AnalyticsService.get_classroom_analytics(
-            db, admin_user.id, classroom_id
+            db, admin_user, classroom_id
         )
         
         if "error" in analytics_data:
