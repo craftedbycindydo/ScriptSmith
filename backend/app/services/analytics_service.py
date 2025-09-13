@@ -133,11 +133,25 @@ class AnalyticsService:
     def get_admin_analytics_overview(db: Session, admin_user: User) -> Dict[str, Any]:
         """Get analytics overview for admin dashboard"""
         
-        # Import here to avoid circular imports
-        from app.routers.admin import get_user_classroom_ids
+        # Use same pattern as working Professor Templates endpoint
+        # Get classrooms where admin is a teacher (includes ones they created)
+        teacher_classrooms = db.query(Classroom).join(UserClassroom).filter(
+            Classroom.is_active == True,
+            UserClassroom.user_id == admin_user.id,
+            UserClassroom.is_active == True,
+            UserClassroom.role == "TEACHER"
+        ).all()
         
-        # Get all classrooms the admin has access to (not just created by them)
-        classroom_ids = get_user_classroom_ids(admin_user)
+        # Also include classrooms they created (in case they're not explicitly a member)
+        created_classrooms = db.query(Classroom).filter(
+            Classroom.is_active == True,
+            Classroom.created_by_id == admin_user.id
+        ).all()
+        
+        # Combine and deduplicate
+        all_classrooms_dict = {c.id: c for c in teacher_classrooms + created_classrooms}
+        admin_classrooms = list(all_classrooms_dict.values())
+        classroom_ids = list(all_classrooms_dict.keys())
         
         if not classroom_ids:
             return {
@@ -151,12 +165,6 @@ class AnalyticsService:
                 "language_performance": [],
                 "student_performance": []
             }
-        
-        # Get classroom objects for context
-        admin_classrooms = db.query(Classroom).filter(
-            Classroom.id.in_(classroom_ids),
-            Classroom.is_active == True
-        ).all()
         
         # Get all students in admin's classrooms
         student_memberships = db.query(UserClassroom).filter(
@@ -252,11 +260,24 @@ class AnalyticsService:
     def get_student_analytics_for_admin(db: Session, admin_user: User, student_id: int) -> Dict[str, Any]:
         """Get detailed analytics for a specific student (admin view)"""
         
-        # Import here to avoid circular imports
-        from app.routers.admin import get_user_classroom_ids
+        # Use same pattern as working Professor Templates endpoint
+        # Get classrooms where admin is a teacher (includes ones they created)
+        teacher_classrooms = db.query(Classroom).join(UserClassroom).filter(
+            Classroom.is_active == True,
+            UserClassroom.user_id == admin_user.id,
+            UserClassroom.is_active == True,
+            UserClassroom.role == "TEACHER"
+        ).all()
         
-        # Get all classrooms the admin has access to
-        classroom_ids = get_user_classroom_ids(admin_user)
+        # Also include classrooms they created (in case they're not explicitly a member)
+        created_classrooms = db.query(Classroom).filter(
+            Classroom.is_active == True,
+            Classroom.created_by_id == admin_user.id
+        ).all()
+        
+        # Combine and deduplicate
+        all_classrooms_dict = {c.id: c for c in teacher_classrooms + created_classrooms}
+        classroom_ids = list(all_classrooms_dict.keys())
         
         if not classroom_ids:
             return {"error": "No classrooms found for admin"}
@@ -316,19 +337,29 @@ class AnalyticsService:
     def get_classroom_analytics(db: Session, admin_user: User, classroom_id: int) -> Dict[str, Any]:
         """Get detailed analytics for a specific classroom"""
         
-        # Import here to avoid circular imports
-        from app.routers.admin import get_user_classroom_ids
+        # Use same pattern as working Professor Templates endpoint
+        # Get classrooms where admin is a teacher (includes ones they created)
+        teacher_classrooms = db.query(Classroom).join(UserClassroom).filter(
+            Classroom.is_active == True,
+            UserClassroom.user_id == admin_user.id,
+            UserClassroom.is_active == True,
+            UserClassroom.role == "TEACHER"
+        ).all()
         
-        # Verify admin has access to this classroom
-        classroom_ids = get_user_classroom_ids(admin_user)
+        # Also include classrooms they created (in case they're not explicitly a member)
+        created_classrooms = db.query(Classroom).filter(
+            Classroom.is_active == True,
+            Classroom.created_by_id == admin_user.id
+        ).all()
+        
+        # Combine and deduplicate
+        all_classrooms_dict = {c.id: c for c in teacher_classrooms + created_classrooms}
+        classroom_ids = list(all_classrooms_dict.keys())
         
         if classroom_id not in classroom_ids:
             return {"error": "Classroom not found or access denied"}
             
-        classroom = db.query(Classroom).filter(
-            Classroom.id == classroom_id,
-            Classroom.is_active == True
-        ).first()
+        classroom = all_classrooms_dict.get(classroom_id)
         
         if not classroom:
             return {"error": "Classroom not found or access denied"}
