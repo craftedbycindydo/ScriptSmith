@@ -183,7 +183,7 @@ async def startup_event():
     try:
         from sqlalchemy import text
         from app.database.base import engine, Base
-        from app.models import User, Template, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom
+        from app.models import User, Template, TemplateDraft, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom
         
         # Create all tables at once using the Base metadata
         print("🔄 Creating database tables...")

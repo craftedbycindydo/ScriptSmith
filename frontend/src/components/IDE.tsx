@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import CodeEditor from './CodeEditor';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
@@ -13,7 +15,7 @@ import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
-import { Play, Save, Download, Share2, Users, Send, CheckCircle } from 'lucide-react';
+import { Play, Save, Download, Share2, Users, Send, CheckCircle, ChevronDown, FileText } from 'lucide-react';
 
 export default function IDE() {
   const navigate = useNavigate();
@@ -78,6 +80,15 @@ export default function IDE() {
   const [templateName, setTemplateName] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  
+  // Draft save functionality state
+  const [lastDraftSave, setLastDraftSave] = useState<string>('');
+  const [showDraftChoice, setShowDraftChoice] = useState(false);
+  const [draftChoiceData, setDraftChoiceData] = useState<{
+    template: any;
+    draft: any;
+    templateId: string;
+  } | null>(null);
 
   // Format template name to add leading zeros to dates
   const formatTemplateName = (name: string): string => {
@@ -107,6 +118,18 @@ export default function IDE() {
     const year = date.getFullYear();
     
     return `${month}/${day}/${year}`;
+  };
+
+  // Format draft save time for display
+  const formatDraftTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return 'just now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+    return date.toLocaleDateString();
   };
 
   // Load languages and admin settings on component mount
@@ -183,6 +206,7 @@ export default function IDE() {
       setSelectedAdminTemplateName('');
       setCanSubmit(false);
       setHasSubmitted(false);
+      setLastDraftSave('');
       // Only clear user template if this is a clear action, not if there are no templates
       if (templateId === 'clear-admin') {
         setSelectedUserTemplate('');
@@ -194,7 +218,6 @@ export default function IDE() {
     try {
       const template = await apiService.getTemplate(parseInt(templateId));
       if (template && template.code_content) {
-        setCode(template.code_content);
         setSelectedTemplate(parseInt(templateId));
         setSelectedAdminTemplate(templateId);
         setSelectedAdminTemplateName(formatTemplateName(template.name || 'Untitled Template'));
@@ -205,12 +228,36 @@ export default function IDE() {
         // Check submission status
         setCanSubmit(template.can_submit || false);
         setHasSubmitted(!!template.user_submission);
+        
+        // Try to load any existing draft first
+        try {
+          const draft = await apiService.getTemplateDraft(parseInt(templateId));
+          if (draft && draft.code_content) {
+            // Draft exists, show choice dialog with fresh data
+            setDraftChoiceData({
+              template,
+              draft,
+              templateId
+            });
+            setShowDraftChoice(true);
+            // Don't set code yet, wait for user choice
+          } else {
+            // No draft found, use template's original code
+            setCode(template.code_content);
+            setLastDraftSave('');
+          }
+        } catch (error) {
+          console.error('Failed to load draft, using template code:', error);
+          setCode(template.code_content);
+          setLastDraftSave('');
+        }
       }
     } catch (error) {
       console.error('Failed to load template:', error);
       setSelectedTemplate(null);
       setCanSubmit(false);
       setHasSubmitted(false);
+      setLastDraftSave('');
     }
   };
 
@@ -319,7 +366,7 @@ export default function IDE() {
     setShowRunFirstModal(false);
   };
 
-  const handleSave = () => {
+  const handleSaveAsTemplate = () => {
     if (!isAuthenticated) {
       console.log('User must be authenticated to save templates');
       return;
@@ -335,6 +382,22 @@ export default function IDE() {
       setDownloadFilename('code');
     }
     setShowSaveForm(!showSaveForm);
+  };
+
+  const handleSaveDraftOption = () => {
+    if (!isAuthenticated) {
+      console.log('User must be authenticated to save drafts');
+      return;
+    }
+    
+    if (selectedAdminTemplate) {
+      // Save as draft for current template
+      handleSaveDraft();
+    } else {
+      // No template selected, show message or handle differently
+      console.log('No template selected to save draft for');
+      // Could show a notification here
+    }
   };
 
   const handleSaveTemplate = async () => {
@@ -372,6 +435,105 @@ export default function IDE() {
     setShowSaveForm(false);
     setTemplateName('');
     setTemplateDescription('');
+  };
+
+  // Handle draft save
+  const handleSaveDraft = async () => {
+    if (!selectedAdminTemplate || !code.trim()) {
+      console.log('No template selected or no code to save');
+      return;
+    }
+
+    try {
+      const draft = await apiService.saveTemplateDraft(parseInt(selectedAdminTemplate), {
+        code_content: code,
+        is_auto_save: false
+      });
+      
+      setLastDraftSave(formatDraftTime(draft.updated_at));
+      console.log('Draft saved successfully');
+    } catch (error: any) {
+      console.error('Failed to save draft:', error.response?.data?.detail || error.message);
+      // Could show a toast notification here in the future
+    }
+  };
+
+  // Refresh draft data when modal opens - use a ref to avoid dependency loop
+  useEffect(() => {
+    const refreshDraftData = async () => {
+      if (showDraftChoice && draftChoiceData && draftChoiceData.templateId) {
+        try {
+          const latestDraft = await apiService.getTemplateDraft(parseInt(draftChoiceData.templateId));
+          if (latestDraft && latestDraft.code_content) {
+            // Update the draftChoiceData with fresh draft data
+            setDraftChoiceData(prev => prev ? {
+              ...prev,
+              draft: latestDraft
+            } : null);
+            console.log('Refreshed draft data in modal with latest:', latestDraft.updated_at);
+          }
+        } catch (error) {
+          console.error('Failed to refresh draft data:', error);
+        }
+      }
+    };
+
+    // Only refresh when modal first opens, not when data changes
+    if (showDraftChoice) {
+      refreshDraftData();
+    }
+  }, [showDraftChoice]); // Remove draftChoiceData dependency to avoid loop
+
+  // Handle user choice for loading draft or fresh template
+  const handleLoadFreshTemplate = () => {
+    if (draftChoiceData) {
+      setCode(draftChoiceData.template.code_content);
+      setLastDraftSave('');
+      setShowDraftChoice(false);
+      setDraftChoiceData(null);
+      console.log('Loaded fresh template');
+    }
+  };
+
+  const handleLoadDraft = async () => {
+    if (draftChoiceData) {
+      try {
+        // Always fetch the latest draft from backend to ensure we have the most recent save
+        const latestDraft = await apiService.getTemplateDraft(parseInt(draftChoiceData.templateId));
+        if (latestDraft && latestDraft.code_content) {
+          setCode(latestDraft.code_content);
+          setLastDraftSave(formatDraftTime(latestDraft.updated_at));
+          console.log('Loaded latest saved draft from backend');
+        } else {
+          // Fallback to cached version if API call fails
+          setCode(draftChoiceData.draft.code_content);
+          setLastDraftSave(formatDraftTime(draftChoiceData.draft.updated_at));
+          console.log('Loaded cached draft (API call failed)');
+        }
+      } catch (error) {
+        console.error('Failed to fetch latest draft, using cached version:', error);
+        // Fallback to cached version
+        setCode(draftChoiceData.draft.code_content);
+        setLastDraftSave(formatDraftTime(draftChoiceData.draft.updated_at));
+      }
+      
+      setShowDraftChoice(false);
+      setDraftChoiceData(null);
+    }
+  };
+
+  // Handle modal close - clear template selection and reset state
+  const handleDraftChoiceClose = () => {
+    setShowDraftChoice(false);
+    setDraftChoiceData(null);
+    // Clear template selection and reset states
+    setSelectedTemplate(null);
+    setSelectedAdminTemplate('');
+    setSelectedAdminTemplateName('');
+    setCanSubmit(false);
+    setHasSubmitted(false);
+    setLastDraftSave('');
+    console.log('Draft choice modal closed - template selection cleared');
   };
 
   const handleDownload = () => {
@@ -715,6 +877,15 @@ export default function IDE() {
                     </div>
                   </div>
                 )}
+                
+                {/* Draft status indicator */}
+                {isAuthenticated && selectedAdminTemplate && lastDraftSave && (
+                  <div className="text-xs text-muted-foreground mt-2 lg:mt-0 lg:ml-4">
+                    <span className="inline-flex items-center px-2 py-1 rounded-md bg-muted/50">
+                      📝 Draft saved {lastDraftSave}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -768,6 +939,7 @@ export default function IDE() {
                 </Button>
               )}
 
+
               {/* Authenticated user features */}
               {isAuthenticated && (
                 <Button 
@@ -783,12 +955,35 @@ export default function IDE() {
                 </Button>
               )}
 
-              {/* Save button - visible on mobile with text */}
+              {/* Save dropdown - visible on mobile with text */}
               {isAuthenticated && (
-                <Button variant="outline" onClick={handleSave} size="sm" className="flex sm:inline-flex">
-                  <Save className="w-4 h-4 mr-2" />
-                  <span>Save</span>
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="flex sm:inline-flex">
+                      <Save className="w-4 h-4 mr-2" />
+                      <span>Save</span>
+                      <ChevronDown className="w-3 h-3 ml-1" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {selectedAdminTemplate && (
+                      <DropdownMenuItem onClick={handleSaveDraftOption} className="cursor-pointer">
+                        <FileText className="w-4 h-4 mr-2" />
+                        <div className="flex flex-col">
+                          <span>Save Draft</span>
+                          <span className="text-xs text-muted-foreground">Save progress for this template</span>
+                        </div>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={handleSaveAsTemplate} className="cursor-pointer">
+                      <Save className="w-4 h-4 mr-2" />
+                      <div className="flex flex-col">
+                        <span>Save as My Template</span>
+                        <span className="text-xs text-muted-foreground">Create personal template</span>
+                      </div>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               
               {/* Download button - visible on mobile with text */}
@@ -800,7 +995,7 @@ export default function IDE() {
           </div>
         </div>
         
-        {/* Save Template Form - Collapsible section between toolbar and content */}
+        {/* Save as My Template Form - Collapsible section between toolbar and content */}
         {showSaveForm && (
           <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
             <div className="px-4 py-3 md:px-6 lg:px-8">
@@ -813,7 +1008,7 @@ export default function IDE() {
                     <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6">
                       <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
                         <Save className="w-4 h-4" />
-                        Save as Template
+                        Save as My Template
                       </div>
                       
                       <div className="flex flex-col sm:flex-row lg:flex-row items-start sm:items-center lg:items-center gap-3 sm:gap-4 lg:gap-6 w-full lg:flex-1">
@@ -1200,6 +1395,98 @@ export default function IDE() {
           </div>
         </div>
       )}
+
+      {/* Draft Choice Modal */}
+      <Dialog open={showDraftChoice} onOpenChange={(open) => {
+        if (!open) handleDraftChoiceClose();
+      }}>
+        <DialogContent className="!max-w-none w-[95vw] h-[85vh] max-h-[85vh] overflow-hidden sm:w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] sm:h-[80vh] md:h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center text-blue-600 text-base sm:text-lg">
+              <div className="w-6 h-6 sm:w-8 sm:h-8 mr-2 sm:mr-3 text-blue-500 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center text-sm sm:text-base">
+                📄
+              </div>
+              Load Original or Saved Code?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 flex flex-col py-2 sm:py-4 overflow-hidden">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
+              You have saved code for this template. Choose which version to load:
+            </p>
+            
+            {/* Two choice options - responsive to modal size */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0">
+              {/* Original Code Option */}
+              <div className="border-2 border-green-200 dark:border-green-700 rounded-lg overflow-hidden flex flex-col h-full">
+                {/* Header */}
+                <div className="p-3 sm:p-4 border-b border-green-200 dark:border-green-700">
+                  <div className="mb-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-green-600 dark:text-green-400">
+                      🔄 Original Code
+                    </h3>
+                  </div>
+                  
+                  <p className="text-xs sm:text-sm text-muted-foreground">
+                    Load the original code (your changes will be lost)
+                  </p>
+                </div>
+
+                {/* Scrollable code preview */}
+                <div className="flex-1 bg-muted/20 p-2 sm:p-3 overflow-hidden flex flex-col">
+                  <div className="text-xs text-muted-foreground mb-2">Original Code:</div>
+                  <div className="flex-1 overflow-y-auto mb-3">
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">
+                      {draftChoiceData?.template.code_content || 'No code available'}
+                    </pre>
+                  </div>
+                  
+                  {/* Action button */}
+                  <Button
+                    onClick={handleLoadFreshTemplate}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    Load Original Code
+                  </Button>
+                </div>
+              </div>
+
+              {/* Saved Code Option */}
+              <div className="border-2 border-blue-200 dark:border-blue-700 rounded-lg overflow-hidden flex flex-col h-full">
+                {/* Header */}
+                <div className="p-3 sm:p-4 border-b border-blue-200 dark:border-blue-700">
+                  <div className="mb-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-blue-600 dark:text-blue-400">
+                      💾 Saved Code
+                    </h3>
+                  </div>
+                  
+                  <p className="text-xs sm:text-sm text-muted-foreground">
+                    Continue working on your saved code
+                  </p>
+                </div>
+
+                {/* Scrollable code preview */}
+                <div className="flex-1 bg-muted/20 p-2 sm:p-3 overflow-hidden flex flex-col">
+                  <div className="text-xs text-muted-foreground mb-2">Saved Code:</div>
+                  <div className="flex-1 overflow-y-auto mb-3">
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">
+                      {draftChoiceData?.draft.code_content || 'No code available'}
+                    </pre>
+                  </div>
+                  
+                  {/* Action button */}
+                  <Button
+                    onClick={handleLoadDraft}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    Load Saved Code
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

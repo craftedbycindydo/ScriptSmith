@@ -197,6 +197,23 @@ export interface UserInfo {
   last_name?: string;
 }
 
+// Template Draft interfaces
+export interface TemplateDraftSaveRequest {
+  code_content: string;
+  is_auto_save?: boolean;
+}
+
+export interface TemplateDraft {
+  id: number;
+  template_id: number;
+  user_id: number;
+  code_content: string;
+  is_auto_save: boolean;
+  created_at: string;
+  updated_at: string;
+  template_name?: string;
+}
+
 export interface AuthToken {
   access_token: string;
   refresh_token: string;
@@ -515,6 +532,35 @@ export const apiService = {
 
   async canSubmitTemplate(templateId: number): Promise<{ can_submit: boolean; deadline_info?: string }> {
     const response = await api.get(`/templates/${templateId}/can-submit`);
+    return response.data;
+  },
+
+  // Template draft endpoints
+  async saveTemplateDraft(templateId: number, request: TemplateDraftSaveRequest): Promise<TemplateDraft> {
+    const response = await api.post(`/templates/${templateId}/save-draft`, request);
+    return response.data;
+  },
+
+  async getTemplateDraft(templateId: number): Promise<TemplateDraft | null> {
+    try {
+      const response = await api.get(`/templates/${templateId}/draft`);
+      return response.data;
+    } catch (error: any) {
+      // Return null if no draft found
+      if (error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  async deleteTemplateDraft(templateId: number): Promise<{ message: string }> {
+    const response = await api.delete(`/templates/${templateId}/draft`);
+    return response.data;
+  },
+
+  async getUserDrafts(skip: number = 0, limit: number = 100): Promise<TemplateDraft[]> {
+    const response = await api.get(`/my-drafts?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 
