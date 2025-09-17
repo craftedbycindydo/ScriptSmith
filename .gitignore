@@ -129,3 +129,5 @@ node_modules/
 .venv/
 venv/
 **/venv/
+temp_venv/
+**/temp_venv/

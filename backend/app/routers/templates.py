@@ -10,6 +10,7 @@ from app.database.base import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
 from app.models.template import Template, TemplateSubmission
+from app.models.template_draft import TemplateDraft
 from app.models.user_template import UserTemplate
 from app.models.classroom import Classroom, UserClassroom
 from app.services.template_service import TemplateService
@@ -117,6 +118,24 @@ class UserInfo(BaseModel):
     username: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+
+# Template Draft Models
+class TemplateDraftSaveRequest(BaseModel):
+    code_content: str
+    is_auto_save: Optional[bool] = False
+
+class TemplateDraftResponse(BaseModel):
+    id: int
+    template_id: int
+    user_id: int
+    code_content: str
+    is_auto_save: bool
+    created_at: datetime
+    updated_at: datetime
+    template_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 
 # Helper functions
@@ -1016,4 +1035,152 @@ async def rerun_submission(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to re-run submission: {str(e)}"
+        )
+
+
+# Template Draft Endpoints
+
+@router.post("/templates/{template_id}/save-draft", response_model=TemplateDraftResponse)
+async def save_template_draft(
+    template_id: int,
+    request: TemplateDraftSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Save a draft of template progress"""
+    try:
+        draft = TemplateService.save_template_draft(
+            db=db,
+            template_id=template_id,
+            user_id=current_user.id,
+            code_content=request.code_content,
+            is_auto_save=request.is_auto_save
+        )
+        
+        # Add template name for response
+        template = db.query(Template).filter(Template.id == template_id).first()
+        draft_response = TemplateDraftResponse(
+            id=draft.id,
+            template_id=draft.template_id,
+            user_id=draft.user_id,
+            code_content=draft.code_content,
+            is_auto_save=draft.is_auto_save,
+            created_at=draft.created_at,
+            updated_at=draft.updated_at,
+            template_name=template.name if template else None
+        )
+        
+        return draft_response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save draft: {str(e)}"
+        )
+
+@router.get("/templates/{template_id}/draft", response_model=Optional[TemplateDraftResponse])
+async def get_template_draft(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get saved draft for a template"""
+    try:
+        draft = TemplateService.get_template_draft(
+            db=db,
+            template_id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not draft:
+            return None
+        
+        # Add template name for response
+        template = db.query(Template).filter(Template.id == template_id).first()
+        return TemplateDraftResponse(
+            id=draft.id,
+            template_id=draft.template_id,
+            user_id=draft.user_id,
+            code_content=draft.code_content,
+            is_auto_save=draft.is_auto_save,
+            created_at=draft.created_at,
+            updated_at=draft.updated_at,
+            template_name=template.name if template else None
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get draft: {str(e)}"
+        )
+
+@router.delete("/templates/{template_id}/draft")
+async def delete_template_draft(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete saved draft for a template"""
+    try:
+        success = TemplateService.delete_template_draft(
+            db=db,
+            template_id=template_id,
+            user_id=current_user.id
+        )
+        
+        if success:
+            return {"message": "Draft deleted successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Draft not found"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete draft: {str(e)}"
+        )
+
+@router.get("/my-drafts", response_model=List[TemplateDraftResponse])
+async def get_user_drafts(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all drafts for the current user"""
+    try:
+        drafts = TemplateService.get_user_drafts(
+            db=db,
+            user_id=current_user.id,
+            skip=skip,
+            limit=limit
+        )
+        
+        # Prepare response with template names
+        result = []
+        for draft in drafts:
+            template = db.query(Template).filter(Template.id == draft.template_id).first()
+            result.append(TemplateDraftResponse(
+                id=draft.id,
+                template_id=draft.template_id,
+                user_id=draft.user_id,
+                code_content=draft.code_content,
+                is_auto_save=draft.is_auto_save,
+                created_at=draft.created_at,
+                updated_at=draft.updated_at,
+                template_name=template.name if template else None
+            ))
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get user drafts: {str(e)}"
         )

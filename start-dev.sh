@@ -234,7 +234,26 @@ echo ""
 # Start Backend with microservice URLs
 echo "🐍 Starting FastAPI Backend on port $BACKEND_PORT..."
 cd backend
-source venv/bin/activate
+
+# Create fresh virtual environment
+echo "🔧 Creating fresh virtual environment..."
+TEMP_VENV_DIR="temp_venv_$(date +%s)"
+if command -v python3 &> /dev/null; then
+    python3 -m venv $TEMP_VENV_DIR
+    source $TEMP_VENV_DIR/bin/activate
+    echo "📦 Installing backend dependencies..."
+    pip install --upgrade pip
+    pip install -r requirements.txt
+elif command -v python &> /dev/null; then
+    python -m venv $TEMP_VENV_DIR
+    source $TEMP_VENV_DIR/bin/activate
+    echo "📦 Installing backend dependencies..."
+    pip install --upgrade pip
+    pip install -r requirements.txt
+else
+    echo "❌ Python not found - cannot create virtual environment"
+    exit 1
+fi
 
 # Set environment variables for backend microservice URLs
 export PYTHON_EXECUTOR_URL="http://localhost:$PYTHON_PORT"
@@ -248,19 +267,21 @@ export WEBSOCKET_SERVICE_URL="http://localhost:$WEBSOCKET_PORT"
 python -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload &
 BACKEND_PID=$!
 
-# Wait for backend to be ready
-echo "⏳ Waiting for backend to start..."
-for i in {1..15}; do
+# Wait for backend to be ready (longer timeout due to fresh venv installation)
+echo "⏳ Waiting for backend to start (this may take longer due to fresh dependency installation)..."
+for i in {1..30}; do
     if curl -s http://localhost:$BACKEND_PORT/api/health > /dev/null 2>&1; then
         echo "✅ Backend is ready!"
         break
     fi
-    if [ $i -eq 15 ]; then
+    if [ $i -eq 30 ]; then
         echo "❌ Backend failed to start"
+        echo "🔍 Check the backend logs above for errors"
         kill $BACKEND_PID 2>/dev/null
+        cleanup
         exit 1
     fi
-    sleep 1
+    sleep 2
 done
 
 # Start Frontend
@@ -310,6 +331,13 @@ cleanup() {
     # Stop other processes
     pkill -f uvicorn 2>/dev/null
     pkill -f "npm run dev" 2>/dev/null
+    
+    # Clean up temporary virtual environment
+    if [ -n "$TEMP_VENV_DIR" ] && [ -d "backend/$TEMP_VENV_DIR" ]; then
+        echo "🗑️  Cleaning up temporary virtual environment..."
+        rm -rf "backend/$TEMP_VENV_DIR"
+        echo "✅ Virtual environment cleaned up"
+    fi
     
     echo "✅ All services stopped"
     exit 0

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, desc
 from fastapi import HTTPException, status
 from app.models.template import Template, TemplateSubmission
+from app.models.template_draft import TemplateDraft
 from app.models.user import User
 from app.models.classroom import Classroom, UserClassroom
 
@@ -634,6 +635,95 @@ class TemplateService:
             ]
         }
     
+    # Template Draft Methods
+    
+    @staticmethod
+    def save_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int,
+        code_content: str,
+        is_auto_save: bool = False
+    ) -> TemplateDraft:
+        """Save or update a template draft for a user"""
+        
+        # Check if template exists and user has access
+        template = db.query(Template).filter(Template.id == template_id).first()
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found"
+            )
+        
+        # Check if draft already exists
+        existing_draft = db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+        
+        if existing_draft:
+            # Update existing draft
+            existing_draft.code_content = code_content
+            existing_draft.is_auto_save = is_auto_save
+            existing_draft.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(existing_draft)
+            return existing_draft
+        else:
+            # Create new draft
+            new_draft = TemplateDraft(
+                template_id=template_id,
+                user_id=user_id,
+                code_content=code_content,
+                is_auto_save=is_auto_save
+            )
+            db.add(new_draft)
+            db.commit()
+            db.refresh(new_draft)
+            return new_draft
+    
+    @staticmethod
+    def get_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int
+    ) -> Optional[TemplateDraft]:
+        """Get a template draft for a user"""
+        return db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+    
+    @staticmethod
+    def delete_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int
+    ) -> bool:
+        """Delete a template draft"""
+        draft = db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+        
+        if draft:
+            db.delete(draft)
+            db.commit()
+            return True
+        return False
+    
+    @staticmethod
+    def get_user_drafts(
+        db: Session,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[TemplateDraft]:
+        """Get all drafts for a user with template information"""
+        return db.query(TemplateDraft).filter(
+            TemplateDraft.user_id == user_id
+        ).order_by(desc(TemplateDraft.updated_at)).offset(skip).limit(limit).all()
+    
     @staticmethod
     def get_user_submissions_stats(db: Session, user_id: int) -> dict:
         """Get submission statistics for a specific user"""
@@ -658,3 +748,92 @@ class TemplateService:
                 {"language": lang, "count": count} for lang, count in language_stats
             ]
         }
+    
+    # Template Draft Methods
+    
+    @staticmethod
+    def save_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int,
+        code_content: str,
+        is_auto_save: bool = False
+    ) -> TemplateDraft:
+        """Save or update a template draft for a user"""
+        
+        # Check if template exists and user has access
+        template = db.query(Template).filter(Template.id == template_id).first()
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found"
+            )
+        
+        # Check if draft already exists
+        existing_draft = db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+        
+        if existing_draft:
+            # Update existing draft
+            existing_draft.code_content = code_content
+            existing_draft.is_auto_save = is_auto_save
+            existing_draft.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(existing_draft)
+            return existing_draft
+        else:
+            # Create new draft
+            new_draft = TemplateDraft(
+                template_id=template_id,
+                user_id=user_id,
+                code_content=code_content,
+                is_auto_save=is_auto_save
+            )
+            db.add(new_draft)
+            db.commit()
+            db.refresh(new_draft)
+            return new_draft
+    
+    @staticmethod
+    def get_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int
+    ) -> Optional[TemplateDraft]:
+        """Get a template draft for a user"""
+        return db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+    
+    @staticmethod
+    def delete_template_draft(
+        db: Session,
+        template_id: int,
+        user_id: int
+    ) -> bool:
+        """Delete a template draft"""
+        draft = db.query(TemplateDraft).filter(
+            TemplateDraft.template_id == template_id,
+            TemplateDraft.user_id == user_id
+        ).first()
+        
+        if draft:
+            db.delete(draft)
+            db.commit()
+            return True
+        return False
+    
+    @staticmethod
+    def get_user_drafts(
+        db: Session,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[TemplateDraft]:
+        """Get all drafts for a user with template information"""
+        return db.query(TemplateDraft).filter(
+            TemplateDraft.user_id == user_id
+        ).order_by(desc(TemplateDraft.updated_at)).offset(skip).limit(limit).all()
