@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import CodeEditor from './CodeEditor';
+import { parseDate } from '../lib/dateUtils';
 import LanguageSelector from './LanguageSelector';
 import OutputConsole from './OutputConsole';
 import ComplexityAnalysis from './ComplexityAnalysis';
@@ -120,15 +121,38 @@ export default function IDE() {
     return `${month}/${day}/${year}`;
   };
 
-  // Format draft save time for display
+  // Format draft save time for display using existing date utilities
   const formatDraftTime = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    const date = parseDate(dateString);
     
-    if (diffInMinutes < 1) return 'just now';
+    if (!date) {
+      return 'unknown';
+    }
+    
+    const now = new Date();
+    const diffInMs = now.getTime() - date.getTime();
+    const diffInSeconds = Math.floor(diffInMs / 1000);
+    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+    
+    // Handle edge case of future dates (shouldn't happen with proper UTC parsing)
+    if (diffInMs < 0) {
+      return 'just now';
+    }
+    
+    // Relative time formatting
+    if (diffInSeconds < 30) return 'just now';
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
     if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+    if (diffInMinutes < 1440) {
+      const hours = Math.floor(diffInMinutes / 60);
+      return `${hours}h ago`;
+    }
+    
+    // For dates older than a day
+    const days = Math.floor(diffInMinutes / 1440);
+    if (days === 1) return 'yesterday';
+    if (days < 7) return `${days} days ago`;
+    
     return date.toLocaleDateString();
   };
 
