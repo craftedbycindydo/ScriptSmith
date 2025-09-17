@@ -229,20 +229,37 @@ export default function IDE() {
         setCanSubmit(template.can_submit || false);
         setHasSubmitted(!!template.user_submission);
         
+        // Clear any existing draft state to avoid cross-template issues
+        setShowDraftChoice(false);
+        setDraftChoiceData(null);
+        
         // Try to load any existing draft first
         try {
           const draft = await apiService.getTemplateDraft(parseInt(templateId));
           if (draft && draft.code_content) {
-            // Draft exists, show choice dialog with fresh data
-            setDraftChoiceData({
-              template,
-              draft,
-              templateId
-            });
-            setShowDraftChoice(true);
-            // Don't set code yet, wait for user choice
+            // Compare draft content with template content
+            const draftContent = draft.code_content.trim();
+            const templateContent = template.code_content.trim();
+            
+            if (draftContent !== templateContent) {
+              // Draft is different from template, show choice dialog
+              console.log('Draft differs from template, showing choice modal');
+              setDraftChoiceData({
+                template,
+                draft,
+                templateId
+              });
+              setShowDraftChoice(true);
+              // Don't set code yet, wait for user choice
+            } else {
+              // Draft is same as template, just load template
+              console.log('Draft is identical to template, loading template directly');
+              setCode(template.code_content);
+              setLastDraftSave(formatDraftTime(draft.updated_at));
+            }
           } else {
             // No draft found, use template's original code
+            console.log('No draft found, loading template');
             setCode(template.code_content);
             setLastDraftSave('');
           }
