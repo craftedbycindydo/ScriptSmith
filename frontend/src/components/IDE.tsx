@@ -72,6 +72,10 @@ export default function IDE() {
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [showRunFirstModal, setShowRunFirstModal] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  
+  // Submission error state
+  const [showSubmissionErrorModal, setShowSubmissionErrorModal] = useState<boolean>(false);
+  const [submissionErrorMessage, setSubmissionErrorMessage] = useState<string>('');
   const [hasExecutedCode, setHasExecutedCode] = useState<boolean>(false);
   const [lastExecutionResult, setLastExecutionResult] = useState<any>(null);
   const [lastExecutedCodeHash, setLastExecutedCodeHash] = useState<string>("");  // Track hash of last executed code
@@ -432,9 +436,19 @@ export default function IDE() {
         setHasSubmitted(!!refreshedTemplate.user_submission);
       }
       setShowSubmitModal(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to submit template:', error);
-      alert('Failed to submit template. Please try again.');
+      
+      // Handle 403 deadline errors specifically
+      if (error.response?.status === 403 && error.response?.data?.detail?.includes('Submission denied')) {
+        const errorMessage = error.response.data.detail;
+        setSubmissionErrorMessage(errorMessage);
+        setShowSubmissionErrorModal(true);
+      } else {
+        // Generic error message for other failures
+        setSubmissionErrorMessage('Failed to submit template. Please try again.');
+        setShowSubmissionErrorModal(true);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1471,6 +1485,42 @@ export default function IDE() {
                   disabled={isLoading}
                 >
                   {isLoading ? "Running..." : "🏃 Run Code Now"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submission Error Modal */}
+      {showSubmissionErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6">
+              <div className="flex items-center mb-4">
+                <div className="w-8 h-8 mr-3 text-red-500 bg-red-100 dark:bg-red-900 rounded-full flex items-center justify-center">
+                  🚫
+                </div>
+                <h2 className="text-lg font-semibold text-red-600 dark:text-red-400">Submission Failed</h2>
+              </div>
+              
+              <div className="mb-6">
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                  <p className="text-sm text-red-800 dark:text-red-200 font-mono">
+                    {submissionErrorMessage}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => {
+                    setShowSubmissionErrorModal(false);
+                    setSubmissionErrorMessage('');
+                  }}
+                  className="bg-red-500 hover:bg-red-600 text-white"
+                >
+                  Close
                 </Button>
               </div>
             </div>
