@@ -22,6 +22,7 @@ class CodeExecutionRequest(BaseModel):
     language: str
     input_data: Optional[str] = ""
     template_id: Optional[int] = None  # Track which template was used
+    is_submission: Optional[bool] = False  # If True, bypass cache to ensure fresh execution
 
 class ComplexityAnalysis(BaseModel):
     time_complexity: str
@@ -88,14 +89,18 @@ async def execute_code(
             detail=f"Code size ({code_size_kb:.1f}KB) exceeds maximum allowed size ({settings.max_code_size_kb}KB)"
         )
     
-    # Check cache first to avoid redundant execution  
+    # Check cache first to avoid redundant execution (skip cache for submissions to ensure fresh results)
     # Use exact input_data to ensure bit-perfect caching
     input_data = request.input_data if request.input_data is not None else ""
-    cached_result = await cache_service.get_cached_result(
-        request.code, 
-        request.language, 
-        input_data
-    )
+    cached_result = None
+    
+    # Only use cache if this is not a submission - submissions need fresh execution
+    if not request.is_submission:
+        cached_result = await cache_service.get_cached_result(
+            request.code, 
+            request.language, 
+            input_data
+        )
     
     if cached_result:
         # Return cached result - convert complexity back to object if present

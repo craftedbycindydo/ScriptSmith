@@ -354,34 +354,31 @@ export default function IDE() {
   const handleSubmitTemplate = () => {
     if (!selectedAdminTemplate) return;
     
-    // Check if code has been executed
-    if (!hasExecutedCode) {
-      setShowRunFirstModal(true);
-      return;
-    }
-    
-    // Check if current code matches last executed code
-    if (code.trim() !== lastExecutedCode.trim()) {
-      setShowRunFirstModal(true);
-      return;
-    }
-    
+    // No need to check for previous execution since we'll run fresh code on submission
     setShowSubmitModal(true);
   };
 
   const handleConfirmSubmit = async () => {
-    if (!selectedAdminTemplate || !hasExecutedCode || !lastExecutionResult) return;
+    if (!selectedAdminTemplate) return;
     
     setSubmitting(true);
     try {
-      // FIXED: Only use lastExecutionResult to ensure code and results are from same execution
-      // No fallback mixing to prevent race conditions
+      // Execute code fresh with is_submission=true to avoid cache issues
+      const freshResult = await apiService.executeCode({
+        code,
+        language,
+        input_data: '',
+        template_id: parseInt(selectedAdminTemplate),
+        is_submission: true // Force fresh execution for submission
+      });
+      
+      // Submit with fresh execution results
       await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
         code_content: code,
-        execution_output: lastExecutionResult.output || "",
-        execution_status: lastExecutionResult.status || "error", 
-        execution_time: lastExecutionResult.execution_time || 0,
-        error_message: lastExecutionResult.error || ""
+        execution_output: freshResult.output || "",
+        execution_status: freshResult.status || "error", 
+        execution_time: freshResult.execution_time || 0,
+        error_message: freshResult.error || ""
       });
       
       // Refresh template data to get updated submission status
