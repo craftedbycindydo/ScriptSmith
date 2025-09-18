@@ -424,9 +424,12 @@ class TemplateService:
         # Check if user can submit (deadline and exclusions)
         can_submit, deadline_info = TemplateService.can_user_submit(db, template_id, user_id)
         if not can_submit:
+            from datetime import datetime, timezone
+            current_time = datetime.now(timezone.utc)
+            submission_time = current_time.isoformat()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Submission deadline has passed. Deadline was: {deadline_info}"
+                detail=f"Submission denied - submitted at: {submission_time}, deadline: {deadline_info}"
             )
         
         # Check if user has already submitted
