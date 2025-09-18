@@ -124,7 +124,7 @@ class TemplateService:
         try:
             return db.query(Template).filter(
                 Template.is_active == True
-            ).order_by(Template.language, Template.name).offset(skip).limit(limit).all()
+            ).order_by(Template.updated_at.desc(), Template.created_at.desc()).offset(skip).limit(limit).all()
         except Exception as e:
             print(f"Error getting templates: {str(e)}")
             return []
