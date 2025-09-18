@@ -354,7 +354,18 @@ export default function IDE() {
   const handleSubmitTemplate = () => {
     if (!selectedAdminTemplate) return;
     
-    // No need to check for previous execution since we'll run fresh code on submission
+    // Check if code has been executed so user can see results before submitting
+    if (!hasExecutedCode) {
+      setShowRunFirstModal(true);
+      return;
+    }
+    
+    // Check if current code matches last executed code so user sees current results
+    if (code.trim() !== lastExecutedCode.trim()) {
+      setShowRunFirstModal(true);
+      return;
+    }
+    
     setShowSubmitModal(true);
   };
 
@@ -363,22 +374,22 @@ export default function IDE() {
     
     setSubmitting(true);
     try {
-      // Execute code fresh with is_submission=true to avoid cache issues
+      // Execute code fresh with is_submission=true to avoid cache issues and get latest results
       const freshResult = await apiService.executeCode({
         code,
         language,
         input_data: '',
         template_id: parseInt(selectedAdminTemplate),
-        is_submission: true // Force fresh execution for submission
+        is_submission: true // Force fresh execution for submission - bypasses all cache
       });
       
-      // Submit with fresh execution results
+      // IMPORTANT: Submit ONLY with fresh execution results - no old/cached data used
       await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
-        code_content: code,
-        execution_output: freshResult.output || "",
-        execution_status: freshResult.status || "error", 
-        execution_time: freshResult.execution_time || 0,
-        error_message: freshResult.error || ""
+        code_content: code, // Current code in editor
+        execution_output: freshResult.output || "", // Fresh output only
+        execution_status: freshResult.status || "error", // Fresh status only
+        execution_time: freshResult.execution_time || 0, // Fresh execution time only
+        error_message: freshResult.error || "" // Fresh error only
       });
       
       // Refresh template data to get updated submission status
