@@ -675,17 +675,40 @@ async def get_classroom_users(
 ):
     """Get all users in a classroom for exclusion list (Admin only)"""
     try:
-        # First verify that the classroom belongs to the current admin
+        # First verify that the admin has access to this classroom (either as creator or member)
+        # Check if classroom exists and is active
         classroom = db.query(Classroom).filter(
             Classroom.id == classroom_id,
-            Classroom.created_by_id == admin_user.id,
             Classroom.is_active == True
         ).first()
         
         if not classroom:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Classroom not found or access denied"
+                detail="Classroom not found"
+            )
+        
+        # Check if admin has access to this classroom (either created it or is a member)
+        has_access = False
+        
+        # Check if admin created the classroom
+        if classroom.created_by_id == admin_user.id:
+            has_access = True
+        else:
+            # Check if admin is a member of the classroom
+            admin_membership = db.query(UserClassroom).filter(
+                UserClassroom.user_id == admin_user.id,
+                UserClassroom.classroom_id == classroom_id,
+                UserClassroom.is_active == True
+            ).first()
+            
+            if admin_membership:
+                has_access = True
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied - you are not a member of this classroom"
             )
         
         # Get classroom members
