@@ -782,11 +782,11 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                       {loadingUsers ? (
                         <p className="text-sm text-muted-foreground">Loading students...</p>
                       ) : (
-                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                        <div className="space-y-1.5 max-h-56 overflow-y-auto">
                           {getAvailableUsers()
                             .filter(user => !editingTemplate.exclusions.some(e => e.user_id === user.id))
                             .map((user) => (
-                              <div key={user.id} className="flex items-center justify-between p-2 border rounded">
+                              <div key={user.id} className="flex items-center justify-between p-1.5 border rounded">
                                 <div>
                                   <p className="text-sm font-medium">{user.username}</p>
                                   {user.first_name && user.last_name && (
@@ -1111,9 +1111,9 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                                     <Users className="w-4 h-4 mr-2" />
                                     Students with Custom Deadlines ({editingTemplate.exclusions.length})
                                   </h4>
-                                  <div className="space-y-2 max-h-32 overflow-y-auto bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                                  <div className="space-y-1.5 max-h-56 overflow-y-auto bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                                     {editingTemplate.exclusions.map((exclusion) => (
-                                      <div key={exclusion.user_id} className="flex items-center gap-3 p-2 bg-white dark:bg-gray-800 rounded border">
+                                      <div key={exclusion.user_id} className="flex items-center gap-3 p-1.5 bg-white dark:bg-gray-800 rounded border">
                                         <div className="flex-1 min-w-0">
                                           <p className="text-sm font-medium truncate">{exclusion.username}</p>
                                         </div>
@@ -1145,11 +1145,11 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                                   {loadingUsers ? (
                                     <p className="text-sm text-muted-foreground">Loading students...</p>
                                   ) : (
-                                    <div className="space-y-2 max-h-24 overflow-y-auto">
+                                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
                                       {getAvailableUsers()
                                         .filter(user => !editingTemplate.exclusions.some(e => e.user_id === user.id))
                                         .map((user) => (
-                                          <div key={user.id} className="flex items-center justify-between p-2 border rounded">
+                                          <div key={user.id} className="flex items-center justify-between p-1.5 border rounded">
                                             <div>
                                               <p className="text-sm font-medium">{user.username}</p>
                                               {user.first_name && user.last_name && (
