@@ -41,6 +41,7 @@ export interface CodeExecutionRequest {
   language: string;
   input_data?: string;
   template_id?: number;
+  is_submission?: boolean;
 }
 
 export interface ComplexityAnalysis {

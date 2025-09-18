@@ -74,7 +74,20 @@ export default function IDE() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [hasExecutedCode, setHasExecutedCode] = useState<boolean>(false);
   const [lastExecutionResult, setLastExecutionResult] = useState<any>(null);
-  const [lastExecutedCode, setLastExecutedCode] = useState<string>("");  // Track what code was last executed
+  const [lastExecutedCodeHash, setLastExecutedCodeHash] = useState<string>("");  // Track hash of last executed code
+  const [codeHasChanged, setCodeHasChanged] = useState<boolean>(false);  // Track if code has changed since last execution
+  
+  // Secure hash function using browser's built-in crypto API
+  const hashCode = async (text: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+  
+  // Get current code hash for comparison
+  const getCurrentCodeHash = async () => await hashCode(code);
   
   // Save template inline form state
   const [showSaveForm, setShowSaveForm] = useState(false);
@@ -191,8 +204,24 @@ export default function IDE() {
     // Reset execution tracking when code changes
     setHasExecutedCode(false);
     setLastExecutionResult(null);
-    setLastExecutedCode("");  // Reset last executed code tracking
+    setLastExecutedCodeHash("");  // Reset last executed code hash tracking
+    setCodeHasChanged(false);  // Reset change tracking
   }, [code, selectedAdminTemplate, selectedUserTemplate]);
+
+  // Check if current code matches last executed code
+  useEffect(() => {
+    if (!hasExecutedCode || !lastExecutedCodeHash) {
+      setCodeHasChanged(false);
+      return;
+    }
+    
+    const checkCodeChange = async () => {
+      const currentHash = await getCurrentCodeHash();
+      setCodeHasChanged(currentHash !== lastExecutedCodeHash);
+    };
+    
+    checkCodeChange();
+  }, [code, lastExecutedCodeHash, hasExecutedCode]);
 
   // Load templates for current language
   const loadTemplatesForLanguage = async (lang: string) => {
@@ -331,8 +360,10 @@ export default function IDE() {
     try {
       await executeCode();
       // Mark that code has been executed and capture the result
+      const codeHash = await hashCode(code);
       setHasExecutedCode(true);
-      setLastExecutedCode(code);  // Store the exact code that was executed
+      setLastExecutedCodeHash(codeHash);  // Store hash of the executed code
+      setCodeHasChanged(false);  // Mark code as not changed since execution
       setLastExecutionResult({
         output,
         error,
@@ -340,8 +371,10 @@ export default function IDE() {
         status: error ? 'error' : 'success'
       });
     } catch (err) {
+      const codeHash = await hashCode(code);
       setHasExecutedCode(true);
-      setLastExecutedCode(code);  // Store the exact code that was executed even on error
+      setLastExecutedCodeHash(codeHash);  // Store hash of the executed code even on error
+      setCodeHasChanged(false);  // Mark code as not changed since execution
       setLastExecutionResult({
         output: '',
         error: String(err),
@@ -351,17 +384,17 @@ export default function IDE() {
     }
   };
 
-  const handleSubmitTemplate = () => {
+  const handleSubmitTemplate = async () => {
     if (!selectedAdminTemplate) return;
     
-    // Check if code has been executed
+    // Check if code has been executed so user can see results before submitting
     if (!hasExecutedCode) {
       setShowRunFirstModal(true);
       return;
     }
     
-    // Check if current code matches last executed code
-    if (code.trim() !== lastExecutedCode.trim()) {
+    // Check if current code matches last executed code using hash comparison
+    if (codeHasChanged) {
       setShowRunFirstModal(true);
       return;
     }
@@ -374,14 +407,22 @@ export default function IDE() {
     
     setSubmitting(true);
     try {
-      // FIXED: Only use lastExecutionResult to ensure code and results are from same execution
-      // No fallback mixing to prevent race conditions
+      // Execute code fresh with is_submission=true to avoid cache issues and get latest results
+      const freshResult = await apiService.executeCode({
+        code,
+        language,
+        input_data: '',
+        template_id: parseInt(selectedAdminTemplate),
+        is_submission: true // Force fresh execution for submission - bypasses all cache
+      });
+      
+      // IMPORTANT: Submit ONLY with fresh execution results - no old/cached data used
       await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
-        code_content: code,
-        execution_output: lastExecutionResult.output || "",
-        execution_status: lastExecutionResult.status || "error", 
-        execution_time: lastExecutionResult.execution_time || 0,
-        error_message: lastExecutionResult.error || ""
+        code_content: code, // Current code in editor
+        execution_output: freshResult.output || "", // Fresh output only
+        execution_status: freshResult.status || "error", // Fresh status only
+        execution_time: freshResult.execution_time || 0, // Fresh execution time only
+        error_message: freshResult.error || "" // Fresh error only
       });
       
       // Refresh template data to get updated submission status
@@ -949,32 +990,32 @@ export default function IDE() {
                   onClick={handleSubmitTemplate}
                   disabled={!canSubmit}
                   variant={hasSubmitted && !canSubmit ? "secondary" : 
-                          (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? "outline" : "default"}
+                          (!hasExecutedCode || codeHasChanged) ? "outline" : "default"}
                   size="sm"
-                  className={`flex sm:inline-flex ${(!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? 
+                  className={`flex sm:inline-flex ${(!hasExecutedCode || codeHasChanged) ? 
                     'border-amber-300 text-amber-600 hover:bg-amber-50' : ''}`}
                   title={
                     !hasExecutedCode ? 'Run your code first before submitting' :
-                    code.trim() !== lastExecutedCode.trim() ? 'You changed your code after running it. Run again to submit current code.' :
+                    codeHasChanged ? 'You changed your code after running it. Run again to submit current code.' :
                     (hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : 
                     'Ready to submit'
                   }
                 >
                   {hasSubmitted && !canSubmit ? (
                     <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
-                  ) : (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? (
+                  ) : (!hasExecutedCode || codeHasChanged) ? (
                     <div className="w-4 h-4 mr-1 sm:mr-2 text-amber-500">⚠️</div>
                   ) : (
                     <Send className="w-4 h-4 mr-1 sm:mr-2" />
                   )}
                   <span className="hidden sm:inline">
                     {hasSubmitted && !canSubmit ? 'Submitted' : 
-                     (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? 'Run First' :
+                     (!hasExecutedCode || codeHasChanged) ? 'Run First' :
                      hasSubmitted && canSubmit ? 'Submit Again' : 'Submit'}
                   </span>
                   <span className="sm:hidden">
                     {hasSubmitted && !canSubmit ? 'Done' : 
-                     (!hasExecutedCode || code.trim() !== lastExecutedCode.trim()) ? '⚠️' : 
+                     (!hasExecutedCode || codeHasChanged) ? '⚠️' : 
                      hasSubmitted && canSubmit ? 'Again' : 'Submit'}
                   </span>
                 </Button>
