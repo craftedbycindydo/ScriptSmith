@@ -1,8 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+import io
+import csv
+from datetime import datetime
 
 from app.core.config import settings
 from app.database.base import get_db
@@ -45,8 +49,11 @@ class StudentSubmissionResponse(BaseModel):
     student_name: str
     execution_status: str
     execution_time: Optional[float]
-    has_output: bool
-    has_error: bool
+    grade: Optional[float]
+    max_grade: Optional[float]
+    grading_notes: Optional[str]
+    execution_output: Optional[str]
+    execution_error: Optional[str]
     is_flagged: bool
     similarity_scores: Optional[dict]
     code_files: Optional[List[str]]
@@ -82,6 +89,8 @@ async def create_assignment(
     language: Optional[str] = Form(None),
     timeout_seconds: Optional[int] = Form(30),
     plagiarism_threshold: Optional[float] = Form(0.8),
+    grade_out_of: Optional[int] = Form(100),
+    leniency: Optional[int] = Form(50),
     zip_file: UploadFile = File(...),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
@@ -118,11 +127,13 @@ async def create_assignment(
         assignment.plagiarism_threshold = plagiarism_threshold
         db.commit()
         
-        # Start background processing
+        # Start background processing with grading configuration
         background_tasks.add_task(
             assignment_service.process_assignment,
             db,
-            assignment.id
+            assignment.id,
+            grade_out_of,
+            leniency
         )
         
         return AssignmentResponse(
@@ -256,8 +267,11 @@ async def get_assignment_submissions(
             student_name=submission.student_name,
             execution_status=submission.execution_status,
             execution_time=submission.execution_time,
-            has_output=bool(submission.execution_output),
-            has_error=bool(submission.execution_error),
+            grade=getattr(submission, 'grade', None),
+            max_grade=getattr(submission, 'max_grade', 100.0),
+            grading_notes=getattr(submission, 'grading_notes', None),
+            execution_output=submission.execution_output,
+            execution_error=submission.execution_error,
             is_flagged=submission.is_flagged,
             similarity_scores=submission.similarity_scores,
             code_files=submission.code_files
@@ -283,9 +297,15 @@ async def get_submission_details(
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
     
-    # Read the actual code files
+    # Get code content from stored data (instead of reading from files)
     code_content = {}
-    if submission.code_files and submission.folder_path:
+    if hasattr(submission, 'code_content') and submission.code_content:
+        # Use stored code content from database
+        code_content = submission.code_content
+        print(f"✅ DEBUG: Using stored code content for submission {submission_id}")
+    elif submission.code_files and submission.folder_path:
+        # Fallback to file reading for legacy data
+        print(f"⚠️ DEBUG: No stored code content, falling back to file read for submission {submission_id}")
         import os
         import aiofiles
         
@@ -312,14 +332,19 @@ async def get_submission_details(
             "flagged_for": submission.flagged_for,
             "executed_at": submission.executed_at.isoformat() if submission.executed_at else None
         },
-        "code_files": code_content
+        "code_content": code_content
     }
 
+
+class GradingConfigRequest(BaseModel):
+    grade_out_of: Optional[int] = 100
+    leniency: Optional[int] = 50
 
 @router.post("/assignments/{assignment_id}/reprocess")
 async def reprocess_assignment(
     assignment_id: int,
-    background_tasks: BackgroundTasks,
+    grading_config: GradingConfigRequest = GradingConfigRequest(),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
@@ -361,11 +386,13 @@ async def reprocess_assignment(
     
     db.commit()
     
-    # Start background processing
+    # Start background processing with grading configuration
     background_tasks.add_task(
         assignment_service.process_assignment,
         db,
-        assignment.id
+        assignment.id,
+        grading_config.grade_out_of,
+        grading_config.leniency
     )
     
     return {"message": "Assignment reprocessing started"}
@@ -410,4 +437,147 @@ async def delete_assignment(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete assignment: {str(e)}"
+        )
+
+
+@router.get("/assignments/{assignment_id}/export-csv")
+async def export_assignment_csv(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Export assignment report to CSV format"""
+    
+    try:
+        # Get assignment and verify it exists
+        assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        
+        # Get all submissions for the assignment
+        submissions = db.query(StudentSubmission).filter(
+            StudentSubmission.assignment_id == assignment_id
+        ).order_by(StudentSubmission.student_name).all()
+        
+        # Create CSV content
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        headers = [
+            'Student Name', 'Grade', 'Max Grade', 'Execution Status', 
+            'Execution Time (seconds)', 'Code Content', 'Execution Output', 
+            'Execution Error', 'Is Flagged for Plagiarism',
+            'Max Similarity Score', 'Similar Students', 'Code Files Count',
+            'Grading Notes', 'Executed At'
+        ]
+        
+        # Add plagiarism details headers if plagiarism analysis completed
+        if assignment.plagiarism_status == "completed":
+            headers.extend(['Flagged For', 'Similarity Details'])
+        
+        writer.writerow(headers)
+        
+        # Write submission data
+        for submission in submissions:
+            # Get code content as concatenated string
+            code_content_str = ""
+            if hasattr(submission, 'code_content') and submission.code_content:
+                code_parts = []
+                for filename, content in submission.code_content.items():
+                    code_parts.append(f"=== {filename} ===\n{content}")
+                code_content_str = "\n\n".join(code_parts)
+            elif submission.code_files:
+                code_content_str = f"Files: {', '.join(submission.code_files)}"
+            
+            row = [
+                submission.student_name,
+                submission.grade if hasattr(submission, 'grade') and submission.grade else "Not graded",
+                submission.max_grade if hasattr(submission, 'max_grade') and submission.max_grade else "100.0",
+                submission.execution_status,
+                f"{submission.execution_time:.3f}" if submission.execution_time else "N/A",
+                code_content_str,
+                submission.execution_output or "",
+                submission.execution_error or "",
+                "Yes" if submission.is_flagged else "No",
+                f"{max(submission.similarity_scores.values()):.3f}" if submission.similarity_scores else "0.000",
+                len(submission.similarity_scores) if submission.similarity_scores else 0,
+                len(submission.code_files) if submission.code_files else 0,
+                submission.grading_notes if hasattr(submission, 'grading_notes') and submission.grading_notes else "",
+                submission.executed_at.strftime("%Y-%m-%d %H:%M:%S") if submission.executed_at else "Not executed"
+            ]
+            
+            # Add plagiarism details if available
+            if assignment.plagiarism_status == "completed":
+                flagged_students = []
+                similarity_details = []
+                
+                if submission.flagged_for:
+                    for flag_info in submission.flagged_for:
+                        if isinstance(flag_info, dict):
+                            student = flag_info.get('student', 'Unknown')
+                            similarity = flag_info.get('similarity', 0.0)
+                            flagged_students.append(student)
+                            similarity_details.append(f"{student}: {similarity:.3f}")
+                
+                row.append("; ".join(flagged_students) if flagged_students else "None")
+                row.append("; ".join(similarity_details) if similarity_details else "No similarities above threshold")
+            
+            writer.writerow(row)
+        
+        # Add assignment metadata at the end
+        writer.writerow([])  # Empty row
+        writer.writerow(['=== ASSIGNMENT INFORMATION ==='])
+        writer.writerow(['Assignment Name:', assignment.name])
+        writer.writerow(['Description:', assignment.description or 'No description'])
+        writer.writerow(['Language:', assignment.language or 'Not specified'])
+        writer.writerow(['Total Students:', assignment.total_students])
+        writer.writerow(['Processed Students:', assignment.processed_students])
+        writer.writerow(['Status:', assignment.status])
+        writer.writerow(['Plagiarism Status:', assignment.plagiarism_status])
+        writer.writerow(['Plagiarism Threshold:', f"{assignment.plagiarism_threshold:.2f}"])
+        writer.writerow(['Timeout (seconds):', assignment.timeout_seconds])
+        writer.writerow(['Created At:', assignment.created_at.strftime("%Y-%m-%d %H:%M:%S") if assignment.created_at else "Unknown"])
+        
+        if assignment.processing_completed_at:
+            writer.writerow(['Completed At:', assignment.processing_completed_at.strftime("%Y-%m-%d %H:%M:%S")])
+        
+        # Add execution summary if available
+        if assignment.execution_summary:
+            writer.writerow([])
+            writer.writerow(['=== EXECUTION SUMMARY ==='])
+            for status, count in assignment.execution_summary.items():
+                writer.writerow([f'{status.title()} Count:', count])
+        
+        # Add plagiarism report summary if available  
+        if assignment.plagiarism_report:
+            writer.writerow([])
+            writer.writerow(['=== PLAGIARISM SUMMARY ==='])
+            
+            plagiarism_data = assignment.plagiarism_report
+            if isinstance(plagiarism_data, dict):
+                writer.writerow(['Total Analyzed:', plagiarism_data.get('total_analyzed', 0)])
+                writer.writerow(['Flagged Submissions:', plagiarism_data.get('flagged_submissions', 0)])
+                writer.writerow(['Analysis Timestamp:', plagiarism_data.get('analysis_timestamp', 'Unknown')])
+        
+        # Prepare response
+        output.seek(0)
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"assignment_{assignment.name.replace(' ', '_')}_{timestamp}.csv"
+        
+        # Return CSV as streaming response
+        return StreamingResponse(
+            io.BytesIO(csv_content.encode('utf-8')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to export assignment CSV: {str(e)}"
         )

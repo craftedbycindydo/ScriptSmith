@@ -91,6 +91,125 @@ class DatabaseMigrationService:
         except Exception as e:
             logger.error(f"Unexpected error creating index {index_name}: {e}")
     
+    def create_plagiarism_tables(self):
+        """Create plagiarism analysis and code snapshot tables with database compatibility"""
+        migration_name = "create_plagiarism_tables_v1"
+        
+        if self._is_migration_applied(migration_name):
+            logger.info("Plagiarism tables migration already applied")
+            return
+        
+        try:
+            # Detect database type
+            db_name = str(engine.url).split(':')[0].lower()
+            is_sqlite = 'sqlite' in db_name
+            is_postgresql = 'postgresql' in db_name
+            
+            with engine.connect() as connection:
+                if is_sqlite:
+                    # SQLite-compatible schema
+                    connection.execute(text("""
+                        CREATE TABLE IF NOT EXISTS plagiarism_analyses (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+                            student_a_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            student_b_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            code_a_content TEXT,
+                            code_b_content TEXT,
+                            code_language VARCHAR(50),
+                            similarity_score REAL NOT NULL DEFAULT 0.0,
+                            is_flagged BOOLEAN DEFAULT 0,
+                            confidence_level VARCHAR(20),
+                            ai_explanation TEXT,
+                            ai_evidence TEXT,
+                            analysis_method VARCHAR(50),
+                            threshold_used REAL NOT NULL,
+                            model_used VARCHAR(100),
+                            tokens_used INTEGER,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(student_a_id, student_b_id)
+                        )
+                    """))
+                    
+                    connection.execute(text("""
+                        CREATE TABLE IF NOT EXISTS code_snapshots (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            submission_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            file_name VARCHAR(500) NOT NULL,
+                            file_content TEXT NOT NULL,
+                            file_language VARCHAR(50),
+                            file_size INTEGER,
+                            content_hash VARCHAR(64) NOT NULL,
+                            normalized_hash VARCHAR(64),
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    
+                else:
+                    # PostgreSQL-compatible schema
+                    connection.execute(text("""
+                        CREATE TABLE IF NOT EXISTS plagiarism_analyses (
+                            id SERIAL PRIMARY KEY,
+                            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+                            student_a_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            student_b_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            code_a_content TEXT,
+                            code_b_content TEXT,
+                            code_language VARCHAR(50),
+                            similarity_score FLOAT NOT NULL DEFAULT 0.0,
+                            is_flagged BOOLEAN DEFAULT FALSE,
+                            confidence_level VARCHAR(20),
+                            ai_explanation TEXT,
+                            ai_evidence JSON,
+                            analysis_method VARCHAR(50),
+                            threshold_used FLOAT NOT NULL,
+                            model_used VARCHAR(100),
+                            tokens_used INTEGER,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(student_a_id, student_b_id)
+                        )
+                    """))
+                    
+                    connection.execute(text("""
+                        CREATE TABLE IF NOT EXISTS code_snapshots (
+                            id SERIAL PRIMARY KEY,
+                            submission_id INTEGER NOT NULL REFERENCES student_submissions(id) ON DELETE CASCADE,
+                            file_name VARCHAR(500) NOT NULL,
+                            file_content TEXT NOT NULL,
+                            file_language VARCHAR(50),
+                            file_size INTEGER,
+                            content_hash VARCHAR(64) NOT NULL,
+                            normalized_hash VARCHAR(64),
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                
+                # Create indexes for better performance
+                self._create_index_safely(connection, 'idx_plagiarism_analyses_assignment_id', 'plagiarism_analyses', '(assignment_id)')
+                self._create_index_safely(connection, 'idx_plagiarism_analyses_students', 'plagiarism_analyses', '(student_a_id, student_b_id)')
+                self._create_index_safely(connection, 'idx_plagiarism_analyses_similarity', 'plagiarism_analyses', '(similarity_score DESC)')
+                self._create_index_safely(connection, 'idx_plagiarism_analyses_flagged', 'plagiarism_analyses', '(is_flagged)', 'is_flagged = true')
+                
+                self._create_index_safely(connection, 'idx_code_snapshots_submission_id', 'code_snapshots', '(submission_id)')
+                self._create_index_safely(connection, 'idx_code_snapshots_content_hash', 'code_snapshots', '(content_hash)')
+                self._create_index_safely(connection, 'idx_code_snapshots_normalized_hash', 'code_snapshots', '(normalized_hash)')
+                
+                connection.commit()
+                
+                # Record migration
+                self._record_migration(
+                    migration_name, 
+                    "Created plagiarism_analyses and code_snapshots tables with indexes for AI-powered plagiarism detection caching"
+                )
+                
+                logger.info("Successfully created plagiarism tables")
+                
+        except Exception as e:
+            logger.error(f"Error creating plagiarism tables: {e}")
+            raise
+
     def apply_performance_optimizations(self):
         """Apply all performance optimizations"""
         migration_name = self.migration_version
@@ -107,8 +226,24 @@ class DatabaseMigrationService:
             self._create_migration_table()
             
             with engine.connect() as connection:
-                # Set timeout for the migration
-                connection.execute(text("SET statement_timeout = '300s'"))
+                # FIRST: Force add code_content field (critical fix)
+                print("🔧 CRITICAL: Adding code_content field to student_submissions...")
+                self._force_add_code_content_field(connection)
+                connection.commit()
+                print("✅ CRITICAL: code_content field addition completed")
+                
+                # SECOND: Add grading fields to student_submissions
+                print("🔧 CRITICAL: Adding grading fields to student_submissions...")
+                self._force_add_grading_fields(connection)
+                connection.commit()
+                print("✅ CRITICAL: grading fields addition completed")
+                
+                # Set timeout for the migration (PostgreSQL only)
+                try:
+                    connection.execute(text("SET statement_timeout = '300s'"))
+                except Exception:
+                    # SQLite doesn't support SET statements, that's fine
+                    pass
                 
                 # Performance indexes optimized for Railway.app admin APIs
                 performance_indexes = [
@@ -204,12 +339,12 @@ class DatabaseMigrationService:
                 
                 connection.commit()
                 logger.info("All performance indexes created successfully")
-            
-            # Record successful migration
-            self._record_migration(
-                migration_name, 
-                "Applied performance indexes and optimizations for Railway.app deployment"
-            )
+                
+                # Record successful migration
+                self._record_migration(
+                    migration_name,
+                    "Applied performance indexes and optimizations for Railway.app deployment"
+                )
             
             logger.info("✅ Database performance optimizations applied successfully!")
             return True
@@ -217,6 +352,112 @@ class DatabaseMigrationService:
         except Exception as e:
             logger.error(f"❌ Error applying performance optimizations: {e}")
             raise
+    
+    def _add_code_content_field(self, connection):
+        """Add code_content field to student_submissions table if it doesn't exist"""
+        try:
+            # Check if column already exists
+            inspector = inspect(connection)
+            columns = [col['name'] for col in inspector.get_columns('student_submissions')]
+            
+            if 'code_content' not in columns:
+                logger.info("Adding code_content field to student_submissions table...")
+                
+                # Handle both SQLite and PostgreSQL
+                try:
+                    # Try PostgreSQL syntax first
+                    connection.execute(text("""
+                        ALTER TABLE student_submissions 
+                        ADD COLUMN code_content JSON
+                    """))
+                    logger.info("✅ Successfully added code_content field (PostgreSQL)")
+                except Exception as pg_error:
+                    logger.info(f"PostgreSQL syntax failed: {pg_error}, trying SQLite...")
+                    try:
+                        # SQLite syntax - JSON is stored as TEXT
+                        connection.execute(text("""
+                            ALTER TABLE student_submissions 
+                            ADD COLUMN code_content TEXT
+                        """))
+                        logger.info("✅ Successfully added code_content field (SQLite)")
+                    except Exception as sqlite_error:
+                        logger.error(f"Both PostgreSQL and SQLite syntax failed: {sqlite_error}")
+                        raise sqlite_error
+                
+            else:
+                logger.info("code_content field already exists in student_submissions")
+                
+        except Exception as e:
+            logger.error(f"Could not add code_content field: {e}")
+            # Don't raise - this is not critical and shouldn't break existing functionality
+            print(f"❌ MIGRATION ERROR: Failed to add code_content field - {e}")
+            print("🔧 This may cause assignment uploads to fail until database is updated")
+    
+    def _force_add_code_content_field(self, connection):
+        """Force add code_content field - ignore if already exists"""
+        try:
+            print("🔧 Force adding code_content field to student_submissions...")
+            
+            # For SQLite (local development)
+            connection.execute(text("""
+                ALTER TABLE student_submissions 
+                ADD COLUMN code_content TEXT
+            """))
+            print("✅ FORCE ADDED code_content field (SQLite)")
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if ("duplicate column" in error_str or 
+                "already exists" in error_str or 
+                "column already exists" in error_str or
+                "duplicate column name" in error_str):
+                print("✅ code_content field already exists (that's fine!)")
+            else:
+                print(f"⚠️ Could not force-add code_content field with SQLite syntax: {e}")
+                print("Trying PostgreSQL syntax...")
+                try:
+                    connection.execute(text("""
+                        ALTER TABLE student_submissions 
+                        ADD COLUMN code_content JSON
+                    """))
+                    print("✅ FORCE ADDED code_content field (PostgreSQL)")
+                except Exception as pg_error:
+                    pg_error_str = str(pg_error).lower()
+                    if ("already exists" in pg_error_str or 
+                        "duplicate column" in pg_error_str):
+                        print("✅ code_content field already exists (PostgreSQL)")
+                    else:
+                        print(f"❌ Failed both SQLite and PostgreSQL: {pg_error}")
+                        print("This is likely a critical database issue that needs manual intervention.")
+    
+    def _force_add_grading_fields(self, connection):
+        """Force add grading fields to student_submissions table"""
+        try:
+            print("🔧 Force adding grading fields to student_submissions...")
+            
+            grading_fields = [
+                ("grade", "REAL"),  # SQLite uses REAL for floating point
+                ("max_grade", "REAL DEFAULT 100.0"),
+                ("grading_notes", "TEXT")
+            ]
+            
+            for field_name, field_type in grading_fields:
+                try:
+                    connection.execute(text(f"""
+                        ALTER TABLE student_submissions 
+                        ADD COLUMN {field_name} {field_type}
+                    """))
+                    print(f"✅ Added {field_name} field")
+                except Exception as field_error:
+                    error_str = str(field_error).lower()
+                    if "duplicate column" in error_str or "already exists" in error_str:
+                        print(f"✅ {field_name} field already exists (that's fine!)")
+                    else:
+                        print(f"⚠️ Could not add {field_name} field: {field_error}")
+            
+            print("✅ FORCE ADDED grading fields")
+        except Exception as e:
+            print(f"⚠️ Could not force-add grading fields: {e}")
     
     def get_migration_status(self) -> dict:
         """Get status of all applied migrations"""

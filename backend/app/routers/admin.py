@@ -261,66 +261,119 @@ async def get_admin_stats(
     # SQLite/PostgreSQL compatible: Dynamic IN clause with individual parameters
     classroom_placeholders = ', '.join([f':classroom_id_{i}' for i in range(len(classroom_ids))])
     
-    stats_query = text(f"""
-        WITH user_stats AS (
-            -- Get classroom users efficiently
-            SELECT 
-                u.id,
-                u.created_at,
-                CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
-            FROM users u
-            INNER JOIN user_classrooms uc ON u.id = uc.user_id
-            WHERE uc.classroom_id IN ({classroom_placeholders})
-              AND uc.is_active = true
-        ),
-        submission_stats AS (
-            -- PostgreSQL FILTER for better performance
-            SELECT 
-                COUNT(cs.id) as total_executions,
-                COUNT(cs.id) FILTER (WHERE cs.created_at >= :today_start) as executions_today,
-                COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions
-            FROM code_submissions cs
-            WHERE (cs.classroom_id IN ({classroom_placeholders}) 
-                   OR cs.user_id IN (SELECT id FROM user_stats))
-        ),
-        session_stats AS (
-            -- PostgreSQL FILTER for better performance
-            SELECT 
-                COUNT(col.id) as total_sessions,
-                COUNT(col.id) FILTER (WHERE col.is_active = true) as active_sessions
-            FROM collaboration_sessions col
-            WHERE (col.classroom_id IN ({classroom_placeholders})
-                   OR col.owner_id IN (SELECT id FROM user_stats))
-        ),
-        language_stats AS (
-            -- Language stats with PostgreSQL JSONB
-            SELECT 
-                jsonb_object_agg(language, lang_count) as language_counts
-            FROM (
+    # Detect database type for compatibility
+    from app.database.base import engine
+    db_name = str(engine.url).split(':')[0].lower()
+    is_sqlite = 'sqlite' in db_name
+    
+    if is_sqlite:
+        # SQLite-compatible query
+        stats_query = text(f"""
+            WITH user_stats AS (
+                -- Get classroom users efficiently
                 SELECT 
-                    cs.language,
-                    COUNT(cs.id) as lang_count
+                    u.id,
+                    u.created_at,
+                    CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
+                FROM users u
+                INNER JOIN user_classrooms uc ON u.id = uc.user_id
+                WHERE uc.classroom_id IN ({classroom_placeholders})
+                  AND uc.is_active = 1
+            ),
+            submission_stats AS (
+                -- SQLite CASE WHEN instead of FILTER
+                SELECT 
+                    COUNT(cs.id) as total_executions,
+                    SUM(CASE WHEN cs.created_at >= :today_start THEN 1 ELSE 0 END) as executions_today,
+                    SUM(CASE WHEN cs.status = 'error' THEN 1 ELSE 0 END) as error_executions
                 FROM code_submissions cs
                 WHERE (cs.classroom_id IN ({classroom_placeholders}) 
                        OR cs.user_id IN (SELECT id FROM user_stats))
-                  AND cs.language IS NOT NULL
-                GROUP BY cs.language
-            ) lang_summary
-        )
-        SELECT 
-            -- Simplified aggregations
-            (SELECT COUNT(id) FROM user_stats) as total_users,
-            (SELECT SUM(is_new_today) FROM user_stats) as new_users_today,
-            COALESCE(ss.total_executions, 0) as total_executions,
-            COALESCE(ss.executions_today, 0) as executions_today,
-            COALESCE(ss.error_executions, 0) as error_executions,
-            COALESCE(cs.total_sessions, 0) as total_sessions,
-            COALESCE(cs.active_sessions, 0) as active_sessions,
-            COALESCE(ls.language_counts, '{{}}'::jsonb) as language_counts
-        FROM submission_stats ss 
-        CROSS JOIN session_stats cs 
-        CROSS JOIN language_stats ls
-    """)
+            ),
+            session_stats AS (
+                -- SQLite CASE WHEN instead of FILTER
+                SELECT 
+                    COUNT(col.id) as total_sessions,
+                    SUM(CASE WHEN col.is_active = 1 THEN 1 ELSE 0 END) as active_sessions
+                FROM collaboration_sessions col
+                WHERE (col.classroom_id IN ({classroom_placeholders})
+                       OR col.owner_id IN (SELECT id FROM user_stats))
+            )
+            SELECT 
+                -- Simplified aggregations for SQLite
+                (SELECT COUNT(id) FROM user_stats) as total_users,
+                (SELECT SUM(is_new_today) FROM user_stats) as new_users_today,
+                COALESCE(ss.total_executions, 0) as total_executions,
+                COALESCE(ss.executions_today, 0) as executions_today,
+                COALESCE(ss.error_executions, 0) as error_executions,
+                COALESCE(cs.total_sessions, 0) as total_sessions,
+                COALESCE(cs.active_sessions, 0) as active_sessions,
+                '{{}}' as language_counts
+            FROM submission_stats ss 
+            CROSS JOIN session_stats cs
+        """)
+    else:
+        # PostgreSQL-compatible query
+        stats_query = text(f"""
+            WITH user_stats AS (
+                -- Get classroom users efficiently
+                SELECT 
+                    u.id,
+                    u.created_at,
+                    CASE WHEN u.created_at >= :today_start THEN 1 ELSE 0 END as is_new_today
+                FROM users u
+                INNER JOIN user_classrooms uc ON u.id = uc.user_id
+                WHERE uc.classroom_id IN ({classroom_placeholders})
+                  AND uc.is_active = true
+            ),
+            submission_stats AS (
+                -- PostgreSQL FILTER for better performance
+                SELECT 
+                    COUNT(cs.id) as total_executions,
+                    COUNT(cs.id) FILTER (WHERE cs.created_at >= :today_start) as executions_today,
+                    COUNT(cs.id) FILTER (WHERE cs.status = 'error') as error_executions
+                FROM code_submissions cs
+                WHERE (cs.classroom_id IN ({classroom_placeholders}) 
+                       OR cs.user_id IN (SELECT id FROM user_stats))
+            ),
+            session_stats AS (
+                -- PostgreSQL FILTER for better performance
+                SELECT 
+                    COUNT(col.id) as total_sessions,
+                    COUNT(col.id) FILTER (WHERE col.is_active = true) as active_sessions
+                FROM collaboration_sessions col
+                WHERE (col.classroom_id IN ({classroom_placeholders})
+                       OR col.owner_id IN (SELECT id FROM user_stats))
+            ),
+            language_stats AS (
+                -- Language stats with PostgreSQL JSONB
+                SELECT 
+                    jsonb_object_agg(language, lang_count) as language_counts
+                FROM (
+                    SELECT 
+                        cs.language,
+                        COUNT(cs.id) as lang_count
+                    FROM code_submissions cs
+                    WHERE (cs.classroom_id IN ({classroom_placeholders}) 
+                           OR cs.user_id IN (SELECT id FROM user_stats))
+                      AND cs.language IS NOT NULL
+                    GROUP BY cs.language
+                ) lang_summary
+            )
+            SELECT 
+                -- Simplified aggregations
+                (SELECT COUNT(id) FROM user_stats) as total_users,
+                (SELECT SUM(is_new_today) FROM user_stats) as new_users_today,
+                COALESCE(ss.total_executions, 0) as total_executions,
+                COALESCE(ss.executions_today, 0) as executions_today,
+                COALESCE(ss.error_executions, 0) as error_executions,
+                COALESCE(cs.total_sessions, 0) as total_sessions,
+                COALESCE(cs.active_sessions, 0) as active_sessions,
+                COALESCE(ls.language_counts, '{{}}'::jsonb) as language_counts
+            FROM submission_stats ss 
+            CROSS JOIN session_stats cs 
+            CROSS JOIN language_stats ls
+        """)
     
     # Build parameter dict with individual classroom IDs
     params = {'today_start': today_start}
@@ -335,12 +388,42 @@ async def get_admin_stats(
     error_executions = result.error_executions or 0
     error_rate = (error_executions / total_executions * 100) if total_executions > 0 else 0
     
-    # Extract popular languages from PostgreSQL JSONB
-    language_counts = result.language_counts or {}
-    popular_languages = [
-        {"language": lang, "count": count}
-        for lang, count in sorted(language_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-    ]
+    # Handle language statistics - database-agnostic approach
+    if is_sqlite:
+        # For SQLite, manually query language stats since we couldn't do jsonb_object_agg
+        language_query = text(f"""
+            SELECT 
+                cs.language,
+                COUNT(cs.id) as lang_count
+            FROM code_submissions cs
+            INNER JOIN user_classrooms uc ON cs.user_id = uc.user_id
+            WHERE uc.classroom_id IN ({classroom_placeholders})
+              AND uc.is_active = 1
+              AND cs.language IS NOT NULL
+            GROUP BY cs.language
+            ORDER BY lang_count DESC
+            LIMIT 5
+        """)
+        
+        language_results = db.execute(language_query, params).fetchall()
+        popular_languages = [
+            {"language": row.language, "count": row.lang_count}
+            for row in language_results
+        ]
+    else:
+        # PostgreSQL - process JSONB result
+        language_counts = result.language_counts or {}
+        if isinstance(language_counts, str):
+            import json
+            try:
+                language_counts = json.loads(language_counts)
+            except:
+                language_counts = {}
+        
+        popular_languages = [
+            {"language": lang, "count": count}
+            for lang, count in sorted(language_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        ]
     
     stats_data = {
         "total_users": result.total_users or 0,

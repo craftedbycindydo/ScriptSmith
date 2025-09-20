@@ -30,7 +30,9 @@ export default function AssignmentUpload({ onAssignmentCreated }: AssignmentUplo
     description: '',
     language: 'auto',
     timeout_seconds: 30,
-    plagiarism_threshold: 80
+    plagiarism_threshold: 80,
+    grade_out_of: 100,
+    leniency: 50
   });
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -101,6 +103,8 @@ export default function AssignmentUpload({ onAssignmentCreated }: AssignmentUplo
       
       uploadFormData.append('timeout_seconds', formData.timeout_seconds.toString());
       uploadFormData.append('plagiarism_threshold', (formData.plagiarism_threshold / 100).toString());
+      uploadFormData.append('grade_out_of', formData.grade_out_of.toString());
+      uploadFormData.append('leniency', formData.leniency.toString());
 
       // Simulate upload progress
       const progressInterval = setInterval(() => {
@@ -126,7 +130,9 @@ export default function AssignmentUpload({ onAssignmentCreated }: AssignmentUplo
         description: '',
         language: 'auto',
         timeout_seconds: 30,
-        plagiarism_threshold: 80
+        plagiarism_threshold: 80,
+        grade_out_of: 100,
+        leniency: 50
       });
       setFile(null);
       
@@ -156,7 +162,9 @@ export default function AssignmentUpload({ onAssignmentCreated }: AssignmentUplo
       description: '',
       language: 'auto',
       timeout_seconds: 30,
-      plagiarism_threshold: 80
+      plagiarism_threshold: 80,
+      grade_out_of: 100,
+      leniency: 50
     });
     setFile(null);
     setError(null);
@@ -285,6 +293,53 @@ export default function AssignmentUpload({ onAssignmentCreated }: AssignmentUplo
                 <p className="text-xs text-muted-foreground mt-1">
                   Submissions with similarity above this threshold will be flagged
                 </p>
+              </div>
+              
+              {/* Grading Configuration */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="grade-out-of">Grade Out Of</Label>
+                  <Select 
+                    value={formData.grade_out_of.toString()} 
+                    onValueChange={(value) => 
+                      setFormData(prev => ({ ...prev, grade_out_of: parseInt(value) }))
+                    }
+                  >
+                    <SelectTrigger className="mt-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 points</SelectItem>
+                      <SelectItem value="50">50 points</SelectItem>
+                      <SelectItem value="100">100 points</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Maximum points for this assignment
+                  </p>
+                </div>
+                
+                <div>
+                  <Label htmlFor="leniency">AI Grading Leniency</Label>
+                  <div className="flex items-center space-x-2">
+                    <Slider
+                      value={[formData.leniency]}
+                      onValueChange={([value]) => 
+                        setFormData(prev => ({ ...prev, leniency: value }))
+                      }
+                      max={100}
+                      min={0}
+                      step={10}
+                      className="flex-1"
+                    />
+                    <span className="w-12 text-sm text-center">
+                      {formData.leniency}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Higher values are more lenient in grading
+                  </p>
+                </div>
               </div>
             </div>
 

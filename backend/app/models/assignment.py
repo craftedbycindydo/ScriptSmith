@@ -66,6 +66,7 @@ class StudentSubmission(Base):
     # Code files information
     code_files = Column(JSON, nullable=True)  # List of code files found
     main_file = Column(String(500), nullable=True)  # Primary file to execute
+    code_content = Column(JSON, nullable=True)  # Dict mapping filename to code content
     
     # Execution results
     execution_status = Column(String(50), default="pending")  # pending, success, error, timeout
@@ -81,6 +82,11 @@ class StudentSubmission(Base):
     is_flagged = Column(Boolean, default=False)
     flagged_for = Column(JSON, nullable=True)  # List of similar submissions
     
+    # Grading
+    grade = Column(Float, nullable=True)  # Grade/score for the submission
+    max_grade = Column(Float, nullable=True, default=100.0)  # Maximum possible grade
+    grading_notes = Column(Text, nullable=True)  # Optional grading comments
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -90,5 +96,87 @@ class StudentSubmission(Base):
         return f"<StudentSubmission(id={self.id}, student='{self.student_name}', status='{self.execution_status}')>"
 
 
-# Add back-reference
+class PlagiarismAnalysis(Base):
+    """Store detailed AI-powered plagiarism analysis results for caching and historical reference"""
+    __tablename__ = "plagiarism_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
+    assignment = relationship("Assignment", back_populates="plagiarism_analyses")
+    
+    # Student pair being compared
+    student_a_id = Column(Integer, ForeignKey("student_submissions.id"), nullable=False)
+    student_b_id = Column(Integer, ForeignKey("student_submissions.id"), nullable=False)
+    student_a = relationship("StudentSubmission", foreign_keys=[student_a_id], back_populates="plagiarism_analyses_as_a")
+    student_b = relationship("StudentSubmission", foreign_keys=[student_b_id], back_populates="plagiarism_analyses_as_b")
+    
+    # Code snapshots (for quick access without file system)
+    code_a_content = Column(Text, nullable=True)  # Snapshot of student A's code at time of analysis
+    code_b_content = Column(Text, nullable=True)  # Snapshot of student B's code at time of analysis
+    code_language = Column(String(50), nullable=True)  # Programming language detected
+    
+    # AI Analysis Results
+    similarity_score = Column(Float, nullable=False, default=0.0)  # 0.0 - 1.0 similarity score
+    is_flagged = Column(Boolean, default=False)  # Whether similarity exceeds threshold
+    confidence_level = Column(String(20), nullable=True)  # 'high', 'medium', 'low', 'unavailable'
+    
+    # Detailed AI Analysis (JSON)
+    ai_explanation = Column(Text, nullable=True)  # AI's detailed explanation
+    ai_evidence = Column(JSON, nullable=True)  # Structured evidence from AI
+    analysis_method = Column(String(50), nullable=True)  # 'ai_powered', 'fallback', 'manual'
+    
+    # Analysis metadata
+    threshold_used = Column(Float, nullable=False)  # Threshold used for flagging
+    model_used = Column(String(100), nullable=True)  # AI model used (e.g., 'gpt-4o-mini')
+    tokens_used = Column(Integer, nullable=True)  # Approximate tokens consumed
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<PlagiarismAnalysis(id={self.id}, similarity={self.similarity_score:.3f}, flagged={self.is_flagged})>"
+
+
+class CodeSnapshot(Base):
+    """Store code content snapshots for quick access and historical reference"""
+    __tablename__ = "code_snapshots"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("student_submissions.id"), nullable=False)
+    submission = relationship("StudentSubmission", back_populates="code_snapshots")
+    
+    # Code information
+    file_name = Column(String(500), nullable=False)  # Original file name
+    file_content = Column(Text, nullable=False)  # Full file content
+    file_language = Column(String(50), nullable=True)  # Detected language
+    file_size = Column(Integer, nullable=True)  # File size in bytes
+    
+    # Content hashes for deduplication and change detection
+    content_hash = Column(String(64), nullable=False, index=True)  # SHA-256 hash
+    normalized_hash = Column(String(64), nullable=True, index=True)  # Hash of normalized code
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def __repr__(self):
+        return f"<CodeSnapshot(id={self.id}, file='{self.file_name}', submission_id={self.submission_id})>"
+
+
+# Add back-references
 Assignment.submissions = relationship("StudentSubmission", back_populates="assignment", cascade="all, delete-orphan")
+Assignment.plagiarism_analyses = relationship("PlagiarismAnalysis", back_populates="assignment", cascade="all, delete-orphan")
+
+StudentSubmission.plagiarism_analyses_as_a = relationship(
+    "PlagiarismAnalysis", 
+    foreign_keys=[PlagiarismAnalysis.student_a_id], 
+    back_populates="student_a",
+    cascade="all, delete-orphan"
+)
+StudentSubmission.plagiarism_analyses_as_b = relationship(
+    "PlagiarismAnalysis", 
+    foreign_keys=[PlagiarismAnalysis.student_b_id], 
+    back_populates="student_b",
+    cascade="all, delete-orphan"
+)
+StudentSubmission.code_snapshots = relationship("CodeSnapshot", back_populates="submission", cascade="all, delete-orphan")

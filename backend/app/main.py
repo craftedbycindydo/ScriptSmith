@@ -222,7 +222,13 @@ async def startup_event():
             # Run performance optimizations (indexes, etc.)
             print("🔄 Applying database performance optimizations...")
             try:
-                from app.services.database_migration_service import migration_service
+                from app.services.database_migration_service import DatabaseMigrationService
+                migration_service = DatabaseMigrationService()
+                migration_service._create_migration_table()
+                
+                # Create plagiarism tables for caching AI results
+                migration_service.create_plagiarism_tables()
+                
                 migration_service.apply_performance_optimizations()
                 print("✅ Performance optimizations applied successfully!")
                 

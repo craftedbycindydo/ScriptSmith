@@ -266,6 +266,7 @@ export default function AdminDashboard() {
   // Tab state - must be declared before React Query hooks
   const [activeTab, setActiveTab] = useState('overview');
   
+  
   // SMART LAZY LOADING - Critical data loads immediately, heavy data loads on demand
   const [heavyDataLoadTrigger, setHeavyDataLoadTrigger] = useState(false);
   
@@ -693,6 +694,7 @@ export default function AdminDashboard() {
         refetchUsers(),
         // Other data is automatically refetched by React Query as needed
       ]);
+      
     } catch (err: any) {
       console.error('Error refreshing admin data:', err);
     }

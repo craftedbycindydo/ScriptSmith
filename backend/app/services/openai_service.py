@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import ssl
 import certifi
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from app.core.config import settings
 
 
@@ -20,7 +20,9 @@ class OpenAIService:
         self._api_key = settings.openai_api_key
         self.base_url = "https://api.openai.com/v1"
         self.model = "gpt-4o"
+        self.plagiarism_model = "gpt-4o-mini"  # Use mini for plagiarism - higher token limit, lower cost
         self.max_tokens = 128000  # GPT-4o context window
+        self.mini_max_tokens = 128000  # GPT-4o-mini context window
         self.tokens_per_char = 4  # Rough estimate: 1 token ≈ 4 characters
         
     @property
@@ -304,8 +306,8 @@ Code to analyze:
                     "temperature": 0.0   # Maximum determinism for consistent grading
                 }
                 
-                # Use extended timeout for batch grading (large prompts + multiple students)
-                timeout = aiohttp.ClientTimeout(total=180)
+                # Use reasonable timeout for batch grading to avoid hanging
+                timeout = aiohttp.ClientTimeout(total=45)
                 
                 async with session.post(
                     f"{self.base_url}/chat/completions",
@@ -489,18 +491,37 @@ Shift the removed mass equally to correctness and effort:
 
 Normalize so all effective weights sum to 1.0 before scoring.
 
-EVALUATION METHOD (deterministic)
+⚠️ **BEGINNER-FRIENDLY GRADING** - This is beginner code. Focus on BASIC FUNCTIONALITY, not perfect implementation.
 
-Compare each student's code to the template requirements in two ways:
-a. **Behavior**: compare given output to expected output; if outputs differ, describe concrete mismatches. If an error was raised, classify: syntax / runtime / logic.
-b. **Implementation vs Instructions**: compare student's approach to template requirements (which may be specified in template comments). Check if required functions/features are present, algorithmic steps match instructions, data structures follow specifications. Prefer logical compliance over superficial token differences.
+EVALUATION METHOD (lenient for beginners)
 
-⚠️ **CRITICAL: IGNORE STUDENT COMMENTS ONLY** - Student comments should be completely ignored in all scoring. However, template comments are assignment instructions that define correctness criteria.
+**PRIMARY FOCUS: Did the code attempt to solve the problem and execute successfully?**
 
-Compute sub-scores on a 0–1 scale:
+Evaluation criteria (compute sub-scores on 0–1 scale):
 
-- **correctness**: 1.0 for fully correct implementation of template instructions (which may be in template comments); partial credit if major functions pass or output matches requirements; 0 if non-running or unrelated to template requirements.
-- **effort**: credit non-trivial attempts (e.g., multiple functions, visible debugging attempts, tests, iterative logic), even if buggy (do NOT consider STUDENT comments as effort indicators)."""
+- **correctness**: 
+  - 1.0 = Code runs without errors AND produces reasonable output (even if not perfect)
+  - 0.8-0.9 = Code runs but output has minor issues or formatting problems
+  - 0.5-0.7 = Code runs but output is significantly different from expected
+  - 0.2-0.4 = Code has runtime errors but shows understanding of the problem
+  - 0.0-0.1 = Syntax errors or completely unrelated to assignment
+
+- **effort**: 
+  - 1.0 = Clear attempt at solving the problem with logical approach
+  - 0.7-0.9 = Good attempt with most required elements present
+  - 0.3-0.6 = Basic attempt, some relevant code present
+  - 0.0-0.2 = Minimal or no relevant code
+
+⚠️ **CRITICAL GRADING PHILOSOPHY FOR BEGINNERS:**
+- If code RUNS and produces ANY reasonable output → MINIMUM 80/{grade_scale} points
+- If code RUNS and produces expected output → FULL {grade_scale}/{grade_scale} points
+- If code RUNS without errors (regardless of output) → At least 70/{grade_scale} points
+- Do NOT penalize for non-optimal algorithms, variable names, or coding style
+- Do NOT require perfect adherence to template instructions
+- Focus on "Does it work?" not "Is it implemented perfectly?"
+- BE GENEROUS with points - beginners deserve encouragement for working code!
+
+⚠️ **IGNORE STUDENT COMMENTS** - Student comments should be completely ignored in scoring."""
 
         # Add enabled criteria descriptions
         if enable_quality:
@@ -519,12 +540,14 @@ Round to 1 decimal place to allow differentiation without randomness.
 
 Identical work may receive identical scores, but you MUST mark "identical_to" with the matching username and explain why.
 
-BANDING (for human readability; derived from the computed score, not vice versa)
-- {int(0.90*grade_scale)}–{grade_scale}: fully correct or tiny nits
-- {int(0.75*grade_scale)}–{int(0.89*grade_scale)}: correct with small gaps  
-- {int(0.50*grade_scale)}–{int(0.74*grade_scale)}: partially working
-- {int(0.20*grade_scale)}–{int(0.49*grade_scale)}: attempted with significant errors
-- 0–{int(0.19*grade_scale)}: minimal/irrelevant
+BANDING FOR BEGINNER CODE (lenient - derived from computed score, not vice versa)
+- {int(0.80*grade_scale)}–{grade_scale}: code runs and produces reasonable output (AWARD FULL POINTS LIBERALLY)
+- {int(0.60*grade_scale)}–{int(0.79*grade_scale)}: code runs but output needs improvement
+- {int(0.40*grade_scale)}–{int(0.59*grade_scale)}: code has issues but shows understanding
+- {int(0.20*grade_scale)}–{int(0.39*grade_scale)}: basic attempt with significant problems
+- 0–{int(0.19*grade_scale)}: minimal effort or won't run due to syntax errors
+
+**Remember: Working code deserves high scores! Don't penalize beginners for imperfect implementation.**
 
 RETURN FORMAT — JSON ONLY
 Return only this JSON (no prose outside JSON). Use an array so we can handle any number of submissions.
@@ -750,6 +773,347 @@ Return ONLY the JSON array format specified above.
                 "available": False
             }
     
+
+
+    async def detect_code_plagiarism(
+        self,
+        code_pairs: List[Dict[str, Any]],
+        language: str,
+        threshold: float = 0.8
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect plagiarism between code pairs using GPT-4o-mini
+        
+        Args:
+            code_pairs: List of code pair dictionaries with structure:
+                       [{"student_a": str, "code_a": str, "student_b": str, "code_b": str}, ...]
+            language: Programming language of the code
+            threshold: Similarity threshold for flagging (0.0-1.0)
+            
+        Returns:
+            List of plagiarism analysis results with similarity scores and explanations
+        """
+        if not self.api_key:
+            return [{
+                "student_a": pair.get("student_a", "Unknown"),
+                "student_b": pair.get("student_b", "Unknown"), 
+                "similarity_score": 0.0,
+                "is_flagged": False,
+                "explanation": "OpenAI API key not configured",
+                "confidence": "unavailable"
+            } for pair in code_pairs]
+        
+        if not code_pairs:
+            return []
+        
+        try:
+            # Calculate batch size based on token limits
+            batch_size = self._calculate_plagiarism_batch_size(code_pairs, language)
+            results = []
+            
+            # Process in batches to handle token limits
+            for i in range(0, len(code_pairs), batch_size):
+                batch = code_pairs[i:i + batch_size]
+                batch_results = await self._process_plagiarism_batch(
+                    batch, language, threshold
+                )
+                results.extend(batch_results)
+            
+            return results
+            
+        except Exception as e:
+            # Return safe fallback results
+            safe_error_msg = self._mask_api_key(str(e))
+            return [{
+                "student_a": pair.get("student_a", "Unknown"),
+                "student_b": pair.get("student_b", "Unknown"),
+                "similarity_score": 0.0,
+                "is_flagged": False,
+                "explanation": "Plagiarism analysis temporarily unavailable",
+                "confidence": "unavailable"
+            } for pair in code_pairs]
+    
+    def _calculate_plagiarism_batch_size(self, code_pairs: List[Dict[str, Any]], language: str) -> int:
+        """Calculate optimal batch size for plagiarism analysis"""
+        # Reserve tokens for prompt, response, and safety margin
+        reserve_tokens = 3000
+        available_tokens = self.mini_max_tokens - reserve_tokens
+        
+        if not code_pairs:
+            return 0
+        
+        # Estimate average token usage per pair
+        avg_code_length = 0
+        for pair in code_pairs[:min(5, len(code_pairs))]:  # Sample first few pairs
+            code_a = pair.get('code_a', '')
+            code_b = pair.get('code_b', '')
+            avg_code_length += len(code_a) + len(code_b)
+        
+        avg_code_length = avg_code_length // min(5, len(code_pairs))
+        avg_tokens_per_pair = self.estimate_tokens(str(avg_code_length)) + 300  # 300 for formatting and metadata
+        
+        if avg_tokens_per_pair <= 0:
+            return len(code_pairs)
+        
+        max_batch_size = available_tokens // avg_tokens_per_pair
+        return max(1, min(max_batch_size, len(code_pairs), 8))  # Max 8 pairs per batch for quality
+    
+    async def _process_plagiarism_batch(
+        self,
+        code_pairs: List[Dict[str, Any]],
+        language: str,
+        threshold: float
+    ) -> List[Dict[str, Any]]:
+        """Process a batch of code pairs for plagiarism analysis"""
+        
+        try:
+            # Create the plagiarism analysis prompt
+            prompt = self._create_plagiarism_prompt(code_pairs, language, threshold)
+            
+            # Create SSL context for secure connections
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            
+            # Make API call with extended timeout for batch processing
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                headers = self._get_secure_headers()
+                
+                payload = {
+                    "model": self.plagiarism_model,  # Use GPT-4o-mini for plagiarism
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": f"You are an expert code plagiarism detector specializing in {language}. Analyze code pairs for similarity with high precision."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    "max_tokens": 2000,  # Enough for detailed analysis results
+                    "temperature": 0.1   # Low temperature for consistent analysis
+                }
+                
+                # Extended timeout for plagiarism analysis
+                timeout = aiohttp.ClientTimeout(total=120)
+                
+                async with session.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        return self._parse_plagiarism_response(result, code_pairs)
+                    else:
+                        # API error - return fallback results
+                        return self._get_plagiarism_fallback(code_pairs, "API request failed")
+                        
+        except asyncio.TimeoutError:
+            return self._get_plagiarism_fallback(code_pairs, "Analysis timeout")
+        except aiohttp.ClientError:
+            return self._get_plagiarism_fallback(code_pairs, "Network error")
+        except Exception:
+            return self._get_plagiarism_fallback(code_pairs, "Analysis unavailable")
+    
+    def _create_plagiarism_prompt(
+        self, 
+        code_pairs: List[Dict[str, Any]], 
+        language: str, 
+        threshold: float
+    ) -> str:
+        """Create a structured prompt for plagiarism detection"""
+        
+        prompt = f"""
+Analyze the following {len(code_pairs)} {language} code pairs for plagiarism. For each pair, provide:
+
+1. **Similarity Score**: 0.0 (completely different) to 1.0 (identical)
+2. **Is Flagged**: true if similarity > {threshold}, false otherwise  
+3. **Confidence**: "high", "medium", or "low" based on analysis certainty
+4. **Explanation**: Specific evidence supporting the similarity score
+
+**Analysis Criteria:**
+- **Structural Similarity**: Control flow, function organization, logic patterns
+- **Semantic Similarity**: Variable usage, algorithm approach, problem-solving method
+- **Syntactic Similarity**: Code structure, naming patterns, formatting choices
+- **Unique Elements**: Comments, variable names, implementation details that indicate copying
+
+**Important**: Focus on algorithmic and structural similarities, not superficial formatting.
+
+**Return Format** (JSON only):
+{{
+  "results": [
+    {{
+      "pair_index": 0,
+      "student_a": "student_name_a",
+      "student_b": "student_name_b", 
+      "similarity_score": 0.85,
+      "is_flagged": true,
+      "confidence": "high",
+      "explanation": "Both codes use identical control flow structure with same variable naming pattern. Function implementations are nearly identical with only minor variable renaming.",
+      "evidence": {{
+        "structural_matches": ["same loop structure", "identical if-else chains"],
+        "semantic_matches": ["same algorithm approach", "identical edge case handling"],
+        "unique_indicators": ["same comment patterns", "unusual variable names"]
+      }}
+    }}
+  ]
+}}
+
+**Code Pairs to Analyze:**
+
+"""
+        
+        for i, pair in enumerate(code_pairs):
+            student_a = pair.get('student_a', f'Student_A_{i}')
+            student_b = pair.get('student_b', f'Student_B_{i}')
+            code_a = pair.get('code_a', '')
+            code_b = pair.get('code_b', '')
+            
+            prompt += f"""
+**Pair {i}**: {student_a} vs {student_b}
+
+**{student_a}'s Code:**
+```{language}
+{code_a}
+```
+
+**{student_b}'s Code:**
+```{language}
+{code_b}
+```
+
+---
+"""
+        
+        prompt += f"""
+
+**Instructions:**
+- Analyze each pair independently
+- Be precise with similarity scores (use decimals like 0.73, 0.92)
+- Focus on substantial similarities that indicate potential copying
+- Consider legitimate similarities from common patterns or requirements
+- Provide specific evidence in explanations
+- Return ONLY the JSON format above
+
+**Remember**: Threshold is {threshold} - flag pairs above this similarity."""
+
+        return prompt
+    
+    def _parse_plagiarism_response(
+        self, 
+        response: Dict[str, Any], 
+        code_pairs: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Parse OpenAI plagiarism analysis response"""
+        
+        try:
+            content = response["choices"][0]["message"]["content"].strip()
+            
+            # Extract JSON from response
+            import json
+            import re
+            
+            # Find JSON block
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                try:
+                    parsed_data = json.loads(json_str)
+                    
+                    if "results" in parsed_data and isinstance(parsed_data["results"], list):
+                        results = []
+                        
+                        for i, result in enumerate(parsed_data["results"]):
+                            # Ensure we have valid data
+                            pair_index = result.get("pair_index", i)
+                            original_pair = code_pairs[pair_index] if pair_index < len(code_pairs) else {}
+                            
+                            # Extract and validate similarity score
+                            similarity_raw = result.get("similarity_score", 0.0)
+                            if isinstance(similarity_raw, str):
+                                try:
+                                    similarity_score = float(similarity_raw)
+                                except ValueError:
+                                    similarity_score = 0.0
+                            else:
+                                similarity_score = float(similarity_raw)
+                            
+                            # Ensure score is in valid range
+                            similarity_score = max(0.0, min(1.0, similarity_score))
+                            
+                            # Build result
+                            plagiarism_result = {
+                                "student_a": result.get("student_a", original_pair.get("student_a", "Unknown")),
+                                "student_b": result.get("student_b", original_pair.get("student_b", "Unknown")),
+                                "similarity_score": similarity_score,
+                                "is_flagged": result.get("is_flagged", False),
+                                "confidence": result.get("confidence", "medium"),
+                                "explanation": result.get("explanation", "Analysis completed"),
+                                "evidence": result.get("evidence", {}),
+                                "available": True
+                            }
+                            
+                            results.append(plagiarism_result)
+                        
+                        # Ensure we have results for all pairs
+                        while len(results) < len(code_pairs):
+                            missing_pair = code_pairs[len(results)]
+                            results.append({
+                                "student_a": missing_pair.get("student_a", "Unknown"),
+                                "student_b": missing_pair.get("student_b", "Unknown"),
+                                "similarity_score": 0.0,
+                                "is_flagged": False,
+                                "confidence": "low",
+                                "explanation": "Analysis incomplete",
+                                "evidence": {},
+                                "available": False
+                            })
+                        
+                        return results
+                    
+                except json.JSONDecodeError:
+                    pass
+            
+            # Fallback if JSON parsing fails
+            return self._get_plagiarism_fallback(code_pairs, "Failed to parse response")
+            
+        except (KeyError, IndexError):
+            return self._get_plagiarism_fallback(code_pairs, "Invalid response format")
+        except Exception:
+            return self._get_plagiarism_fallback(code_pairs, "Response processing error")
+    
+    def _get_plagiarism_fallback(
+        self, 
+        code_pairs: List[Dict[str, Any]], 
+        reason: str = "Analysis unavailable"
+    ) -> List[Dict[str, Any]]:
+        """Return fallback plagiarism results when AI analysis fails"""
+        
+        # Use simple text similarity as fallback
+        from difflib import SequenceMatcher
+        
+        results = []
+        for pair in code_pairs:
+            code_a = pair.get('code_a', '')
+            code_b = pair.get('code_b', '')
+            
+            # Basic similarity using difflib
+            similarity_score = SequenceMatcher(None, code_a, code_b).ratio()
+            
+            results.append({
+                "student_a": pair.get("student_a", "Unknown"),
+                "student_b": pair.get("student_b", "Unknown"),
+                "similarity_score": round(similarity_score, 3),
+                "is_flagged": similarity_score > 0.8,  # Default threshold
+                "confidence": "low",
+                "explanation": f"Fallback analysis used: {reason}",
+                "evidence": {"method": "basic_text_similarity"},
+                "available": False
+            })
+        
+        return results
 
 
 # Create service instance
