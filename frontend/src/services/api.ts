@@ -673,8 +673,21 @@ export const apiService = {
     return response.data;
   },
 
-  async getAssignments(skip: number = 0, limit: number = 50): Promise<any[]> {
-    const response = await api.get(`/assignments?skip=${skip}&limit=${limit}`);
+  async getAssignments(skip: number = 0, limit: number = 50, cacheParams: any = {}): Promise<any[]> {
+    const params = new URLSearchParams({
+      skip: skip.toString(),
+      limit: limit.toString(),
+      ...cacheParams
+    });
+    
+    // Add no-cache headers when force refreshing
+    const headers = cacheParams._t ? {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    } : {};
+    
+    const response = await api.get(`/assignments?${params.toString()}`, { headers });
     return response.data;
   },
 
@@ -683,13 +696,27 @@ export const apiService = {
     return response.data;
   },
 
-  async getAssignmentReport(assignmentId: number): Promise<any> {
-    const response = await api.get(`/assignments/${assignmentId}/report`);
+  async getAssignmentReport(assignmentId: number, cacheParam: string = ''): Promise<any> {
+    // Add no-cache headers when force refreshing
+    const headers = cacheParam ? {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    } : {};
+    
+    const response = await api.get(`/assignments/${assignmentId}/report${cacheParam}`, { headers });
     return response.data;
   },
 
-  async getAssignmentSubmissions(assignmentId: number): Promise<any[]> {
-    const response = await api.get(`/assignments/${assignmentId}/submissions`);
+  async getAssignmentSubmissions(assignmentId: number, cacheParam: string = ''): Promise<any[]> {
+    // Add no-cache headers when force refreshing  
+    const headers = cacheParam ? {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache', 
+      'Expires': '0'
+    } : {};
+    
+    const response = await api.get(`/assignments/${assignmentId}/submissions${cacheParam}`, { headers });
     return response.data;
   },
 
@@ -698,8 +725,43 @@ export const apiService = {
     return response.data;
   },
 
-  async reprocessAssignment(assignmentId: number): Promise<void> {
-    await api.post(`/assignments/${assignmentId}/reprocess`);
+  async exportAssignmentCSV(assignmentId: number): Promise<void> {
+    const response = await api.get(`/assignments/${assignmentId}/export-csv`, {
+      responseType: 'blob'
+    });
+    
+    // Create download link
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Extract filename from Content-Disposition header if available
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = 'assignment_report.csv';
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch) {
+        filename = filenameMatch[1];
+      }
+    }
+    
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    
+    // Cleanup
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
+
+  async reprocessAssignment(assignmentId: number, gradingConfig?: { gradeOutOf?: number, leniency?: number }): Promise<void> {
+    const body = gradingConfig ? {
+      grade_out_of: gradingConfig.gradeOutOf,
+      leniency: gradingConfig.leniency
+    } : {};
+    
+    await api.post(`/assignments/${assignmentId}/reprocess`, body);
   },
 
   async deleteAssignment(assignmentId: number): Promise<void> {
