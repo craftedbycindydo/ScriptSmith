@@ -93,17 +93,16 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
   // Refs to track current assignments and polling state
   const assignmentsRef = useRef<Assignment[]>([]);
   const pollingStateRef = useRef<{[key: number]: {status: string, plagiarism_status: string, count: number}}>({});
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Update ref whenever assignments change
-  useEffect(() => {
-    assignmentsRef.current = assignments;
-  }, [assignments]);
-
-  useEffect(() => {
-    loadAssignments();
+  // Smart polling functions
+  const startPolling = () => {
+    if (pollingIntervalRef.current) {
+      return; // Already polling
+    }
     
-    // Set up polling interval that checks for processing assignments
-    const interval = setInterval(() => {
+    console.log('▶️ Starting assignment polling');
+    pollingIntervalRef.current = setInterval(() => {
       const currentAssignments = assignmentsRef.current;
       
       // More detailed filtering with better logging and stuck detection
@@ -162,24 +161,47 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
         console.log(`🔄 Polling ${processingAssignments.length} processing assignments`);
         loadAssignments();
       } else {
-        // Check for any assignments that might be in an unexpected state
-        const unexpectedAssignments = currentAssignments.filter(assignment => {
-          const isUploaded = assignment.status === 'uploaded';
-          const isPending = assignment.plagiarism_status === 'pending';
-          const hasNoProcessed = assignment.processed_students === 0 && assignment.total_students > 0;
-          
-          return isUploaded && isPending && hasNoProcessed;
-        });
-        
-        if (unexpectedAssignments.length > 0) {
-          console.log(`⚠️ Found ${unexpectedAssignments.length} assignments that may need processing:`, 
-            unexpectedAssignments.map(a => `"${a.name}" (status: ${a.status}, plagiarism: ${a.plagiarism_status})`)
-          );
-        }
+        // No more processing assignments, stop polling
+        console.log('⏹️ No processing assignments found, stopping polling');
+        stopPolling();
       }
     }, 5000);
+  };
+
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      console.log('⏸️ Stopping assignment polling');
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  };
+
+  // Update ref and check for processing assignments whenever assignments change
+  useEffect(() => {
+    assignmentsRef.current = assignments;
     
-    return () => clearInterval(interval);
+    // Check if we have any processing assignments and start/stop polling accordingly
+    const hasProcessingAssignments = assignments.some(assignment => 
+      assignment.status === 'processing' || assignment.plagiarism_status === 'processing'
+    );
+    
+    if (hasProcessingAssignments && !pollingIntervalRef.current) {
+      console.log('📋 Detected processing assignments, starting polling');
+      startPolling();
+    } else if (!hasProcessingAssignments && pollingIntervalRef.current) {
+      console.log('✅ All assignments completed, stopping polling');
+      stopPolling();
+    }
+  }, [assignments]);
+
+  // Initial load
+  useEffect(() => {
+    loadAssignments();
+    
+    // Clean up polling on unmount
+    return () => {
+      stopPolling();
+    };
   }, []); // Empty dependency array - only runs once
 
   // Refresh when external trigger changes (e.g., after assignment upload)
