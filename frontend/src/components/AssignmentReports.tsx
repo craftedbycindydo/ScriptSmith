@@ -90,8 +90,9 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
   const [submissionDetails, setSubmissionDetails] = useState<Record<number, any>>({});
   const [loadingDetails, setLoadingDetails] = useState<Set<number>>(new Set());
 
-  // Ref to track current assignments for polling
+  // Refs to track current assignments and polling state
   const assignmentsRef = useRef<Assignment[]>([]);
+  const pollingStateRef = useRef<{[key: number]: {status: string, plagiarism_status: string, count: number}}>({});
 
   // Update ref whenever assignments change
   useEffect(() => {
@@ -104,13 +105,77 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
     // Set up polling interval that checks for processing assignments
     const interval = setInterval(() => {
       const currentAssignments = assignmentsRef.current;
-      const processingAssignments = currentAssignments.filter(
-        a => a.status === 'processing' || a.plagiarism_status === 'processing'
-      );
+      
+      // More detailed filtering with better logging and stuck detection
+      const processingAssignments = currentAssignments.filter(assignment => {
+        const isProcessing = assignment.status === 'processing';
+        const isPlagiarismProcessing = assignment.plagiarism_status === 'processing';
+        const isStillProcessing = isProcessing || isPlagiarismProcessing;
+        
+        if (isStillProcessing) {
+          // Track polling state to detect stuck assignments
+          const previousState = pollingStateRef.current[assignment.id];
+          
+          if (previousState && previousState.status === assignment.status && 
+              previousState.plagiarism_status === assignment.plagiarism_status) {
+            previousState.count += 1;
+            
+            // If an assignment has been in the same state for more than 24 polls (2 minutes), warn about it
+            if (previousState.count > 24) {
+              console.warn(`⚠️ Assignment "${assignment.name}" may be stuck in processing state for ${previousState.count * 5} seconds:`, {
+                status: assignment.status,
+                plagiarism_status: assignment.plagiarism_status,
+                total_students: assignment.total_students,
+                processed_students: assignment.processed_students
+              });
+              
+              // Stop polling this assignment after 60 polls (5 minutes) to prevent infinite polling
+              if (previousState.count > 60) {
+                console.error(`❌ Stopping polling for assignment "${assignment.name}" - appears to be stuck`);
+                return false;
+              }
+            }
+          } else {
+            // State changed or first time seeing this assignment
+            pollingStateRef.current[assignment.id] = {
+              status: assignment.status,
+              plagiarism_status: assignment.plagiarism_status,
+              count: 1
+            };
+            
+            console.log(`🔄 Assignment "${assignment.name}" processing:`, {
+              status: assignment.status,
+              plagiarism_status: assignment.plagiarism_status,
+              total_students: assignment.total_students,
+              processed_students: assignment.processed_students
+            });
+          }
+        } else {
+          // Assignment is no longer processing, remove from polling state
+          delete pollingStateRef.current[assignment.id];
+        }
+        
+        return isStillProcessing;
+      });
       
       if (processingAssignments.length > 0) {
         console.log(`🔄 Polling ${processingAssignments.length} processing assignments`);
         loadAssignments();
+      } else {
+        // Check for any assignments that might be in an unexpected state
+        const unexpectedAssignments = currentAssignments.filter(assignment => {
+          const isUploaded = assignment.status === 'uploaded';
+          const isPending = assignment.plagiarism_status === 'pending';
+          const hasNoProcessed = assignment.processed_students === 0 && assignment.total_students > 0;
+          
+          return isUploaded && isPending && hasNoProcessed;
+        });
+        
+        if (unexpectedAssignments.length > 0) {
+          console.log(`⚠️ Found ${unexpectedAssignments.length} assignments that may need processing:`, 
+            unexpectedAssignments.map(a => `"${a.name}" (status: ${a.status}, plagiarism: ${a.plagiarism_status})`)
+          );
+        }
       }
     }, 5000);
     
