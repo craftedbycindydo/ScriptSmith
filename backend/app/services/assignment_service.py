@@ -742,7 +742,7 @@ class AssignmentService:
             for submission in submissions_no_execution:
                 if submission.grade is None:  # Only grade if not already graded
                     submission.grade = 0.0
-                    submission.max_grade = 100.0
+                    submission.max_grade = grade_out_of  # Use actual grade scale from API
                     submission.grading_notes = "No execution results - 0 points"
                     no_execution_count += 1
             
