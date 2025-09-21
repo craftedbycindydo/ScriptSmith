@@ -130,8 +130,16 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
               
               // Stop polling this assignment after 60 polls (5 minutes) to prevent infinite polling
               if (previousState.count > 60) {
-                console.error(`❌ Stopping polling for assignment "${assignment.name}" - appears to be stuck`);
-                return false;
+                console.error(`❌ Assignment "${assignment.name}" appears to be stuck in processing state`);
+                console.error(`🔧 SOLUTION: Click "Reprocess" button to restart this assignment`);
+                console.error(`📊 Assignment stats: ${assignment.processed_students}/${assignment.total_students} students processed`);
+                
+                // If no students have been processed at all, it's likely a background task failure
+                if (assignment.processed_students === 0) {
+                  console.error(`⚠️ CRITICAL: No students processed - background task may have failed silently`);
+                }
+                
+                return false; // Stop polling this stuck assignment
               }
             }
           } else {
@@ -161,6 +169,24 @@ export default function AssignmentReports({ refreshTrigger }: AssignmentReportsP
         console.log(`🔄 Polling ${processingAssignments.length} processing assignments`);
         loadAssignments();
       } else {
+        // Check for stuck assignments before stopping polling
+        const stuckAssignments = currentAssignments.filter(assignment => {
+          const isProcessingButNoProgress = assignment.status === 'processing' && 
+                                          assignment.processed_students === 0 && 
+                                          assignment.total_students > 0;
+          const isPendingPlagiarism = assignment.plagiarism_status === 'pending';
+          
+          return isProcessingButNoProgress && isPendingPlagiarism;
+        });
+        
+        if (stuckAssignments.length > 0) {
+          console.error(`🚨 BACKGROUND TASK FAILURE DETECTED:`);
+          stuckAssignments.forEach(assignment => {
+            console.error(`   Assignment "${assignment.name}": ${assignment.processed_students}/${assignment.total_students} processed`);
+            console.error(`   🔧 SOLUTION: Use "Reprocess" button to restart this assignment`);
+          });
+        }
+        
         // No more processing assignments, stop polling
         console.log('⏹️ No processing assignments found, stopping polling');
         stopPolling();
