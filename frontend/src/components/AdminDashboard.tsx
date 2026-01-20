@@ -287,16 +287,16 @@ export default function AdminDashboard() {
   const { data: adminUsers = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers(
     activeTab === 'overview' || activeTab === 'users' // Users load immediately for overview and users tab
   );
-  const { data: activities = [], isLoading: activitiesLoading } = useAdminActivities(
+  const { data: activities = [], isLoading: activitiesLoading, refetch: refetchActivities } = useAdminActivities(
     activeTab === 'overview' // Activities load immediately on overview tab for better UX
   );
-  const { data: templateExecutions = [] } = useTemplateExecutions(
+  const { data: templateExecutions = [], refetch: refetchTemplateExecutions } = useTemplateExecutions(
     heavyDataLoadTrigger && activeTab === 'template-executions'
   );
-  const { data: templatesOptions = [] } = useTemplatesOptions(
+  const { data: templatesOptions = [], refetch: refetchTemplatesOptions } = useTemplatesOptions(
     heavyDataLoadTrigger && (activeTab === 'templates' || activeTab === 'template-executions' || activeTab === 'template-submissions')
   );
-  const { data: usersOptions = [] } = useUsersOptions(
+  const { data: usersOptions = [], refetch: refetchUsersOptions } = useUsersOptions(
     heavyDataLoadTrigger && (activeTab === 'template-executions' || activeTab === 'template-submissions')
   );
   
@@ -686,14 +686,42 @@ export default function AdminDashboard() {
     }
   };
 
-  // Refresh all data using React Query refetch
+  // Refresh data based on the currently active tab
   const loadAllData = async () => {
     try {
-      await Promise.all([
-        refetchStats(),
-        refetchUsers(),
-        // Other data is automatically refetched by React Query as needed
-      ]);
+      const refetchPromises: Promise<any>[] = [];
+      
+      // Always refetch stats (shown on overview)
+      refetchPromises.push(refetchStats());
+      
+      // Refetch based on active tab
+      switch (activeTab) {
+        case 'overview':
+          refetchPromises.push(refetchUsers());
+          refetchPromises.push(refetchActivities());
+          break;
+        case 'users':
+          refetchPromises.push(refetchUsers());
+          break;
+        case 'template-executions':
+          refetchPromises.push(refetchTemplateExecutions());
+          refetchPromises.push(refetchTemplatesOptions());
+          refetchPromises.push(refetchUsersOptions());
+          break;
+        case 'templates':
+        case 'template-submissions':
+          refetchPromises.push(refetchTemplatesOptions());
+          if (activeTab === 'template-submissions') {
+            refetchPromises.push(refetchUsersOptions());
+          }
+          break;
+        case 'classrooms':
+          // Classroom data is managed via user context refresh
+          await refreshUser();
+          break;
+      }
+      
+      await Promise.all(refetchPromises);
       
     } catch (err: any) {
       console.error('Error refreshing admin data:', err);
