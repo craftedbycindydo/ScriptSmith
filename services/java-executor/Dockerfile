@@ -1,5 +1,6 @@
-# Simple Java service for Railway.app (2025)
-FROM openjdk:17-alpine
+# Simple Java service for Railway.app (2026)
+# Note: openjdk images were deprecated - using Eclipse Temurin instead
+FROM eclipse-temurin:17-alpine
 
 WORKDIR /app
 

@@ -1,5 +1,6 @@
 # Custom Java image with pre-installed libraries for kids learning programming
-FROM openjdk:17-jdk-slim
+# Note: openjdk images were deprecated - using Eclipse Temurin instead
+FROM eclipse-temurin:17-jdk
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
