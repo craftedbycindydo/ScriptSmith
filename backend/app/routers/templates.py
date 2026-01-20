@@ -1188,10 +1188,19 @@ async def get_user_drafts(
             limit=limit
         )
         
-        # Prepare response with template names
+        if not drafts:
+            return []
+        
+        # Batch fetch ALL template names in ONE query (avoid N+1 problem)
+        template_ids = [draft.template_id for draft in drafts]
+        templates = db.query(Template.id, Template.name).filter(
+            Template.id.in_(template_ids)
+        ).all()
+        template_names_map = {t.id: t.name for t in templates}
+        
+        # Prepare response with template names (no extra DB queries!)
         result = []
         for draft in drafts:
-            template = db.query(Template).filter(Template.id == draft.template_id).first()
             result.append(TemplateDraftResponse(
                 id=draft.id,
                 template_id=draft.template_id,
@@ -1200,7 +1209,7 @@ async def get_user_drafts(
                 is_auto_save=draft.is_auto_save,
                 created_at=draft.created_at,
                 updated_at=draft.updated_at,
-                template_name=template.name if template else None
+                template_name=template_names_map.get(draft.template_id)
             ))
         
         return result

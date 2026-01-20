@@ -245,15 +245,27 @@ class ClassroomService:
                 "roles": []
             }
         
+        # Get all classroom IDs the user is in
+        classroom_ids = [m.classroom.id for m in memberships]
+        
+        # Batch fetch member counts for ALL classrooms in ONE query (avoid N+1 problem)
+        from sqlalchemy import func
+        member_counts_query = db.query(
+            UserClassroom.classroom_id,
+            func.count(UserClassroom.id).label('count')
+        ).filter(
+            UserClassroom.classroom_id.in_(classroom_ids),
+            UserClassroom.is_active == True
+        ).group_by(UserClassroom.classroom_id).all()
+        
+        member_counts_map = {row.classroom_id: row.count for row in member_counts_query}
+        
         classrooms = []
         roles = []
         
         for membership in memberships:
-            # Calculate member count for this classroom
-            member_count = db.query(UserClassroom).filter(
-                UserClassroom.classroom_id == membership.classroom.id,
-                UserClassroom.is_active == True
-            ).count()
+            # Use pre-fetched member count (no extra DB queries!)
+            member_count = member_counts_map.get(membership.classroom.id, 0)
             
             classrooms.append({
                 "id": membership.classroom.id,

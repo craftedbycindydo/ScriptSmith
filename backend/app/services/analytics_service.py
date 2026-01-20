@@ -200,10 +200,18 @@ class AnalyticsService:
             successful = language_stats[lang]["successful"]
             language_stats[lang]["success_rate"] = (successful / total * 100) if total > 0 else 0
         
+        # Batch fetch all students in ONE query (avoid N+1 problem)
+        students_map = {}
+        if student_ids:
+            students = db.query(User.id, User.username, User.full_name, User.email).filter(
+                User.id.in_(student_ids)
+            ).all()
+            students_map = {s.id: s for s in students}
+        
         # Student performance summary
         student_performance = []
         for student_id in student_ids:
-            student = db.query(User).filter(User.id == student_id).first()
+            student = students_map.get(student_id)
             if not student:
                 continue
                 
@@ -398,10 +406,18 @@ class AnalyticsService:
             successful = language_stats[lang]["successful"]
             language_stats[lang]["success_rate"] = (successful / total * 100) if total > 0 else 0
         
+        # Batch fetch all students in ONE query (avoid N+1 problem)
+        students_map = {}
+        if student_ids:
+            students = db.query(User.id, User.username, User.full_name).filter(
+                User.id.in_(student_ids)
+            ).all()
+            students_map = {s.id: s for s in students}
+        
         # Individual student performance
         student_performance = []
         for membership in student_memberships:
-            student = db.query(User).filter(User.id == membership.user_id).first()
+            student = students_map.get(membership.user_id)
             if not student:
                 continue
                 

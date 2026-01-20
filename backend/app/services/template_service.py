@@ -46,16 +46,28 @@ class TemplateService:
         # Enrich exclusions with usernames if provided
         enriched_exclusions = None
         if exclusions:
+            # Batch fetch all user IDs that need username lookup (avoid N+1 problem)
+            user_ids_needing_lookup = [
+                ex['user_id'] for ex in exclusions 
+                if 'username' not in ex or not ex.get('username')
+            ]
+            
+            username_map = {}
+            if user_ids_needing_lookup:
+                users = db.query(User.id, User.username).filter(
+                    User.id.in_(user_ids_needing_lookup)
+                ).all()
+                username_map = {u.id: u.username for u in users}
+            
             enriched_exclusions = []
             for exclusion in exclusions:
                 enriched_exclusion = exclusion.copy()
-                # Ensure username is present for each exclusion
+                # Use pre-fetched username (no extra DB queries!)
                 if 'username' not in enriched_exclusion or not enriched_exclusion['username']:
-                    user = db.query(User).filter(User.id == exclusion['user_id']).first()
-                    if user:
-                        enriched_exclusion['username'] = user.username
-                    else:
-                        enriched_exclusion['username'] = f"User {exclusion['user_id']}"
+                    enriched_exclusion['username'] = username_map.get(
+                        exclusion['user_id'], 
+                        f"User {exclusion['user_id']}"
+                    )
                 enriched_exclusions.append(enriched_exclusion)
         
         template = Template(
@@ -280,17 +292,28 @@ class TemplateService:
         if submission_deadline is not None:
             template.submission_deadline = submission_deadline
         if exclusions is not None:
-            # Enrich exclusions with usernames if not already present
+            # Batch fetch all user IDs that need username lookup (avoid N+1 problem)
+            user_ids_needing_lookup = [
+                ex['user_id'] for ex in exclusions 
+                if 'username' not in ex or not ex.get('username')
+            ]
+            
+            username_map = {}
+            if user_ids_needing_lookup:
+                users = db.query(User.id, User.username).filter(
+                    User.id.in_(user_ids_needing_lookup)
+                ).all()
+                username_map = {u.id: u.username for u in users}
+            
+            # Enrich exclusions with usernames (no extra DB queries!)
             enriched_exclusions = []
             for exclusion in exclusions:
                 enriched_exclusion = exclusion.copy()
-                # Ensure username is present for each exclusion
                 if 'username' not in enriched_exclusion or not enriched_exclusion['username']:
-                    user = db.query(User).filter(User.id == exclusion['user_id']).first()
-                    if user:
-                        enriched_exclusion['username'] = user.username
-                    else:
-                        enriched_exclusion['username'] = f"User {exclusion['user_id']}"
+                    enriched_exclusion['username'] = username_map.get(
+                        exclusion['user_id'], 
+                        f"User {exclusion['user_id']}"
+                    )
                 enriched_exclusions.append(enriched_exclusion)
             template.exclusions = enriched_exclusions
         
