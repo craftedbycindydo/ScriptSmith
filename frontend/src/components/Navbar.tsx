@@ -12,7 +12,6 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { useTheme } from '@/contexts/ThemeContext';
 import { 
-  Code2, 
   Settings, 
   User, 
   LogOut, 
@@ -22,8 +21,9 @@ import {
   Shield,
   Menu,
   X,
-
+  Code2,
 } from 'lucide-react';
+import ScriptingSmithLogo from '@/assets/scriptingsmith-logo.svg';
 
 export default function Navbar() {
   const navigate = useNavigate();
@@ -85,14 +85,17 @@ export default function Navbar() {
       <div className="w-full px-4 sm:px-6">
         <div className="flex h-14 items-center">
           {/* Logo */}
-          <div className="flex items-center space-x-2">
-            <Code2 
-              className="h-6 w-6 text-primary cursor-pointer hover:text-primary/80 transition-colors" 
-              onClick={() => handleNavigation('/')}
+          <div 
+            className="flex items-center space-x-2 cursor-pointer"
+            onClick={() => handleNavigation('/')}
+          >
+            <img 
+              src={ScriptingSmithLogo} 
+              alt="Scripting Smith" 
+              className="h-8 w-8 hover:opacity-80 transition-opacity" 
             />
             <span 
-              className="font-bold cursor-pointer hover:text-primary transition-colors text-sm sm:text-base"
-              onClick={() => handleNavigation('/')}
+              className="font-bold hover:text-primary transition-colors text-sm sm:text-base"
             >
               Scripting Smith
             </span>

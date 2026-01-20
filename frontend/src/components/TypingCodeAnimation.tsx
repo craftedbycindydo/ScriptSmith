@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Code2 } from 'lucide-react';
+import ScriptingSmithLogo from '@/assets/scriptingsmith-logo.svg';
 
 interface TypingCodeAnimationProps {
   className?: string;
@@ -131,7 +131,7 @@ int main() {
       </div>
 
       <div className="relative z-20 flex items-center text-lg font-medium text-white p-6">
-        <Code2 className="mr-2 h-6 w-6 text-blue-400" />
+        <img src={ScriptingSmithLogo} alt="Scripting Smith" className="mr-2 h-8 w-8" />
         Scripting Smith
       </div>
       

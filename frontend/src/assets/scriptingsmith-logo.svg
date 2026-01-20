@@ -1,0 +1,45 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b"/>
+      <stop offset="100%" style="stop-color:#0f172a"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect x="10" y="10" width="180" height="180" rx="24" fill="url(#bgGrad)"/>
+  
+  <!-- Terminal window dots -->
+  <circle cx="35" cy="35" r="6" fill="#ef4444"/>
+  <circle cx="55" cy="35" r="6" fill="#f59e0b"/>
+  <circle cx="75" cy="35" r="6" fill="#22c55e"/>
+  
+  <!-- Code editor lines -->
+  <rect x="30" y="55" width="8" height="100" rx="2" fill="#334155"/>
+  
+  <!-- Line numbers -->
+  <text x="34" y="72" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">1</text>
+  <text x="34" y="92" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">2</text>
+  <text x="34" y="112" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">3</text>
+  <text x="34" y="132" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">4</text>
+  <text x="34" y="152" font-family="monospace" font-size="10" fill="#64748b" text-anchor="middle">5</text>
+  
+  <!-- Code lines -->
+  <rect x="50" y="63" width="45" height="8" rx="2" fill="#818cf8"/>
+  <rect x="100" y="63" width="30" height="8" rx="2" fill="#94a3b8"/>
+  
+  <rect x="55" y="83" width="35" height="8" rx="2" fill="#f472b6"/>
+  <rect x="95" y="83" width="50" height="8" rx="2" fill="#a78bfa"/>
+  
+  <rect x="60" y="103" width="60" height="8" rx="2" fill="#34d399"/>
+  <rect x="125" y="103" width="25" height="8" rx="2" fill="#94a3b8"/>
+  
+  <rect x="55" y="123" width="25" height="8" rx="2" fill="#f472b6"/>
+  <rect x="85" y="123" width="45" height="8" rx="2" fill="#fbbf24"/>
+  
+  <rect x="50" y="143" width="40" height="8" rx="2" fill="#818cf8"/>
+  
+  <!-- Play/Run button -->
+  <circle cx="160" cy="160" r="22" fill="#22c55e"/>
+  <polygon points="153,150 153,170 170,160" fill="white"/>
+</svg>
