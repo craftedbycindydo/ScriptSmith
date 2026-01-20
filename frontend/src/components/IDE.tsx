@@ -743,7 +743,13 @@ export default function IDE() {
   const userIsAdmin = user?.is_admin || false;
 
   // Determine if copy-paste should be disabled
-  const copyPasteDisabled = !adminSettings.copy_paste_enabled && !userIsAdmin;
+  // Logic:
+  // 1. Not authenticated → copy-paste ENABLED (no restrictions for guests)
+  // 2. Authenticated but admin → copy-paste ENABLED (admins always have access)
+  // 3. Authenticated, not admin → use backend setting (checks ALL classrooms)
+  //    - If user has no classrooms → enabled (backend returns true)
+  //    - If ANY classroom has it disabled → disabled
+  const copyPasteDisabled = isAuthenticated && !userIsAdmin && !adminSettings.copy_paste_enabled;
 
 
 

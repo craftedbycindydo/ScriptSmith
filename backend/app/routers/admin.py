@@ -1154,7 +1154,11 @@ async def get_user_admin_settings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get admin settings for the current user's classroom (authenticated users only)"""
+    """Get admin settings for the current user's classrooms (authenticated users only)
+    
+    Logic: If ANY classroom has copy-paste disabled, it should be disabled for the user.
+    This ensures stricter security - professors can disable copy-paste for their class.
+    """
     try:
         # Get user's classroom IDs
         classroom_memberships = db.query(UserClassroom).filter(
@@ -1163,25 +1167,46 @@ async def get_user_admin_settings(
         ).all()
         
         if not classroom_memberships:
-            # Return defaults if user is not in any classroom
+            # Return defaults if user is not in any classroom - copy-paste ENABLED
             return {
-                "copy_paste_enabled": True
+                "copy_paste_enabled": True,
+                "in_classroom": False
             }
         
-        # Use the first classroom's settings (most users are in one classroom)
-        first_classroom_id = classroom_memberships[0].classroom_id
-        settings = AdminSettings.get_or_create_default(db, first_classroom_id)
+        # Check ALL classrooms - if ANY has copy-paste disabled, disable it for user
+        classroom_ids = [m.classroom_id for m in classroom_memberships]
+        
+        # Get settings for all user's classrooms in one query
+        all_settings = db.query(AdminSettings).filter(
+            AdminSettings.classroom_id.in_(classroom_ids)
+        ).all()
+        
+        # Check if ANY classroom has copy-paste disabled
+        copy_paste_enabled = True
+        disabled_classroom_id = None
+        
+        for settings in all_settings:
+            if not settings.copy_paste_enabled:
+                copy_paste_enabled = False
+                disabled_classroom_id = settings.classroom_id
+                break  # Found one disabled, no need to check more
+        
+        # If no settings found for any classroom, create defaults (copy-paste enabled)
+        if not all_settings:
+            copy_paste_enabled = True
         
         return {
-            "copy_paste_enabled": settings.copy_paste_enabled,
-            "classroom_id": first_classroom_id
+            "copy_paste_enabled": copy_paste_enabled,
+            "in_classroom": True,
+            "classroom_id": disabled_classroom_id or classroom_ids[0]
         }
         
     except Exception as e:
         print(f"❌ Error in user admin settings: {str(e)}")
         # Return default values if settings can't be retrieved
         return {
-            "copy_paste_enabled": True
+            "copy_paste_enabled": True,
+            "in_classroom": False
         }
 
 @router.post("/admin/users/{user_id}/activate")
