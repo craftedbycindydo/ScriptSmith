@@ -691,12 +691,10 @@ export default function AdminDashboard() {
     try {
       const refetchPromises: Promise<any>[] = [];
       
-      // Always refetch stats (shown on overview)
-      refetchPromises.push(refetchStats());
-      
-      // Refetch based on active tab
+      // Refetch based on active tab only
       switch (activeTab) {
         case 'overview':
+          refetchPromises.push(refetchStats());
           refetchPromises.push(refetchUsers());
           refetchPromises.push(refetchActivities());
           break;
@@ -709,16 +707,24 @@ export default function AdminDashboard() {
           refetchPromises.push(refetchUsersOptions());
           break;
         case 'templates':
+          refetchPromises.push(refetchTemplatesOptions());
+          break;
         case 'template-submissions':
           refetchPromises.push(refetchTemplatesOptions());
-          if (activeTab === 'template-submissions') {
-            refetchPromises.push(refetchUsersOptions());
-          }
+          refetchPromises.push(refetchUsersOptions());
           break;
         case 'classrooms':
-          // Classroom data is managed via user context refresh
+          // Classroom data is managed via user context, also refetch classroom settings
           await refreshUser();
-          break;
+          // Refetch all classroom settings
+          const settingsRefetchPromises: Promise<any>[] = [];
+          if (classroomSettings1?.refetch) settingsRefetchPromises.push(classroomSettings1.refetch());
+          if (classroomSettings2?.refetch) settingsRefetchPromises.push(classroomSettings2.refetch());
+          if (classroomSettings3?.refetch) settingsRefetchPromises.push(classroomSettings3.refetch());
+          if (classroomSettings4?.refetch) settingsRefetchPromises.push(classroomSettings4.refetch());
+          if (classroomSettings5?.refetch) settingsRefetchPromises.push(classroomSettings5.refetch());
+          await Promise.all(settingsRefetchPromises);
+          return; // Early return since we already awaited
       }
       
       await Promise.all(refetchPromises);
