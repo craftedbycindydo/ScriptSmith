@@ -103,25 +103,27 @@ export default function Navbar() {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex md:items-center md:space-x-6 ml-8">
-            {navigationItems.map((item) => {
-              const IconComponent = item.icon;
-              const isCurrent = isCurrentPath(item.path);
-              
-              return (
-                <button
-                  key={item.path}
-                  onClick={() => handleNavigation(item.path, item.requireAuth)}
-                  className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isCurrent 
-                      ? 'bg-primary/10 text-primary' 
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                  }`}
-                >
-                  <IconComponent className="h-4 w-4" />
-                  <span>{item.name}</span>
-                </button>
-              );
-            })}
+            {navigationItems
+              .filter((item) => !item.requireAuth || isAuthenticated)
+              .map((item) => {
+                const IconComponent = item.icon;
+                const isCurrent = isCurrentPath(item.path);
+                
+                return (
+                  <button
+                    key={item.path}
+                    onClick={() => handleNavigation(item.path, item.requireAuth)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      isCurrent 
+                        ? 'bg-primary/10 text-primary' 
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                    }`}
+                  >
+                    <IconComponent className="h-4 w-4" />
+                    <span>{item.name}</span>
+                  </button>
+                );
+              })}
           </div>
 
           {/* Right side */}
@@ -226,25 +228,27 @@ export default function Navbar() {
         {isMobileMenuOpen && (
           <div className="md:hidden border-t bg-background">
             <div className="px-2 pt-2 pb-3 space-y-1">
-              {navigationItems.map((item) => {
-                const IconComponent = item.icon;
-                const isCurrent = isCurrentPath(item.path);
-                
-                return (
-                  <button
-                    key={item.path}
-                    onClick={() => handleNavigation(item.path, item.requireAuth)}
-                    className={`w-full flex items-center space-x-2 px-3 py-2 rounded-md text-left font-medium transition-colors ${
-                      isCurrent 
-                        ? 'bg-primary/10 text-primary' 
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                    }`}
-                  >
-                    <IconComponent className="h-4 w-4" />
-                    <span>{item.name}</span>
-                  </button>
-                );
-              })}
+              {navigationItems
+                .filter((item) => !item.requireAuth || isAuthenticated)
+                .map((item) => {
+                  const IconComponent = item.icon;
+                  const isCurrent = isCurrentPath(item.path);
+                  
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => handleNavigation(item.path, item.requireAuth)}
+                      className={`w-full flex items-center space-x-2 px-3 py-2 rounded-md text-left font-medium transition-colors ${
+                        isCurrent 
+                          ? 'bg-primary/10 text-primary' 
+                          : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                      }`}
+                    >
+                      <IconComponent className="h-4 w-4" />
+                      <span>{item.name}</span>
+                    </button>
+                  );
+                })}
               
               {/* Mobile Theme Toggle */}
               <div className="pt-2 border-t">
