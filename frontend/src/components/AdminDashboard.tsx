@@ -270,6 +270,9 @@ export default function AdminDashboard() {
   // SMART LAZY LOADING - Critical data loads immediately, heavy data loads on demand
   const [heavyDataLoadTrigger, setHeavyDataLoadTrigger] = useState(false);
   
+  // Refresh button loading state
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
   // Trigger heavy data loading after page is interactive
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -279,12 +282,12 @@ export default function AdminDashboard() {
   }, []);
   
   // React Query hooks - Stats load immediately for instant data, others lazy load
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminStats(
+  const { data: stats, refetch: refetchStats } = useAdminStats(
     activeTab === 'overview' // Stats load immediately when on overview tab
   );
   
   // Only load data when the specific tab is active AND data loading is triggered
-  const { data: adminUsers = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers(
+  const { data: adminUsers = [], refetch: refetchUsers } = useAdminUsers(
     activeTab === 'overview' || activeTab === 'users' // Users load immediately for overview and users tab
   );
   const { data: activities = [], isLoading: activitiesLoading, refetch: refetchActivities } = useAdminActivities(
@@ -688,6 +691,7 @@ export default function AdminDashboard() {
 
   // Refresh data based on the currently active tab
   const loadAllData = async () => {
+    setIsRefreshing(true);
     try {
       const refetchPromises: Promise<any>[] = [];
       
@@ -724,13 +728,26 @@ export default function AdminDashboard() {
           if (classroomSettings4?.refetch) settingsRefetchPromises.push(classroomSettings4.refetch());
           if (classroomSettings5?.refetch) settingsRefetchPromises.push(classroomSettings5.refetch());
           await Promise.all(settingsRefetchPromises);
-          return; // Early return since we already awaited
+          break;
+        case 'analytics':
+          // Analytics component manages its own data, trigger a page-level refresh
+          // by briefly toggling the heavyDataLoadTrigger which will cause child components to reload
+          setHeavyDataLoadTrigger(false);
+          setTimeout(() => setHeavyDataLoadTrigger(true), 50);
+          break;
+        case 'assignments':
+          // Assignments component manages its own data via AssignmentUpload and AssignmentReports
+          // Refresh user context to get latest assignment data
+          await refreshUser();
+          break;
       }
       
       await Promise.all(refetchPromises);
       
     } catch (err: any) {
       console.error('Error refreshing admin data:', err);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -1138,9 +1155,9 @@ export default function AdminDashboard() {
                 <Button 
                   onClick={loadAllData} 
                   variant="default"
-                  disabled={statsLoading || activitiesLoading || usersLoading}
+                  disabled={isRefreshing}
                 >
-                  {(statsLoading || activitiesLoading || usersLoading) ? 'Loading' : 'Refresh'}
+                  {isRefreshing ? 'Loading...' : 'Refresh'}
                 </Button>
               </div>
             </div>
@@ -1183,11 +1200,11 @@ export default function AdminDashboard() {
             onClick={loadAllData} 
             variant="outline" 
             className="shrink-0"
-            disabled={statsLoading || activitiesLoading || usersLoading}
+            disabled={isRefreshing}
           >
-            <RefreshCw className={`w-4 h-4 mr-1 ${(statsLoading || activitiesLoading || usersLoading) ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">
-              {(statsLoading || activitiesLoading || usersLoading) ? 'Loading' : 'Refresh'}
+              {isRefreshing ? 'Loading...' : 'Refresh'}
             </span>
           </Button>
         </div>
