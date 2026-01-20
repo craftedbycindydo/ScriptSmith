@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiService } from '../services/api';
+import { apiService, AUTH_LOGOUT_EVENT } from '../services/api';
 
 export interface User {
   id: number;
@@ -251,3 +251,11 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// Listen for auth logout events from API interceptor
+// This handles the case when token refresh fails and we need to logout the user
+if (typeof window !== 'undefined') {
+  window.addEventListener(AUTH_LOGOUT_EVENT, () => {
+    useAuthStore.getState().logout();
+  });
+}

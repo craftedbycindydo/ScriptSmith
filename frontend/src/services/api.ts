@@ -20,14 +20,7 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    console.error('API Error:', error);
-    return Promise.reject(error);
-  }
-);
+// Note: Error logging moved to the main response interceptor below to avoid duplicate handling
 
 export interface Language {
   id: string;
@@ -1034,13 +1027,26 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for token refresh
+// Custom event for auth failures - allows authStore to listen and logout properly
+export const AUTH_LOGOUT_EVENT = 'auth:logout';
+
+export const dispatchAuthLogout = () => {
+  window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
+};
+
+// Response interceptor for token refresh and error handling
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
     
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Don't try to refresh if:
+    // 1. Not a 401 error
+    // 2. Already retried this request
+    // 3. This IS the refresh token request (prevent infinite loop)
+    const isRefreshRequest = originalRequest?.url?.includes('/auth/refresh');
+    
+    if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshRequest) {
       originalRequest._retry = true;
       
       // Try to refresh token
@@ -1063,10 +1069,20 @@ api.interceptors.response.use(
             return api(originalRequest);
           }
         } catch (refreshError) {
-          // Refresh failed, clear auth data
+          // Refresh failed, clear auth data and dispatch logout event
+          console.error('Token refresh failed:', refreshError);
           localStorage.removeItem('auth-storage');
+          dispatchAuthLogout();
         }
+      } else {
+        // No auth data but got 401, dispatch logout to clear any stale state
+        dispatchAuthLogout();
       }
+    }
+    
+    // Log non-401 errors or 401s that couldn't be handled
+    if (error.response?.status !== 401) {
+      console.error('API Error:', error);
     }
     
     return Promise.reject(error);
