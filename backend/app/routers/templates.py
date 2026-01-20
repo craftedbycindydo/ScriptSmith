@@ -504,6 +504,9 @@ async def get_templates_for_users(
             language=language
         )
         
+        # Batch check submission status for ALL templates in ONE query (much faster!)
+        submission_status_map = TemplateService.batch_check_can_submit(db, templates, current_user.id)
+        
         # Prepare response with creator usernames, classroom info, and submission status
         result = []
         for template in templates:
@@ -512,8 +515,8 @@ async def get_templates_for_users(
             except AttributeError:
                 template.creator_username = "Unknown"
             
-            # Check if user can submit to this template
-            can_submit, deadline_info = TemplateService.can_user_submit(db, template.id, current_user.id)
+            # Use pre-fetched submission status (no extra DB queries!)
+            can_submit, deadline_info = submission_status_map.get(template.id, (True, None))
             template.can_submit = can_submit
             template.deadline_info = deadline_info
             

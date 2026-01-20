@@ -504,13 +504,27 @@ class TemplateService:
         if not template:
             return False, None
         
-        current_time = datetime.now(timezone.utc)
-        
-        # Check if user has already submitted
+        # Check existing submission for this user
         existing_submission = db.query(TemplateSubmission).filter(
             TemplateSubmission.template_id == template_id,
             TemplateSubmission.user_id == user_id
         ).first()
+        
+        return TemplateService._check_can_submit_for_template(
+            template, user_id, existing_submission
+        )
+    
+    @staticmethod
+    def _check_can_submit_for_template(
+        template: Template, 
+        user_id: int, 
+        existing_submission: Optional[TemplateSubmission]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Internal helper to check if user can submit for a template.
+        Used by both single template check and batch checks to avoid duplicate logic.
+        """
+        current_time = datetime.now(timezone.utc)
         
         # Check if user has an exclusion
         user_has_exclusion = False
@@ -569,6 +583,42 @@ class TemplateService:
         
         # No deadline set, always allow submission
         return True, None
+    
+    @staticmethod
+    def batch_check_can_submit(
+        db: Session, 
+        templates: List[Template], 
+        user_id: int
+    ) -> Dict[int, tuple[bool, Optional[str]]]:
+        """
+        Batch check if user can submit for multiple templates.
+        Much more efficient than calling can_user_submit for each template individually.
+        Returns a dict mapping template_id -> (can_submit, deadline_info)
+        """
+        if not templates:
+            return {}
+        
+        template_ids = [t.id for t in templates]
+        
+        # Fetch ALL user submissions for these templates in ONE query
+        user_submissions = db.query(TemplateSubmission).filter(
+            TemplateSubmission.template_id.in_(template_ids),
+            TemplateSubmission.user_id == user_id
+        ).all()
+        
+        # Create a map of template_id -> submission for quick lookup
+        submission_map = {sub.template_id: sub for sub in user_submissions}
+        
+        # Check each template using the cached submission data
+        results = {}
+        for template in templates:
+            existing_submission = submission_map.get(template.id)
+            can_submit, deadline_info = TemplateService._check_can_submit_for_template(
+                template, user_id, existing_submission
+            )
+            results[template.id] = (can_submit, deadline_info)
+        
+        return results
     
     @staticmethod
     def get_user_submission(db: Session, template_id: int, user_id: int) -> Optional[TemplateSubmission]:
