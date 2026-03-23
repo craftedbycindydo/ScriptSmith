@@ -9,6 +9,7 @@ import Settings from './components/Settings';
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResumeBuilder from './pages/ResumeBuilder';
 import './App.css';
 
 function App() {
@@ -30,6 +31,9 @@ function App() {
               {/* Settings route */}
               <Route path="/settings" element={<Settings />} />
               
+              {/* Resume Builder */}
+              <Route path="/resume-builder" element={<ResumeBuilder />} />
+
               {/* Admin routes */}
               <Route path="/admin" element={<AdminDashboard />} />
               

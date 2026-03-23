@@ -183,7 +183,7 @@ async def startup_event():
     try:
         from sqlalchemy import text
         from app.database.base import engine, Base
-        from app.models import User, Template, TemplateDraft, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom
+        from app.models import User, Template, TemplateDraft, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom, Resume
         
         # Create all tables at once using the Base metadata
         print("🔄 Creating database tables...")
@@ -275,7 +275,8 @@ async def load_routers():
         ("assignments", "/api", ["assignments"]),
         ("templates", "/api", ["templates"]),
         ("classroom", "/api", ["classroom"]),
-        ("analytics", "/api", ["analytics"])
+        ("analytics", "/api", ["analytics"]),
+        ("resumes", "/api", ["resumes"])
     ]
     
     loaded_routers = []
@@ -313,6 +314,9 @@ async def load_routers():
             elif router_name == "analytics":
                 from app.routers import analytics
                 app.include_router(analytics.router, prefix=prefix, tags=tags)
+            elif router_name == "resumes":
+                from app.routers import resumes
+                app.include_router(resumes.router, prefix=prefix, tags=tags)
             
             loaded_routers.append(router_name)
             print(f"  ✅ {router_name} router loaded successfully")

@@ -166,6 +166,23 @@ export interface TemplateSubmissionRequest {
   execution_time?: number;
   memory_used?: number;
   error_message?: string;
+  // Behavioral tracking metrics
+  fullscreen_exit_count?: number;
+  total_time_outside_fullscreen?: number;
+  fullscreen_violations?: Array<{timestamp: string; duration: number; returned: boolean}>;
+  focus_loss_count?: number;
+  total_focus_loss_time?: number;
+  focus_events?: Array<{type: 'blur' | 'focus'; timestamp: string; duration?: number}>;
+  code_snapshots?: Array<{timestamp: string; code_length: number; code_hash: string}>;
+  edit_count?: number;
+  paste_count?: number;
+  run_attempt_count?: number;
+  error_count?: number;
+  first_run_success?: boolean;
+  session_start_time?: string;
+  time_to_first_run?: number;
+  time_to_submission?: number;
+  active_coding_time?: number;
 }
 
 export interface TemplateSubmission {
@@ -182,6 +199,27 @@ export interface TemplateSubmission {
   error_message?: string;
   submitted_by_username?: string;
   template_name?: string;
+  // Behavioral tracking (for admin view)
+  is_flagged?: boolean;
+  suspicion_score?: number;
+  flag_reasons?: string[];
+  manual_review_status?: string;
+  fullscreen_exit_count?: number;
+  total_time_outside_fullscreen?: number;
+  fullscreen_violations?: any;
+  focus_loss_count?: number;
+  total_focus_loss_time?: number;
+  focus_events?: any;
+  code_snapshots?: any;
+  edit_count?: number;
+  paste_count?: number;
+  run_attempt_count?: number;
+  error_count?: number;
+  first_run_success?: boolean;
+  session_start_time?: string;
+  time_to_first_run?: number;
+  time_to_submission?: number;
+  active_coding_time?: number;
 }
 
 export interface UserInfo {
@@ -206,6 +244,51 @@ export interface TemplateDraft {
   created_at: string;
   updated_at: string;
   template_name?: string;
+}
+
+// Resume interfaces
+export interface ResumeData {
+  fullName: string;
+  contactFields: Array<{ label: string; value: string }>;
+  education: Array<{ school: string; degree: string; date: string }>;
+  skillCategories: Array<{ label: string; skills: string }>;
+  experience: Array<{
+    company: string;
+    role: string;
+    startDate: string;
+    endDate: string;
+    bullets: string[];
+  }>;
+  projects: Array<{
+    name: string;
+    subtitle: string;
+    link: string;
+    date: string;
+    bullets: string[];
+  }>;
+}
+
+export interface ResumeSaveRequest {
+  title?: string;
+  resume_data: ResumeData;
+  section_order?: string[];
+  section_titles?: Record<string, string>;
+  font_family?: string;
+  font_size?: number;
+  margin?: number;
+}
+
+export interface ResumeResponse {
+  id: number;
+  title: string | null;
+  resume_data: ResumeData;
+  section_order: string[] | null;
+  section_titles: Record<string, string> | null;
+  font_family: string | null;
+  font_size: number | null;
+  margin: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AuthToken {
@@ -1002,6 +1085,31 @@ export const apiService = {
   }): Promise<any> {
     const response = await api.get('/analytics/admin/students', { params });
     return response.data;
+  },
+
+  // Resume endpoints
+  async saveResume(data: ResumeSaveRequest): Promise<ResumeResponse> {
+    const response = await api.post('/resumes/', data);
+    return response.data;
+  },
+
+  async getResumes(): Promise<ResumeResponse[]> {
+    const response = await api.get('/resumes/');
+    return response.data;
+  },
+
+  async getResume(resumeId: number): Promise<ResumeResponse> {
+    const response = await api.get(`/resumes/${resumeId}`);
+    return response.data;
+  },
+
+  async updateResume(resumeId: number, data: ResumeSaveRequest): Promise<ResumeResponse> {
+    const response = await api.put(`/resumes/${resumeId}`, data);
+    return response.data;
+  },
+
+  async deleteResume(resumeId: number): Promise<void> {
+    await api.delete(`/resumes/${resumeId}`);
   },
 };
 

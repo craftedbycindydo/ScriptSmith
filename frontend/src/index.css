@@ -205,6 +205,20 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+/* Resume builder editor: make inputs clearly editable */
+.resume-editor [data-slot="input"],
+.resume-editor [data-slot="textarea"] {
+  background-color: var(--color-background);
+  border-color: var(--color-border);
+  border-width: 1px;
+}
+
+.dark .resume-editor [data-slot="input"],
+.dark .resume-editor [data-slot="textarea"] {
+  background-color: hsl(222.2 84% 8%);
+  border-color: hsl(215 20% 30%);
+}
+
 [class*="remote-cursor-after-"]::after {
   position: absolute;
   top: -6px;

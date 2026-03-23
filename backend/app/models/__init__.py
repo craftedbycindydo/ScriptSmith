@@ -7,5 +7,6 @@ from .assignment import Assignment, StudentSubmission
 from .collaboration import CollaborationSession, CollaborationParticipant
 from .admin_settings import AdminSettings
 from .classroom import Classroom, UserClassroom
+from .resume import Resume
 
-__all__ = ["User", "Template", "TemplateSubmission", "TemplateDraft", "UserTemplate", "CodeSubmission", "Assignment", "StudentSubmission", "CollaborationSession", "CollaborationParticipant", "AdminSettings", "Classroom", "UserClassroom"]
+__all__ = ["User", "Template", "TemplateSubmission", "TemplateDraft", "UserTemplate", "CodeSubmission", "Assignment", "StudentSubmission", "CollaborationSession", "CollaborationParticipant", "AdminSettings", "Classroom", "UserClassroom", "Resume"]

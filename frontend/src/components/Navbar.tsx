@@ -22,6 +22,7 @@ import {
   Menu,
   X,
   Code2,
+  FileText,
 } from 'lucide-react';
 import ScriptingSmithLogo from '@/assets/scriptingsmith-logo.svg';
 
@@ -45,6 +46,7 @@ export default function Navbar() {
 
   const navigationItems = [
     { name: 'IDE', path: '/', icon: Code2 },
+    { name: 'Resume Builder', path: '/resume-builder', icon: FileText },
     { name: 'Settings', path: '/settings', icon: Settings, requireAuth: true },
     ...(isAdmin ? [{ name: 'Admin', path: '/admin', icon: Shield, requireAuth: true }] : []),
   ];
