@@ -355,7 +355,7 @@ export default function ResumeBuilder() {
   // Save/load state
   const { isAuthenticated } = useAuthStore();
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoadingResumes, setIsLoadingResumes] = useState(false);
+  const [, setIsLoadingResumes] = useState(false);
   const [currentResumeId, setCurrentResumeId] = useState<number | null>(null);
   const [savedResumes, setSavedResumes] = useState<ResumeResponse[]>([]);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -480,22 +480,11 @@ export default function ResumeBuilder() {
       if (loaded.margin != null) setMargin(loaded.margin);
       setCurrentResumeId(loaded.id);
       setCurrentResumeTitle(loaded.title || 'Untitled Resume');
-      setShowLoadMenu(false);
     } catch (err) {
       console.error('Failed to load resume:', err);
     }
   };
 
-  const handleDeleteResume = async (resumeId: number) => {
-    try {
-      await apiService.deleteResume(resumeId);
-      if (currentResumeId === resumeId) setCurrentResumeId(null);
-      const resumes = await apiService.getResumes();
-      setSavedResumes(resumes);
-    } catch (err) {
-      console.error('Failed to delete resume:', err);
-    }
-  };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const update = useCallback((path: string, value: any) => {
