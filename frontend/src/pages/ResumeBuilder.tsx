@@ -33,13 +33,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Download,
   Plus,
   Trash2,
   GripVertical,
   FileText,
   Save,
-  FolderOpen,
   Loader2,
 } from 'lucide-react';
 
@@ -351,7 +358,9 @@ export default function ResumeBuilder() {
   const [isLoadingResumes, setIsLoadingResumes] = useState(false);
   const [currentResumeId, setCurrentResumeId] = useState<number | null>(null);
   const [savedResumes, setSavedResumes] = useState<ResumeResponse[]>([]);
-  const [showLoadMenu, setShowLoadMenu] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveDialogMode, setSaveDialogMode] = useState<'new' | 'overwrite'>('new');
+  const [saveDialogName, setSaveDialogName] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -435,28 +444,28 @@ export default function ResumeBuilder() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!isAuthenticated) return;
 
     if (currentResumeId) {
-      // Editing an existing resume — ask overwrite or save as new
-      const choice = window.confirm(
-        `Overwrite "${currentResumeTitle}"?\n\nOK = Overwrite\nCancel = Save as New`
-      );
-      if (choice) {
-        // Overwrite
-        await overwriteExisting(currentResumeId, currentResumeTitle);
-      } else {
-        // Save as new
-        const name = window.prompt('Enter a name for the new resume:', resume.fullName || 'My Resume');
-        if (!name) return;
-        await saveAsNew(name);
-      }
+      // Editing an existing resume — show overwrite dialog
+      setSaveDialogMode('overwrite');
+      setSaveDialogName(currentResumeTitle);
     } else {
-      // No existing resume loaded — prompt for name
-      const name = window.prompt('Enter a name for this resume:', resume.fullName || 'My Resume');
-      if (!name) return;
-      await saveAsNew(name);
+      // New resume — show name input dialog
+      setSaveDialogMode('new');
+      setSaveDialogName(resume.fullName || 'My Resume');
+    }
+    setSaveDialogOpen(true);
+  };
+
+  const handleSaveDialogConfirm = async (mode: 'overwrite' | 'new') => {
+    if (!saveDialogName.trim()) return;
+    setSaveDialogOpen(false);
+    if (mode === 'overwrite' && currentResumeId) {
+      await overwriteExisting(currentResumeId, saveDialogName);
+    } else {
+      await saveAsNew(saveDialogName);
     }
   };
 
@@ -1009,51 +1018,34 @@ export default function ResumeBuilder() {
         <div className="flex items-center gap-2">
           {isAuthenticated && (
             <>
+              {savedResumes.length > 0 && (
+                <Select
+                  value={currentResumeId ? String(currentResumeId) : ''}
+                  onValueChange={(v) => {
+                    if (v) handleLoadResume(Number(v));
+                  }}
+                >
+                  <SelectTrigger size="sm" className="w-[160px] h-8 text-xs">
+                    <SelectValue placeholder="Load resume..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {savedResumes.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>
+                        <div className="flex items-center justify-between w-full gap-2">
+                          <span className="truncate">{r.title || 'Untitled'}</span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {new Date(r.updated_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <Button onClick={handleSave} size="sm" variant="outline" className="whitespace-nowrap" disabled={isSaving}>
                 {isSaving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
                 Save
               </Button>
-              <div className="relative">
-                <Button
-                  onClick={() => setShowLoadMenu(!showLoadMenu)}
-                  size="sm"
-                  variant="outline"
-                  className="whitespace-nowrap"
-                  disabled={isLoadingResumes}
-                >
-                  {isLoadingResumes ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <FolderOpen className="h-4 w-4 mr-1.5" />}
-                  Load
-                </Button>
-                {showLoadMenu && (
-                  <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
-                    {savedResumes.length === 0 ? (
-                      <div className="p-3 text-xs text-muted-foreground text-center">No saved resumes</div>
-                    ) : (
-                      savedResumes.map((r) => (
-                        <div key={r.id} className="flex items-center justify-between p-2 hover:bg-muted cursor-pointer group">
-                          <button
-                            className="flex-1 text-left text-xs truncate pr-2"
-                            onClick={() => handleLoadResume(r.id)}
-                          >
-                            <div className="font-medium">{r.title || 'Untitled Resume'}</div>
-                            <div className="text-muted-foreground text-[10px]">
-                              {new Date(r.updated_at).toLocaleDateString()}
-                            </div>
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 shrink-0 text-destructive opacity-0 group-hover:opacity-100 hover:text-destructive"
-                            onClick={(e) => { e.stopPropagation(); handleDeleteResume(r.id); }}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
             </>
           )}
           <Button onClick={handleExportPDF} size="sm" className="whitespace-nowrap">
@@ -1061,6 +1053,50 @@ export default function ResumeBuilder() {
             Export PDF
           </Button>
         </div>
+
+        {/* Save Dialog */}
+        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {saveDialogMode === 'overwrite' ? 'Save Resume' : 'Save New Resume'}
+              </DialogTitle>
+              <DialogDescription>
+                {saveDialogMode === 'overwrite'
+                  ? `You are editing "${currentResumeTitle}". Overwrite it or save as a new resume.`
+                  : 'Enter a name for your resume.'}
+              </DialogDescription>
+            </DialogHeader>
+            <Input
+              placeholder="Resume name"
+              value={saveDialogName}
+              onChange={(e) => setSaveDialogName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && saveDialogName.trim()) {
+                  handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new');
+                }
+              }}
+              autoFocus
+            />
+            <DialogFooter className="gap-2 sm:gap-0">
+              {saveDialogMode === 'overwrite' && (
+                <Button
+                  variant="outline"
+                  onClick={() => handleSaveDialogConfirm('new')}
+                  disabled={!saveDialogName.trim()}
+                >
+                  Save as New
+                </Button>
+              )}
+              <Button
+                onClick={() => handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new')}
+                disabled={!saveDialogName.trim()}
+              >
+                {saveDialogMode === 'overwrite' ? 'Overwrite' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Mobile tab switcher */}
