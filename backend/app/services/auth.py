@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.user import User
 from app.services.security import SecurityService
+from app.services.email_service import EmailService
 from app.core.config import settings
 import re
 
@@ -199,10 +200,8 @@ class AuthService:
         user.reset_token_expires = reset_expires
         db.commit()
         
-        # TODO: Send email with reset link
-        # In production, you would send an email here
-        print(f"Password reset token for {email}: {reset_token}")
-        
+        EmailService.send_password_reset(user.email, reset_token)
+
         return True
     
     @staticmethod
@@ -233,10 +232,10 @@ class AuthService:
                 detail="Invalid or expired reset token"
             )
         
-        # Update password and clear reset token
         user.hashed_password = SecurityService.hash_password(new_password)
         user.reset_token = None
         user.reset_token_expires = None
+        user.token_version = (user.token_version or 0) + 1
         db.commit()
         
         return True
@@ -294,12 +293,12 @@ class AuthService:
                 detail="New password must be different from current password"
             )
         
-        # Update password
         user.hashed_password = SecurityService.hash_password(new_password)
+        user.token_version = (user.token_version or 0) + 1
         db.commit()
-        
+
         return True
-    
+
     @staticmethod
     def change_username(
         db: Session,
@@ -373,10 +372,8 @@ class AuthService:
         
         # Update user password
         user.hashed_password = SecurityService.hash_password(temp_password)
-        
-        # Set a reset token expiration for security (temp password expires in 24 hours)
         user.reset_token_expires = datetime.utcnow() + timedelta(hours=24)
-        
+        user.token_version = (user.token_version or 0) + 1
         db.commit()
         
         return temp_password
@@ -413,10 +410,10 @@ class AuthService:
                 detail=f"Invalid password: {', '.join(password_errors)}"
             )
         
-        # Update password
         user.hashed_password = SecurityService.hash_password(new_password)
         user.reset_token = None
         user.reset_token_expires = None
+        user.token_version = (user.token_version or 0) + 1
         db.commit()
-        
+
         return True

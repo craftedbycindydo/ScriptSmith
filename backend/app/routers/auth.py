@@ -9,6 +9,7 @@ from app.services.auth import AuthService
 from app.services.admin_service import AdminService
 from app.services.security import SecurityService
 from app.services.zitadel_auth import ZitadelAuth
+from app.services.email_service import EmailService
 from app.services.classroom_service import ClassroomService
 from app.models.user import User
 from app.core.config import settings
@@ -81,6 +82,13 @@ class ChangePasswordRequest(BaseModel):
 class ChangeUsernameRequest(BaseModel):
     new_username: str
 
+class OidcSessionRequest(BaseModel):
+    confirm_link: bool = False
+
+class OidcSessionResponse(BaseModel):
+    status: str
+    email: Optional[str] = None
+
 # Dependency to get current user from token or cookie
 async def get_current_user(
     db: Session = Depends(get_db),
@@ -105,7 +113,9 @@ async def get_current_user(
     try:
         payload = SecurityService.verify_token(auth_token, "access")
         if payload and payload.get("sub"):
-            user = AuthService.get_user_by_email(db, email=payload["sub"])
+            candidate = AuthService.get_user_by_email(db, email=payload["sub"])
+            if candidate and payload.get("tv", 0) == (candidate.token_version or 0):
+                user = candidate
     except Exception:
         user = None
 
@@ -219,6 +229,8 @@ async def register_user(
             full_name=user.full_name
         )
         
+        EmailService.send_verification(db_user.email, db_user.verification_token)
+
         # Check if user email is in admin emails and promote to admin if needed
         if admin_service.is_initial_admin_email(user.email):
             from app.models.user import UserRole
@@ -377,7 +389,8 @@ async def login_user(
         # browser storage. Consumers resolve it from the database instead.
         token_data = {
             "sub": user.email,
-            "user_id": user.id
+            "user_id": user.id,
+            "tv": user.token_version or 0
         }
 
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
@@ -436,7 +449,7 @@ async def refresh_token(
 ):
     """Refresh access token using refresh token"""
     payload = SecurityService.verify_token(request.refresh_token, "refresh")
-    
+
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -451,17 +464,23 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive"
         )
+
+    if payload.get("tv", 0) != (user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has been revoked"
+        )
     
     # Create new tokens
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    token_data = {"sub": user.email, "user_id": user.id, "tv": user.token_version or 0}
+
     access_token = SecurityService.create_access_token(
-        data={"sub": user.email, "user_id": user.id},
+        data=token_data,
         expires_delta=access_token_expires
     )
-    
-    refresh_token = SecurityService.create_refresh_token(
-        data={"sub": user.email, "user_id": user.id}
-    )
+
+    refresh_token = SecurityService.create_refresh_token(data=token_data)
     
     return Token(
         access_token=access_token,
@@ -469,6 +488,70 @@ async def refresh_token(
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60
     )
+
+
+@router.post("/oidc/session", response_model=OidcSessionResponse)
+async def establish_oidc_session(
+    body: OidcSessionRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    if not ZitadelAuth.enabled():
+        raise HTTPException(status_code=404, detail="OIDC is not enabled")
+
+    auth_header = request.headers.get("Authorization") or ""
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    claims = ZitadelAuth.verify(auth_header.split(" ", 1)[1])
+    if not claims or not claims.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    subject = claims["sub"]
+
+    existing = db.query(User).filter(User.zitadel_user_id == subject).first()
+    if existing:
+        return OidcSessionResponse(status="linked", email=existing.email)
+
+    email = AuthService.normalize_email(claims.get("email") or "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Identity provider did not supply an email")
+
+    if not claims.get("email_verified", False):
+        raise HTTPException(status_code=403, detail="Email is not verified by the identity provider")
+
+    by_email = AuthService.get_user_by_email(db, email)
+
+    if by_email and not body.confirm_link:
+        return OidcSessionResponse(status="link_required", email=email)
+
+    if by_email:
+        if not by_email.is_active:
+            raise HTTPException(status_code=403, detail="This account is disabled")
+        by_email.zitadel_user_id = subject
+        db.commit()
+        return OidcSessionResponse(status="linked", email=by_email.email)
+
+    username = AuthService.normalize_email(email).split("@")[0][:30] or "user"
+    candidate = username
+    suffix = 1
+    while AuthService.get_user_by_username(db, candidate):
+        suffix += 1
+        candidate = f"{username[:26]}{suffix}"
+
+    new_user = User(
+        email=email,
+        username=candidate,
+        full_name=claims.get("name"),
+        hashed_password=SecurityService.hash_password(SecurityService.generate_reset_token()),
+        is_active=True,
+        is_verified=True,
+        zitadel_user_id=subject,
+    )
+    db.add(new_user)
+    db.commit()
+
+    return OidcSessionResponse(status="created", email=new_user.email)
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(

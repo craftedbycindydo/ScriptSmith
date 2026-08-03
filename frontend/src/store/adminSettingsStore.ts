@@ -63,20 +63,13 @@ export const useAdminSettingsStore = create<AdminSettingsState>()(
         } catch (error: any) {
           console.error('Failed to load admin settings:', error);
           
-          // If user-specific call failed for authenticated user, try public endpoint as fallback
           if (isAuthenticated && error.response?.status === 401) {
-            try {
-              const fallbackSettings = await apiService.getPublicAdminSettings();
-              set({
-                settings: {
-                  copy_paste_enabled: fallbackSettings.copy_paste_enabled,
-                },
-                isLoading: false,
-              });
-              return;
-            } catch (fallbackError) {
-              // Continue to error handling below
-            }
+            set({
+              settings: { copy_paste_enabled: false },
+              isLoading: false,
+              error: 'Your session has expired. Sign in again.',
+            });
+            return;
           }
           
           set({

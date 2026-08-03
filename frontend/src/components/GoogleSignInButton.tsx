@@ -3,12 +3,6 @@ import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { beginLogin, isOidcConfigured } from '@/lib/oidc';
 
-/**
- * Starts the Zitadel login. Zitadel presents Google as a provider, so this is
- * the entry point for social sign-in as well as for a Zitadel-hosted password
- * login. Renders nothing when OIDC is not configured, so environments without
- * Zitadel keep the existing form-only page.
- */
 export default function GoogleSignInButton({ label = 'Continue with Google' }: { label?: string }) {
   const [redirecting, setRedirecting] = useState(false);
 

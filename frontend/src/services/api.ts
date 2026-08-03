@@ -383,6 +383,15 @@ export const apiService = {
     });
   },
 
+  async establishOidcSession(confirmLink: boolean = false): Promise<{ status: string; email?: string }> {
+    const response = await api.post('/auth/oidc/session', { confirm_link: confirmLink });
+    return response.data;
+  },
+
+  async verifyEmail(token: string): Promise<void> {
+    await api.post('/auth/verify-email', { token });
+  },
+
   async logout(): Promise<void> {
     await api.post('/auth/logout');
   },

@@ -1,11 +1,3 @@
-/**
- * Authorization Code + PKCE against Zitadel.
- *
- * No client secret: this is a public browser client, so PKCE is what protects
- * the code exchange. The verifier lives in sessionStorage for the duration of
- * the redirect only.
- */
-
 const ISSUER = import.meta.env.VITE_ZITADEL_ISSUER ?? '';
 const CLIENT_ID = import.meta.env.VITE_ZITADEL_CLIENT_ID ?? '';
 const REDIRECT_URI = `${window.location.origin}/auth/callback`;
@@ -36,7 +28,6 @@ async function challengeFor(verifier: string): Promise<string> {
   return base64UrlEncode(digest);
 }
 
-/** Send the browser to Zitadel. Returns only if OIDC is not configured. */
 export async function beginLogin(returnTo: string = '/'): Promise<void> {
   if (!isOidcConfigured()) return;
 
@@ -67,7 +58,6 @@ export interface OidcTokens {
   expires_in: number;
 }
 
-/** Refresh an OIDC session. Zitadel refresh tokens must go to Zitadel, not to our backend. */
 export async function refreshTokens(refreshToken: string): Promise<OidcTokens> {
   const res = await fetch(`${ISSUER}/oauth/v2/token`, {
     method: 'POST',
@@ -82,10 +72,6 @@ export async function refreshTokens(refreshToken: string): Promise<OidcTokens> {
   return res.json();
 }
 
-/**
- * End the session at Zitadel too. Without this, clearing local state leaves the
- * provider session alive and the next sign-in silently re-authenticates.
- */
 export function endSessionUrl(idToken?: string): string {
   const params = new URLSearchParams({
     post_logout_redirect_uri: `${window.location.origin}/`,
@@ -94,7 +80,6 @@ export function endSessionUrl(idToken?: string): string {
   return `${ISSUER}/oidc/v1/end_session?${params}`;
 }
 
-/** Exchange the returned code for tokens. Throws on state mismatch or error. */
 export async function completeLogin(search: string): Promise<{ tokens: OidcTokens; returnTo: string }> {
   const params = new URLSearchParams(search);
 

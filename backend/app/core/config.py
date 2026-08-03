@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     zitadel_issuer: str = ""
     zitadel_client_id: str = ""
 
+    # Base URL used to build links in outgoing emails.
+    frontend_url: str = "https://www.scriptingsmith.com"
+
     # Admin settings - REQUIRED FROM ENVIRONMENT
     admin_emails: Union[str, List[str]]
     
