@@ -35,6 +35,21 @@ class ZitadelAuth:
         return cls._jwks
 
     @classmethod
+    def userinfo(cls, token: str) -> Optional[Dict[str, Any]]:
+        if not cls.enabled():
+            return None
+        try:
+            resp = httpx.get(
+                f"{cls._issuer()}/oidc/v1/userinfo",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=8.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    @classmethod
     def verify(cls, token: str) -> Optional[Dict[str, Any]]:
         if not cls.enabled():
             return None
