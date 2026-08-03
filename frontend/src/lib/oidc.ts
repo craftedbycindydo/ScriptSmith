@@ -28,7 +28,7 @@ async function challengeFor(verifier: string): Promise<string> {
   return base64UrlEncode(digest);
 }
 
-export async function beginLogin(returnTo: string = '/'): Promise<void> {
+export async function beginLogin(returnTo: string = '/', prompt: string = 'select_account'): Promise<void> {
   if (!isOidcConfigured()) return;
 
   const verifier = randomString();
@@ -45,6 +45,7 @@ export async function beginLogin(returnTo: string = '/'): Promise<void> {
     code_challenge: await challengeFor(verifier),
     code_challenge_method: 'S256',
     state,
+    prompt,
   });
 
   window.location.assign(`${ISSUER}/oauth/v2/authorize?${params}`);
