@@ -131,3 +131,11 @@ venv/
 **/venv/
 temp_venv*/
 **/temp_venv*/
+
+# Production database credentials - never commit
+database.env
+*.env
+!.env.example
+
+# Playwright MCP scratch output
+.playwright-mcp/
