@@ -503,11 +503,14 @@ async def establish_oidc_session(
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
-    claims = ZitadelAuth.verify(auth_header.split(" ", 1)[1])
+    presented = auth_header.split(" ", 1)[1]
+    claims = ZitadelAuth.verify(presented)
     if not claims or not claims.get("sub"):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     subject = claims["sub"]
+    profile = ZitadelAuth.userinfo(presented) or {}
+    claims = {**claims, **profile}
 
     existing = db.query(User).filter(User.zitadel_user_id == subject).first()
     if existing:
