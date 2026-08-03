@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiService } from '@/services/api';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,12 +21,13 @@ export default function ForgotPasswordPage() {
     }
 
     setIsLoading(true);
-    
-    // TODO: Implement actual forgot password API call
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-    
-    setIsLoading(false);
-    setIsSubmitted(true);
+
+    try {
+      await apiService.forgotPassword(email.trim().toLowerCase());
+    } finally {
+      setIsLoading(false);
+      setIsSubmitted(true);
+    }
   };
 
   if (isSubmitted) {

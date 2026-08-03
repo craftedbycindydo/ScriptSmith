@@ -383,6 +383,10 @@ export const apiService = {
     });
   },
 
+  async verifyEmail(token: string): Promise<void> {
+    await api.post('/auth/verify-email', { token });
+  },
+
   async logout(): Promise<void> {
     await api.post('/auth/logout');
   },

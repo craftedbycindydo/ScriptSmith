@@ -9,6 +9,7 @@ from app.services.auth import AuthService
 from app.services.admin_service import AdminService
 from app.services.security import SecurityService
 from app.services.zitadel_auth import ZitadelAuth
+from app.services.email_service import EmailService
 from app.services.classroom_service import ClassroomService
 from app.models.user import User
 from app.core.config import settings
@@ -105,7 +106,9 @@ async def get_current_user(
     try:
         payload = SecurityService.verify_token(auth_token, "access")
         if payload and payload.get("sub"):
-            user = AuthService.get_user_by_email(db, email=payload["sub"])
+            candidate = AuthService.get_user_by_email(db, email=payload["sub"])
+            if candidate and payload.get("tv", 0) == (candidate.token_version or 0):
+                user = candidate
     except Exception:
         user = None
 
@@ -219,6 +222,8 @@ async def register_user(
             full_name=user.full_name
         )
         
+        EmailService.send_verification(db_user.email, db_user.verification_token)
+
         # Check if user email is in admin emails and promote to admin if needed
         if admin_service.is_initial_admin_email(user.email):
             from app.models.user import UserRole
@@ -377,7 +382,8 @@ async def login_user(
         # browser storage. Consumers resolve it from the database instead.
         token_data = {
             "sub": user.email,
-            "user_id": user.id
+            "user_id": user.id,
+            "tv": user.token_version or 0
         }
 
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
@@ -436,7 +442,7 @@ async def refresh_token(
 ):
     """Refresh access token using refresh token"""
     payload = SecurityService.verify_token(request.refresh_token, "refresh")
-    
+
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -451,17 +457,23 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive"
         )
+
+    if payload.get("tv", 0) != (user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has been revoked"
+        )
     
     # Create new tokens
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    token_data = {"sub": user.email, "user_id": user.id, "tv": user.token_version or 0}
+
     access_token = SecurityService.create_access_token(
-        data={"sub": user.email, "user_id": user.id},
+        data=token_data,
         expires_delta=access_token_expires
     )
-    
-    refresh_token = SecurityService.create_refresh_token(
-        data={"sub": user.email, "user_id": user.id}
-    )
+
+    refresh_token = SecurityService.create_refresh_token(data=token_data)
     
     return Token(
         access_token=access_token,

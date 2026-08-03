@@ -5,7 +5,6 @@ import { Loader2 } from 'lucide-react';
 import { completeLogin } from '@/lib/oidc';
 import { useAuthStore } from '@/store/authStore';
 
-/** Lands here after Zitadel redirects back with ?code=... */
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
   const adoptOidcSession = useAuthStore((s) => s.adoptOidcSession);
@@ -13,7 +12,6 @@ export default function AuthCallbackPage() {
   const ran = useRef(false);
 
   useEffect(() => {
-    // Codes are single-use; StrictMode double-invokes effects in dev.
     if (ran.current) return;
     ran.current = true;
 

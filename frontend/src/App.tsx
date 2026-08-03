@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { QueryProvider } from './providers/QueryProvider';
@@ -6,6 +6,7 @@ import Layout from './components/Layout';
 import IDE from './components/IDE';
 import LoginPage from './pages/LoginPage';
 import RequireAdmin from './components/RequireAdmin';
+import { useAuthStore } from './store/authStore';
 import './App.css';
 
 // Split the heavy, rarely-entered routes out of the initial bundle
@@ -16,6 +17,8 @@ const SignUpPage = lazy(() => import('./pages/SignUpPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResumeBuilder = lazy(() => import('./pages/ResumeBuilder'));
 const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 
 function RouteFallback() {
   return (
@@ -26,6 +29,12 @@ function RouteFallback() {
 }
 
 function App() {
+  const validateSession = useAuthStore((s) => s.validateSession);
+
+  useEffect(() => {
+    validateSession();
+  }, [validateSession]);
+
   return (
     <QueryProvider>
       <ThemeProvider>
@@ -39,6 +48,8 @@ function App() {
                 <Route path="/signup" element={<SignUpPage />} />
                 <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
+                <Route path="/verify-email" element={<VerifyEmailPage />} />
 
                 {/* Collaboration routes */}
                 <Route path="/collab/:shareId" element={<CollaborativeIDE />} />

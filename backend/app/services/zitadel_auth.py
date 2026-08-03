@@ -1,11 +1,3 @@
-"""
-Validation of Zitadel-issued access tokens.
-
-Runs alongside the legacy SecurityService tokens rather than replacing them, so
-existing sessions keep working while users migrate. Once every client is issuing
-Zitadel tokens the legacy branch in get_current_user can be deleted.
-"""
-
 import time
 from typing import Any, Dict, Optional
 
@@ -39,13 +31,11 @@ class ZitadelAuth:
             cls._jwks = resp.json()
             cls._jwks_fetched_at = now
         except Exception:
-            # Keep serving the cached copy if the refresh fails
             pass
         return cls._jwks
 
     @classmethod
     def verify(cls, token: str) -> Optional[Dict[str, Any]]:
-        """Return the token claims, or None if this is not a valid Zitadel token."""
         if not cls.enabled():
             return None
 

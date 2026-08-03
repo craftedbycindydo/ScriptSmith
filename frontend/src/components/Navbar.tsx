@@ -52,10 +52,13 @@ export default function Navbar() {
   ];
 
   const handleLogout = () => {
+    const wasOidc = useAuthStore.getState().authMethod === 'oidc';
     logout();
-    setIsAdmin(false); // Reset admin status immediately on logout
-    navigate('/');
+    setIsAdmin(false);
     setIsMobileMenuOpen(false);
+    if (!wasOidc) {
+      navigate('/');
+    }
   };
 
   const handleNavigation = (path: string, requireAuth?: boolean) => {

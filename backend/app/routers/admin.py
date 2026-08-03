@@ -1946,10 +1946,9 @@ async def admin_force_logout_user(
                 detail="User not found"
             )
 
-        # In a more sophisticated system, you would invalidate all JWT tokens for this user
-        # For now, we'll just log the action and return success
-        # TODO: Implement JWT token blacklisting or similar mechanism
-        
+        target_user.token_version = (target_user.token_version or 0) + 1
+        db.commit()
+
         security_logger.info(
             f"Admin {admin_user.id} ({admin_user.username}) forced logout for user {user_id} ({target_user.username})"
         )
