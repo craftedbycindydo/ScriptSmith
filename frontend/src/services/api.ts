@@ -1,5 +1,8 @@
 import axios from 'axios';
 import { config } from '../config/env';
+// Circular by design: authStore imports apiService. Safe because both are only
+// dereferenced inside functions at runtime, never at module evaluation.
+import { useAuthStore } from '../store/authStore';
 
 const api = axios.create({
   baseURL: config.apiBaseUrl,
@@ -8,19 +11,6 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
-
-// Request interceptor to add any auth tokens in the future
-api.interceptors.request.use(
-  (config) => {
-    // Add auth token here if needed
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Note: Error logging moved to the main response interceptor below to avoid duplicate handling
 
 export interface Language {
   id: string;
@@ -255,7 +245,8 @@ export interface ResumeResponse {
 
 export interface AuthToken {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
+  id_token?: string;
   token_type: string;
   expires_in: number;
 }
@@ -1075,89 +1066,54 @@ export const apiService = {
   },
 };
 
-// Axios interceptor to add auth token
+// The auth store is the single source of truth for tokens. Imported for its
+// getState()/actions only - never read or written through localStorage here,
+// which would desync zustand's in-memory copy from its persisted one.
 api.interceptors.request.use(
   (config) => {
-    // Get token from auth store
-    const authData = localStorage.getItem('auth-storage');
-    if (authData) {
-      try {
-        const { state } = JSON.parse(authData);
-        if (state?.token?.access_token) {
-          config.headers.Authorization = `Bearer ${state.token.access_token}`;
-        }
-      } catch (error) {
-        console.error('Error parsing auth data:', error);
-      }
+    const accessToken = useAuthStore.getState().token?.access_token;
+    if (accessToken) {
+      config.headers.Authorization = `Bearer ${accessToken}`;
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Custom event for auth failures - allows authStore to listen and logout properly
-export const AUTH_LOGOUT_EVENT = 'auth:logout';
-
-export const dispatchAuthLogout = () => {
-  window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
-};
-
-// Emitted after a silent token refresh so the auth store can adopt the new token
-export const AUTH_TOKEN_REFRESHED_EVENT = 'auth:token-refreshed';
-
-export const dispatchTokenRefreshed = (token: AuthToken) => {
-  window.dispatchEvent(new CustomEvent(AUTH_TOKEN_REFRESHED_EVENT, { detail: token }));
-};
-
-// Response interceptor for token refresh and error handling
+// Response interceptor: refresh once on 401, then retry the original request.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    
-    // Don't try to refresh if:
-    // 1. Not a 401 error
-    // 2. Already retried this request
-    // 3. This IS the refresh token request (prevent infinite loop)
+
+    // Never recurse through the refresh call itself.
     const isRefreshRequest = originalRequest?.url?.includes('/auth/refresh');
-    
+
     if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshRequest) {
       originalRequest._retry = true;
-      
-      // Try to refresh token
-      const authData = localStorage.getItem('auth-storage');
-      if (authData) {
-        try {
-          const { state } = JSON.parse(authData);
-          if (state?.token?.refresh_token) {
-            const newToken = await apiService.refreshToken(state.token.refresh_token);
 
-            // Let the auth store own the write, so persisted and in-memory state stay in sync
-            dispatchTokenRefreshed(newToken);
+      const { token, refreshToken, logout } = useAuthStore.getState();
 
-            // Retry original request with new token
-            originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
+      if (token?.refresh_token) {
+        // The store decides whether to refresh against this backend or Zitadel.
+        const refreshed = await refreshToken();
+        if (refreshed) {
+          const newAccess = useAuthStore.getState().token?.access_token;
+          if (newAccess) {
+            originalRequest.headers.Authorization = `Bearer ${newAccess}`;
             return api(originalRequest);
           }
-        } catch (refreshError) {
-          // Refresh failed, clear auth data and dispatch logout event
-          console.error('Token refresh failed:', refreshError);
-          localStorage.removeItem('auth-storage');
-          dispatchAuthLogout();
         }
       } else {
-        // No auth data but got 401, dispatch logout to clear any stale state
-        dispatchAuthLogout();
+        // 401 with nothing to refresh - drop the stale session.
+        logout();
       }
     }
-    
-    // Log non-401 errors or 401s that couldn't be handled
+
     if (error.response?.status !== 401) {
       console.error('API Error:', error);
     }
-    
+
     return Promise.reject(error);
   }
 );

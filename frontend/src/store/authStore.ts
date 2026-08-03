@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiService, AUTH_LOGOUT_EVENT, AUTH_TOKEN_REFRESHED_EVENT } from '../services/api';
+import { apiService } from '../services/api';
+import { endSessionUrl, refreshTokens as refreshOidcTokens } from '../lib/oidc';
 
 export interface User {
   id: number;
@@ -43,13 +44,19 @@ export interface AuthToken {
   access_token: string;
   // Optional: an OIDC provider only returns one when offline_access is granted.
   refresh_token?: string;
+  // Only present for OIDC sessions; required as id_token_hint on logout.
+  id_token?: string;
   token_type: string;
   expires_in: number;
 }
 
+/** Which issuer minted the current token - decides where refresh and logout go. */
+export type AuthMethod = 'password' | 'oidc';
+
 interface AuthState {
   user: User | null;
   token: AuthToken | null;
+  authMethod: AuthMethod | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
@@ -72,6 +79,7 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
+      authMethod: null,
       isAuthenticated: false,
       isLoading: false,
       error: null,
@@ -87,7 +95,7 @@ export const useAuthStore = create<AuthState>()(
           const tokenResponse = await apiService.login(formData);
           
           // Set token
-          set({ token: tokenResponse });
+          set({ token: tokenResponse, authMethod: 'password' });
           
           // Get user info
           const userResponse = await apiService.getCurrentUser();
@@ -159,24 +167,37 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
+        const { token, authMethod } = get();
+
         set({
           user: null,
           token: null,
+          authMethod: null,
           isAuthenticated: false,
           error: null
         });
+
+        // Clearing local state alone would leave the Zitadel session alive, so
+        // the next sign-in would silently re-authenticate without a prompt.
+        if (authMethod === 'oidc') {
+          window.location.assign(endSessionUrl(token?.id_token));
+        }
       },
 
       refreshToken: async () => {
-        const { token } = get();
+        const { token, authMethod } = get();
         if (!token?.refresh_token) return false;
-        
+
         try {
-          const newToken = await apiService.refreshToken(token.refresh_token);
-          set({ token: newToken });
+          // A Zitadel refresh token is only valid at Zitadel; the backend's
+          // /auth/refresh would reject it.
+          const newToken = authMethod === 'oidc'
+            ? await refreshOidcTokens(token.refresh_token)
+            : await apiService.refreshToken(token.refresh_token);
+
+          set({ token: { ...token, ...newToken } });
           return true;
         } catch (error) {
-          // If refresh fails, logout
           get().logout();
           return false;
         }
@@ -186,13 +207,13 @@ export const useAuthStore = create<AuthState>()(
       // accepts them alongside its own, resolving the user by zitadel_user_id,
       // so from here on everything behaves exactly like a password login.
       adoptOidcSession: async (tokens: AuthToken) => {
-        set({ token: tokens, isLoading: true, error: null });
+        set({ token: tokens, authMethod: 'oidc', isLoading: true, error: null });
         try {
           const user = await apiService.getCurrentUser();
           set({ user, isAuthenticated: true, isLoading: false, error: null });
           return true;
         } catch (error: any) {
-          set({ token: null, user: null, isAuthenticated: false, isLoading: false });
+          set({ token: null, authMethod: null, user: null, isAuthenticated: false, isLoading: false });
           return false;
         }
       },
@@ -260,28 +281,12 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         token: state.token,
+        authMethod: state.authMethod,
         user: state.user,
         isAuthenticated: state.isAuthenticated
       })
     }
   )
 );
-
-// Listen for auth logout events from API interceptor
-// This handles the case when token refresh fails and we need to logout the user
-if (typeof window !== 'undefined') {
-  window.addEventListener(AUTH_LOGOUT_EVENT, () => {
-    useAuthStore.getState().logout();
-  });
-
-  // The response interceptor refreshes tokens outside React; adopt the new one here
-  // so the in-memory store and the persisted copy never diverge.
-  window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, (event) => {
-    const token = (event as CustomEvent<AuthToken>).detail;
-    if (token?.access_token) {
-      useAuthStore.setState({ token });
-    }
-  });
-}

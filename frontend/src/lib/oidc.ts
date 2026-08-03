@@ -62,8 +62,36 @@ export async function beginLogin(returnTo: string = '/'): Promise<void> {
 export interface OidcTokens {
   access_token: string;
   refresh_token?: string;
+  id_token?: string;
   token_type: string;
   expires_in: number;
+}
+
+/** Refresh an OIDC session. Zitadel refresh tokens must go to Zitadel, not to our backend. */
+export async function refreshTokens(refreshToken: string): Promise<OidcTokens> {
+  const res = await fetch(`${ISSUER}/oauth/v2/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      refresh_token: refreshToken,
+    }),
+  });
+  if (!res.ok) throw new Error(`Refresh failed (${res.status})`);
+  return res.json();
+}
+
+/**
+ * End the session at Zitadel too. Without this, clearing local state leaves the
+ * provider session alive and the next sign-in silently re-authenticates.
+ */
+export function endSessionUrl(idToken?: string): string {
+  const params = new URLSearchParams({
+    post_logout_redirect_uri: `${window.location.origin}/`,
+  });
+  if (idToken) params.set('id_token_hint', idToken);
+  return `${ISSUER}/oidc/v1/end_session?${params}`;
 }
 
 /** Exchange the returned code for tokens. Throws on state mismatch or error. */
