@@ -24,6 +24,7 @@ class User(Base):
     is_superuser = Column(Boolean, default=False)  # Keep for backward compatibility
     role = Column(SQLEnum(UserRole, values_callable=lambda obj: [e.value for e in obj]), default=UserRole.USER, nullable=False)
     token_version = Column(Integer, default=0, nullable=False)
+    zitadel_user_id = Column(String(64), unique=True, index=True, nullable=True)
     
     # Password reset fields
     reset_token = Column(String(255), nullable=True)

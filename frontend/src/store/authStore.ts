@@ -69,7 +69,7 @@ interface AuthState {
   logout: (options?: { endProviderSession?: boolean }) => void;
   validateSession: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
-  adoptOidcSession: (tokens: AuthToken) => Promise<boolean>;
+  adoptOidcSession: (tokens: AuthToken, confirmLink?: boolean) => Promise<'ok' | 'link_required' | 'failed'>;
   clearError: () => void;
   forgotPassword: (email: string) => Promise<boolean>;
   resetPassword: (token: string, newPassword: string) => Promise<boolean>;
@@ -214,15 +214,27 @@ export const useAuthStore = create<AuthState>()(
       // Adopt tokens obtained from Zitadel via the OIDC redirect. The backend
       // accepts them alongside its own, resolving the user by zitadel_user_id,
       // so from here on everything behaves exactly like a password login.
-      adoptOidcSession: async (tokens: AuthToken) => {
+      adoptOidcSession: async (tokens: AuthToken, confirmLink = false) => {
         set({ token: tokens, authMethod: 'oidc', isLoading: true, error: null });
         try {
+          const result = await apiService.establishOidcSession(confirmLink);
+          if (result.status === 'link_required') {
+            set({ isLoading: false });
+            return 'link_required';
+          }
           const user = await apiService.getCurrentUser();
           set({ user, isAuthenticated: true, isLoading: false, error: null });
-          return true;
+          return 'ok';
         } catch (error: any) {
-          set({ token: null, authMethod: null, user: null, isAuthenticated: false, isLoading: false });
-          return false;
+          set({
+            token: null,
+            authMethod: null,
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: error?.response?.data?.detail || 'Sign-in failed',
+          });
+          return 'failed';
         }
       },
 

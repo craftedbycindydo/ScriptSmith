@@ -82,6 +82,13 @@ class ChangePasswordRequest(BaseModel):
 class ChangeUsernameRequest(BaseModel):
     new_username: str
 
+class OidcSessionRequest(BaseModel):
+    confirm_link: bool = False
+
+class OidcSessionResponse(BaseModel):
+    status: str
+    email: Optional[str] = None
+
 # Dependency to get current user from token or cookie
 async def get_current_user(
     db: Session = Depends(get_db),
@@ -481,6 +488,70 @@ async def refresh_token(
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60
     )
+
+
+@router.post("/oidc/session", response_model=OidcSessionResponse)
+async def establish_oidc_session(
+    body: OidcSessionRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    if not ZitadelAuth.enabled():
+        raise HTTPException(status_code=404, detail="OIDC is not enabled")
+
+    auth_header = request.headers.get("Authorization") or ""
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    claims = ZitadelAuth.verify(auth_header.split(" ", 1)[1])
+    if not claims or not claims.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    subject = claims["sub"]
+
+    existing = db.query(User).filter(User.zitadel_user_id == subject).first()
+    if existing:
+        return OidcSessionResponse(status="linked", email=existing.email)
+
+    email = AuthService.normalize_email(claims.get("email") or "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Identity provider did not supply an email")
+
+    if not claims.get("email_verified", False):
+        raise HTTPException(status_code=403, detail="Email is not verified by the identity provider")
+
+    by_email = AuthService.get_user_by_email(db, email)
+
+    if by_email and not body.confirm_link:
+        return OidcSessionResponse(status="link_required", email=email)
+
+    if by_email:
+        if not by_email.is_active:
+            raise HTTPException(status_code=403, detail="This account is disabled")
+        by_email.zitadel_user_id = subject
+        db.commit()
+        return OidcSessionResponse(status="linked", email=by_email.email)
+
+    username = AuthService.normalize_email(email).split("@")[0][:30] or "user"
+    candidate = username
+    suffix = 1
+    while AuthService.get_user_by_username(db, candidate):
+        suffix += 1
+        candidate = f"{username[:26]}{suffix}"
+
+    new_user = User(
+        email=email,
+        username=candidate,
+        full_name=claims.get("name"),
+        hashed_password=SecurityService.hash_password(SecurityService.generate_reset_token()),
+        is_active=True,
+        is_verified=True,
+        zitadel_user_id=subject,
+    )
+    db.add(new_user)
+    db.commit()
+
+    return OidcSessionResponse(status="created", email=new_user.email)
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
