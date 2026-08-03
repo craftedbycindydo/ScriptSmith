@@ -166,23 +166,6 @@ export interface TemplateSubmissionRequest {
   execution_time?: number;
   memory_used?: number;
   error_message?: string;
-  // Behavioral tracking metrics
-  fullscreen_exit_count?: number;
-  total_time_outside_fullscreen?: number;
-  fullscreen_violations?: Array<{timestamp: string; duration: number; returned: boolean}>;
-  focus_loss_count?: number;
-  total_focus_loss_time?: number;
-  focus_events?: Array<{type: 'blur' | 'focus'; timestamp: string; duration?: number}>;
-  code_snapshots?: Array<{timestamp: string; code_length: number; code_hash: string}>;
-  edit_count?: number;
-  paste_count?: number;
-  run_attempt_count?: number;
-  error_count?: number;
-  first_run_success?: boolean;
-  session_start_time?: string;
-  time_to_first_run?: number;
-  time_to_submission?: number;
-  active_coding_time?: number;
 }
 
 export interface TemplateSubmission {
@@ -199,27 +182,6 @@ export interface TemplateSubmission {
   error_message?: string;
   submitted_by_username?: string;
   template_name?: string;
-  // Behavioral tracking (for admin view)
-  is_flagged?: boolean;
-  suspicion_score?: number;
-  flag_reasons?: string[];
-  manual_review_status?: string;
-  fullscreen_exit_count?: number;
-  total_time_outside_fullscreen?: number;
-  fullscreen_violations?: any;
-  focus_loss_count?: number;
-  total_focus_loss_time?: number;
-  focus_events?: any;
-  code_snapshots?: any;
-  edit_count?: number;
-  paste_count?: number;
-  run_attempt_count?: number;
-  error_count?: number;
-  first_run_success?: boolean;
-  session_start_time?: string;
-  time_to_first_run?: number;
-  time_to_submission?: number;
-  active_coding_time?: number;
 }
 
 export interface UserInfo {
@@ -1142,6 +1104,13 @@ export const dispatchAuthLogout = () => {
   window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
 };
 
+// Emitted after a silent token refresh so the auth store can adopt the new token
+export const AUTH_TOKEN_REFRESHED_EVENT = 'auth:token-refreshed';
+
+export const dispatchTokenRefreshed = (token: AuthToken) => {
+  window.dispatchEvent(new CustomEvent(AUTH_TOKEN_REFRESHED_EVENT, { detail: token }));
+};
+
 // Response interceptor for token refresh and error handling
 api.interceptors.response.use(
   (response) => response,
@@ -1164,14 +1133,10 @@ api.interceptors.response.use(
           const { state } = JSON.parse(authData);
           if (state?.token?.refresh_token) {
             const newToken = await apiService.refreshToken(state.token.refresh_token);
-            
-            // Update stored token
-            const updatedState = {
-              ...state,
-              token: newToken
-            };
-            localStorage.setItem('auth-storage', JSON.stringify({ state: updatedState }));
-            
+
+            // Let the auth store own the write, so persisted and in-memory state stay in sync
+            dispatchTokenRefreshed(newToken);
+
             // Retry original request with new token
             originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
             return api(originalRequest);

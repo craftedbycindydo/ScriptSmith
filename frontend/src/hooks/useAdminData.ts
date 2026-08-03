@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiService } from '@/services/api';
 
 // Query keys for consistent caching
@@ -31,15 +31,23 @@ export function useAdminStats(enabled: boolean = true) {
   });
 }
 
-// Admin Activities Hook - Lazy load for better performance
-export function useAdminActivities(enabled: boolean = true) {
+// Admin Activities Hook - server-side filtered and paginated
+export function useAdminActivities(
+  enabled: boolean = true,
+  page: number = 1,
+  pageSize: number = 20,
+  activityType?: string,
+  status?: string,
+  userName?: string
+) {
   return useQuery({
-    queryKey: adminQueryKeys.activities,
-    queryFn: () => apiService.getAdminActivities(1, 200, undefined, undefined, undefined, undefined),
+    queryKey: [...adminQueryKeys.activities, { page, pageSize, activityType, status, userName }],
+    queryFn: () => apiService.getAdminActivities(page, pageSize, activityType, status, undefined, userName),
     enabled,
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -55,15 +63,26 @@ export function useAdminUsers(enabled: boolean = true) {
   });
 }
 
-// Template Executions Hook - Only load when viewing executions tab
-export function useTemplateExecutions(enabled: boolean = true) {
+// Template Executions Hook - server-side filtered and paginated
+export function useTemplateExecutions(
+  enabled: boolean = true,
+  page: number = 1,
+  pageSize: number = 20,
+  templateName?: string,
+  userName?: string,
+  language?: string,
+  status?: string
+) {
   return useQuery({
-    queryKey: adminQueryKeys.templateExecutions,
-    queryFn: () => apiService.getTemplateExecutions(1, 200, undefined, undefined, undefined, undefined, undefined, undefined),
+    queryKey: [...adminQueryKeys.templateExecutions, { page, pageSize, templateName, userName, language, status }],
+    queryFn: () => apiService.getTemplateExecutions(
+      page, pageSize, undefined, templateName, undefined, userName, language, status
+    ),
     enabled,
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
   });
 }
 

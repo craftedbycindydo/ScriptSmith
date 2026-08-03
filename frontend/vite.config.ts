@@ -17,6 +17,10 @@ export default defineConfig({
   define: {
     global: 'globalThis',
   },
+  esbuild: {
+    // Drop chatty logs from production bundles; keep warn/error for real diagnostics
+    pure: ['console.log', 'console.debug', 'console.info'],
+  },
   worker: {
     format: 'es'
   }
