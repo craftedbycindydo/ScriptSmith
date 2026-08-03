@@ -1105,8 +1105,9 @@ api.interceptors.response.use(
           }
         }
       } else {
-        // 401 with nothing to refresh - drop the stale session.
-        logout();
+        // 401 with nothing to refresh - drop the stale session locally. No
+        // provider redirect here: this fires on background requests.
+        logout({ endProviderSession: false });
       }
     }
 

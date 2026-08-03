@@ -65,7 +65,8 @@ interface AuthState {
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, username: string, password: string, fullName?: string, classroomKey?: string) => Promise<boolean>;
   refreshUser: () => Promise<boolean>;
-  logout: () => void;
+  /** endProviderSession: only for user-initiated logout - see the action. */
+  logout: (options?: { endProviderSession?: boolean }) => void;
   refreshToken: () => Promise<boolean>;
   adoptOidcSession: (tokens: AuthToken) => Promise<boolean>;
   clearError: () => void;
@@ -166,7 +167,7 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      logout: () => {
+      logout: ({ endProviderSession = true } = {}) => {
         const { token, authMethod } = get();
 
         set({
@@ -177,9 +178,11 @@ export const useAuthStore = create<AuthState>()(
           error: null
         });
 
-        // Clearing local state alone would leave the Zitadel session alive, so
-        // the next sign-in would silently re-authenticate without a prompt.
-        if (authMethod === 'oidc') {
+        // Only on an explicit sign-out. Clearing local state alone would leave
+        // the Zitadel session alive, so the next sign-in would silently
+        // re-authenticate. Expiry-driven logouts must NOT redirect - that would
+        // yank the user out of the app on any background 401.
+        if (endProviderSession && authMethod === 'oidc') {
           window.location.assign(endSessionUrl(token?.id_token));
         }
       },
@@ -198,7 +201,7 @@ export const useAuthStore = create<AuthState>()(
           set({ token: { ...token, ...newToken } });
           return true;
         } catch (error) {
-          get().logout();
+          get().logout({ endProviderSession: false });
           return false;
         }
       },
@@ -271,7 +274,7 @@ export const useAuthStore = create<AuthState>()(
               set({ user, isAuthenticated: true });
               return true;
             } catch {
-              get().logout();
+              get().logout({ endProviderSession: false });
               return false;
             }
           }
