@@ -64,9 +64,16 @@ class AuthService:
         return len(errors) == 0, errors
     
     @staticmethod
+    def normalize_email(email: str) -> str:
+        """Emails are stored and compared in lowercase everywhere"""
+        return email.strip().lower() if email else email
+
+    @staticmethod
     def get_user_by_email(db: Session, email: str) -> Optional[User]:
         """Get user by email"""
-        return db.query(User).filter(User.email == email).first()
+        return db.query(User).filter(
+            User.email == AuthService.normalize_email(email)
+        ).first()
     
     @staticmethod
     def get_user_by_username(db: Session, username: str) -> Optional[User]:
@@ -87,7 +94,9 @@ class AuthService:
         full_name: Optional[str] = None
     ) -> User:
         """Create new user with secure password hashing"""
-        
+
+        email = AuthService.normalize_email(email)
+
         # Validate inputs
         if not AuthService.validate_email(email):
             raise HTTPException(

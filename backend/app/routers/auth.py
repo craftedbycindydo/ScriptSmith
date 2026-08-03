@@ -8,7 +8,9 @@ from app.database.base import get_db
 from app.services.auth import AuthService
 from app.services.admin_service import AdminService
 from app.services.security import SecurityService
+from app.services.zitadel_auth import ZitadelAuth
 from app.services.classroom_service import ClassroomService
+from app.models.user import User
 from app.core.config import settings
 from app.utils.security_validators import validate_input_security, SecurityValidator
 
@@ -96,29 +98,30 @@ async def get_current_user(
     
     if not auth_token:
         raise credentials_exception
-    
+
+    user = None
+
+    # Legacy token issued by this app.
     try:
         payload = SecurityService.verify_token(auth_token, "access")
-        if payload is None:
-            raise credentials_exception
-        
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-        
-        # Extract classroom context from token
-        classroom_context = payload.get("classroom_context", {})
-            
+        if payload and payload.get("sub"):
+            user = AuthService.get_user_by_email(db, email=payload["sub"])
     except Exception:
-        raise credentials_exception
-    
-    user = AuthService.get_user_by_email(db, email=email)
+        user = None
+
+    # Zitadel-issued token, resolved via the link written during the migration.
+    if user is None and ZitadelAuth.enabled():
+        claims = ZitadelAuth.verify(auth_token)
+        if claims and claims.get("sub"):
+            user = db.query(User).filter(
+                User.zitadel_user_id == claims["sub"]
+            ).first()
+
     if user is None:
         raise credentials_exception
-    
-    # Attach classroom context to user object for easy access
-    user.classroom_context = classroom_context
-    
+
+    # Classroom context is resolved from the database by the dependencies that
+    # need it (see admin.get_admin_user), never from a token claim.
     return user
 
 # Dependency to get current user (optional - returns None if not authenticated)
@@ -369,16 +372,14 @@ async def login_user(
                 detail="Email not verified. Please check your email and verify your account.",
             )
         
-        # Get classroom context for token
-        classroom_context = ClassroomService.get_classroom_context(db, user)
-        
-        # Create tokens with classroom context
+        # Classroom context is deliberately NOT a token claim: it goes stale, it is
+        # dropped on refresh, and it would leak classroom_key into a token held in
+        # browser storage. Consumers resolve it from the database instead.
         token_data = {
-            "sub": user.email, 
-            "user_id": user.id,
-            "classroom_context": classroom_context
+            "sub": user.email,
+            "user_id": user.id
         }
-        
+
         access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
         access_token = SecurityService.create_access_token(
             data=token_data,
