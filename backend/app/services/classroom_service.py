@@ -9,7 +9,7 @@ This service manages:
 """
 
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, or_
 from fastapi import HTTPException, status
 from app.models.classroom import Classroom, UserClassroom
@@ -217,13 +217,16 @@ class ClassroomService:
     def get_user_classrooms(db: Session, user: User) -> List[Classroom]:
         """Get all classrooms user belongs to"""
         
-        memberships = db.query(UserClassroom).filter(
+        memberships = db.query(UserClassroom).options(
+            joinedload(UserClassroom.classroom).joinedload(Classroom.creator),
+            joinedload(UserClassroom.classroom).selectinload(Classroom.members)
+        ).filter(
             and_(
                 UserClassroom.user_id == user.id,
                 UserClassroom.is_active == True
             )
         ).all()
-        
+
         return [m.classroom for m in memberships]
     
     @staticmethod

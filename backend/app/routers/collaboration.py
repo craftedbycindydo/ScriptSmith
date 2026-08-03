@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from typing import Optional, List, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, func
 
 from app.core.config import settings
@@ -360,7 +360,9 @@ async def list_sessions(
 ):
     """List collaboration sessions"""
     
-    query = db.query(CollaborationSession).filter(
+    query = db.query(CollaborationSession).options(
+        joinedload(CollaborationSession.owner)
+    ).filter(
         CollaborationSession.is_active == True
     )
     
@@ -380,12 +382,19 @@ async def list_sessions(
     offset = (page - 1) * page_size
     sessions = query.order_by(desc(CollaborationSession.created_at)).offset(offset).limit(page_size).all()
     
+    counts = dict(
+        db.query(
+            CollaborationParticipant.session_id,
+            func.count(CollaborationParticipant.id)
+        ).filter(
+            CollaborationParticipant.session_id.in_([s.id for s in sessions])
+        ).group_by(CollaborationParticipant.session_id).all()
+    ) if sessions else {}
+
     session_responses = []
     for session in sessions:
-        participant_count = db.query(CollaborationParticipant).filter(
-            CollaborationParticipant.session_id == session.id
-        ).count()
-        
+        participant_count = counts.get(session.id, 0)
+
         session_responses.append(SessionResponse(
             id=session.id,
             share_id=session.share_id,

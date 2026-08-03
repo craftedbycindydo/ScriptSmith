@@ -11,8 +11,8 @@ Provides endpoints for:
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from pydantic import BaseModel
 from typing import Optional, List
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import desc, func, case
 from datetime import datetime
 
 from app.core.config import settings
@@ -317,7 +317,9 @@ async def get_classroom_members(
     # Verify user has access to this classroom
     ClassroomService.verify_classroom_access(db, current_user, classroom_id)
     
-    members = db.query(UserClassroom).filter(
+    members = db.query(UserClassroom).options(
+        joinedload(UserClassroom.user)
+    ).filter(
         UserClassroom.classroom_id == classroom_id,
         UserClassroom.is_active == True
     ).offset(skip).limit(limit).all()
@@ -375,8 +377,8 @@ async def get_classroom_stats(
     member_stats = db.query(
         func.count(UserClassroom.id).label('total_members'),
         func.count(func.nullif(UserClassroom.is_active, False)).label('active_members'),
-        func.sum(func.case([(UserClassroom.role == 'TEACHER', 1)], else_=0)).label('teachers'),
-        func.sum(func.case([(UserClassroom.role == 'STUDENT', 1)], else_=0)).label('students')
+        func.sum(case((UserClassroom.role == 'TEACHER', 1), else_=0)).label('teachers'),
+        func.sum(case((UserClassroom.role == 'STUDENT', 1), else_=0)).label('students')
     ).filter(UserClassroom.classroom_id == classroom_id).first()
     
     # Get content statistics

@@ -519,7 +519,8 @@ async def get_user_activities(
     
     # Use simplified individual queries that can leverage indexes
     all_activities = []
-    
+    total = 0
+
     # Get code executions if requested
     if not activity_type or activity_type == "code_execution":
         exec_query = db.query(
@@ -528,7 +529,7 @@ async def get_user_activities(
             User.username,
             User.email,
             CodeSubmission.language,
-            CodeSubmission.code,
+            func.coalesce(func.length(CodeSubmission.code), 0).label('code_size'),
             CodeSubmission.execution_time,
             CodeSubmission.input_data,
             CodeSubmission.created_at,
@@ -558,8 +559,11 @@ async def get_user_activities(
         if date_to_dt:
             exec_query = exec_query.filter(CodeSubmission.created_at <= date_to_dt)
         
-        executions = exec_query.order_by(desc(CodeSubmission.created_at)).all()
-        
+        total = exec_query.count()
+        executions = exec_query.order_by(
+            desc(CodeSubmission.created_at)
+        ).offset((page - 1) * page_size).limit(page_size).all()
+
         for exec_row in executions:
             all_activities.append({
                 "id": exec_row.id,
@@ -569,7 +573,7 @@ async def get_user_activities(
                 "activity_type": "code_execution",
                 "activity_data": {
                     "language": exec_row.language,
-                    "code_size": len(exec_row.code) if exec_row.code else 0,
+                    "code_size": exec_row.code_size,
                     "execution_time": exec_row.execution_time,
                     "input_data": bool(exec_row.input_data)
                 },
@@ -577,15 +581,9 @@ async def get_user_activities(
                 "status": exec_row.status,
                 "error_message": exec_row.error_message
             })
-    
-    # Sort all activities by timestamp and paginate
-    all_activities.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
-    
-    total = len(all_activities)
-    start_idx = (page - 1) * page_size
-    end_idx = start_idx + page_size
-    paginated_activities = all_activities[start_idx:end_idx]
-    
+
+    paginated_activities = all_activities
+
     # Convert to UserActivityItem objects
     activities = []
     for activity in paginated_activities:
@@ -719,8 +717,9 @@ async def get_user_details(
     
     # POSTGRESQL OPTIMIZED: Select only needed columns, not SELECT *
     user = db.query(
-        User.id, User.username, User.email, User.full_name, 
-        User.is_active, User.is_verified, User.created_at, User.last_login
+        User.id, User.username, User.email, User.full_name,
+        User.is_active, User.is_verified, User.created_at, User.last_login,
+        User.is_superuser, User.bio, User.avatar_url
     ).filter(User.id == user_id).first()
     
     if not user:
@@ -737,12 +736,14 @@ async def get_user_details(
     
     # Get recent activity - only needed columns, not SELECT *
     recent_executions = db.query(
-        CodeSubmission.id, CodeSubmission.language, CodeSubmission.status,
-        CodeSubmission.execution_time, CodeSubmission.created_at
+        CodeSubmission.id, CodeSubmission.user_id, CodeSubmission.language,
+        CodeSubmission.status, CodeSubmission.execution_time,
+        CodeSubmission.created_at, CodeSubmission.error_message,
+        func.coalesce(func.length(CodeSubmission.code), 0).label('code_size')
     ).filter(
         CodeSubmission.user_id == user_id
     ).order_by(desc(CodeSubmission.created_at)).limit(10).all()
-    
+
     recent_activity = []
     for execution in recent_executions:
         recent_activity.append(UserActivityItem(
@@ -753,7 +754,7 @@ async def get_user_details(
             activity_type="code_execution",
             activity_data={
                 "language": execution.language,
-                "code_size": len(execution.code) if execution.code else 0,
+                "code_size": execution.code_size,
                 "execution_time": execution.execution_time
             },
             timestamp=safe_datetime_format(execution.created_at) or "",
