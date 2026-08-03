@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiService, AUTH_LOGOUT_EVENT } from '../services/api';
+import { apiService, AUTH_LOGOUT_EVENT, AUTH_TOKEN_REFRESHED_EVENT } from '../services/api';
 
 export interface User {
   id: number;
@@ -41,7 +41,8 @@ export interface User {
 
 export interface AuthToken {
   access_token: string;
-  refresh_token: string;
+  // Optional: an OIDC provider only returns one when offline_access is granted.
+  refresh_token?: string;
   token_type: string;
   expires_in: number;
 }
@@ -59,6 +60,7 @@ interface AuthState {
   refreshUser: () => Promise<boolean>;
   logout: () => void;
   refreshToken: () => Promise<boolean>;
+  adoptOidcSession: (tokens: AuthToken) => Promise<boolean>;
   clearError: () => void;
   forgotPassword: (email: string) => Promise<boolean>;
   resetPassword: (token: string, newPassword: string) => Promise<boolean>;
@@ -180,6 +182,21 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
+      // Adopt tokens obtained from Zitadel via the OIDC redirect. The backend
+      // accepts them alongside its own, resolving the user by zitadel_user_id,
+      // so from here on everything behaves exactly like a password login.
+      adoptOidcSession: async (tokens: AuthToken) => {
+        set({ token: tokens, isLoading: true, error: null });
+        try {
+          const user = await apiService.getCurrentUser();
+          set({ user, isAuthenticated: true, isLoading: false, error: null });
+          return true;
+        } catch (error: any) {
+          set({ token: null, user: null, isAuthenticated: false, isLoading: false });
+          return false;
+        }
+      },
+
       clearError: () => {
         set({ error: null });
       },
@@ -257,5 +274,14 @@ export const useAuthStore = create<AuthState>()(
 if (typeof window !== 'undefined') {
   window.addEventListener(AUTH_LOGOUT_EVENT, () => {
     useAuthStore.getState().logout();
+  });
+
+  // The response interceptor refreshes tokens outside React; adopt the new one here
+  // so the in-memory store and the persisted copy never diverge.
+  window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, (event) => {
+    const token = (event as CustomEvent<AuthToken>).detail;
+    if (token?.access_token) {
+      useAuthStore.setState({ token });
+    }
   });
 }

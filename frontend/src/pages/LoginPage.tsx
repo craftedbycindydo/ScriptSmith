@@ -7,6 +7,7 @@ import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { useAuthStore } from '@/store/authStore';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import TypingCodeAnimation from '@/components/TypingCodeAnimation';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -132,6 +133,10 @@ export default function LoginPage() {
                   )}
                 </Button>
               </form>
+
+              <div className="mt-4">
+                <GoogleSignInButton />
+              </div>
             </CardContent>
 
             <CardFooter className="flex flex-col space-y-4">
