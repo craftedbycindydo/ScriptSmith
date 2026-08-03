@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useAuthStore } from '@/store/authStore';
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react';
 import TypingCodeAnimation from '@/components/TypingCodeAnimation';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 
 const PasswordStrengthIndicator = ({ password }: { password: string }) => {
   const requirements = [
@@ -333,6 +334,10 @@ export default function SignUpPage() {
                   )}
                 </Button>
               </form>
+
+              <div className="mt-4">
+                <GoogleSignInButton label="Sign up with Google" />
+              </div>
             </CardContent>
 
             <CardFooter>

@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     smtp_password: str
     email_from: str
     
+    # Zitadel - optional. Empty issuer disables Zitadel token validation entirely,
+    # so deployments without it keep using the legacy tokens only.
+    zitadel_issuer: str = ""
+    zitadel_client_id: str = ""
+
     # Admin settings - REQUIRED FROM ENVIRONMENT
     admin_emails: Union[str, List[str]]
     

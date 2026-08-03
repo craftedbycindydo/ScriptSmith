@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -253,6 +253,18 @@ interface TemplateExecution {
   executed_at?: string;
 }
 
+interface AdminActivity {
+  id: number;
+  user_id?: number;
+  username?: string;
+  email?: string;
+  activity_type: string;
+  activity_data: Record<string, any>;
+  timestamp: string;
+  status?: string;
+  error_message?: string;
+}
+
 export default function AdminDashboard() {
   const { user, isAuthenticated, refreshUser } = useAuthStore();
   const { 
@@ -281,20 +293,47 @@ export default function AdminDashboard() {
     return () => clearTimeout(timer);
   }, []);
   
+  const pageSize = 20;
+
+  // Filters and pagination - declared before the queries that send them to the server
+  const [activityType, setActivityType] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activityUserFilter, setActivityUserFilter] = useState('all');
+  const [templateExecutionsPage, setTemplateExecutionsPage] = useState(1);
+  const [templateNameFilter, setTemplateNameFilter] = useState('all');
+  const [templateUserFilter, setTemplateUserFilter] = useState('all');
+  const [templateLanguageFilter, setTemplateLanguageFilter] = useState('all');
+  const [templateStatusFilter, setTemplateStatusFilter] = useState('all');
+
+  // 'all' means "no filter" to the API
+  const asParam = (v: string) => (v === 'all' || !v ? undefined : v);
+
   // React Query hooks - Stats load immediately for instant data, others lazy load
   const { data: stats, refetch: refetchStats } = useAdminStats(
     activeTab === 'overview' // Stats load immediately when on overview tab
   );
-  
+
   // Only load data when the specific tab is active AND data loading is triggered
   const { data: adminUsers = [], refetch: refetchUsers } = useAdminUsers(
     activeTab === 'overview' || activeTab === 'users' // Users load immediately for overview and users tab
   );
-  const { data: activities = [], isLoading: activitiesLoading, refetch: refetchActivities } = useAdminActivities(
-    activeTab === 'overview' // Activities load immediately on overview tab for better UX
+  const { data: activities, isLoading: activitiesLoading, refetch: refetchActivities } = useAdminActivities(
+    activeTab === 'overview', // Activities load immediately on overview tab for better UX
+    currentPage,
+    pageSize,
+    asParam(activityType),
+    asParam(statusFilter),
+    asParam(activityUserFilter)
   );
-  const { data: templateExecutions = [], refetch: refetchTemplateExecutions } = useTemplateExecutions(
-    heavyDataLoadTrigger && activeTab === 'template-executions'
+  const { data: templateExecutions, refetch: refetchTemplateExecutions } = useTemplateExecutions(
+    heavyDataLoadTrigger && activeTab === 'template-executions',
+    templateExecutionsPage,
+    pageSize,
+    asParam(templateNameFilter),
+    asParam(templateUserFilter),
+    asParam(templateLanguageFilter),
+    asParam(templateStatusFilter)
   );
   const { data: templatesOptions = [], refetch: refetchTemplatesOptions } = useTemplatesOptions(
     heavyDataLoadTrigger && (activeTab === 'templates' || activeTab === 'template-executions' || activeTab === 'template-submissions')
@@ -316,9 +355,6 @@ export default function AdminDashboard() {
   const adminResetUsernameMutation = useAdminResetUsername();
   const adminForceLogoutMutation = useAdminForceLogoutUser();
   
-  // INSTANT LOADING - Never block page render, show skeleton instead
-  const loading = false; // Always render page immediately
-  
   // User search error state
   const [userSearchError, setUserSearchError] = useState<string | null>(null);
   
@@ -326,15 +362,12 @@ export default function AdminDashboard() {
   const isAdmin = user?.is_admin || false;
   
   // Filters
-  const [activityType, setActivityType] = useState<string>('all');
   const [userSearch, setUserSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [currentPage, setCurrentPage] = useState(1);
 
   
   // Password management state
   const [tempPasswordResult, setTempPasswordResult] = useState<{ userId: number; password: string; createdAt: number } | null>(null);
-  const [tempPasswordUpdateTrigger, setTempPasswordUpdateTrigger] = useState(0);
+  const [, setTempPasswordUpdateTrigger] = useState(0);
   const [resetUsernameDialog, setResetUsernameDialog] = useState<{ open: boolean; userId: number | null; newUsername: string; currentUsername: string }>({
     open: false,
     userId: null,
@@ -362,18 +395,17 @@ export default function AdminDashboard() {
   const [expandedUser, setExpandedUser] = useState<number | null>(null);
   const [tempPasswordVisibility, setTempPasswordVisibility] = useState<{ [userId: number]: boolean }>({});
   
-  // Activity filters
-  const [activityUserFilter, setActivityUserFilter] = useState('all');
-  
   // Use React Query data directly for client-side filtering (2025 best practice)
-  const allActivities = activities?.activities || [];
-  const allTemplateExecutions = templateExecutions?.executions || [];
+  // Server returns exactly one page; `total` is the full filtered count
+  const allActivities: AdminActivity[] = activities?.activities || [];
+  const activitiesTotal: number = activities?.total ?? 0;
+  const allTemplateExecutions: TemplateExecution[] = templateExecutions?.executions || [];
+  const executionsTotal: number = templateExecutions?.total ?? 0;
   
   // Sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   
   // Template execution states
-  const [templateExecutionsPage, setTemplateExecutionsPage] = useState(1);
   const [expandedExecution, setExpandedExecution] = useState<number | null>(null);
   
   // Member management states
@@ -406,42 +438,15 @@ export default function AdminDashboard() {
   // Copy key feedback state
   const [copiedClassroomKey, setCopiedClassroomKey] = useState<number | null>(null);
   
-  // Template execution filters
-  const [templateNameFilter, setTemplateNameFilter] = useState('all');
-  const [templateUserFilter, setTemplateUserFilter] = useState('all');
-  const [templateLanguageFilter, setTemplateLanguageFilter] = useState('all');
-  const [templateStatusFilter, setTemplateStatusFilter] = useState('all');
-  
   // Dropdown options from React Query
   const templates = templatesOptions?.templates || [];
   const combinedUsers = usersOptions?.users || [];
   
-  // Client-side filtering functions (2025 best practice - no more API calls per filter)
-  const getFilteredActivities = useCallback(() => {
-    let filtered = [...allActivities];
-    
-    if (activityType !== 'all') {
-      filtered = filtered.filter(activity => activity.activity_type === activityType);
-    }
-    
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(activity => activity.status === statusFilter);
-    }
-    
-    if (activityUserFilter !== 'all') {
-      const filterValue = activityUserFilter.toLowerCase();
-      filtered = filtered.filter(activity => 
-        activity.username?.toLowerCase().includes(filterValue) ||
-        activity.email?.toLowerCase().includes(filterValue)
-      );
-    }
-    
-    return filtered;
-  }, [allActivities, activityType, statusFilter, activityUserFilter]);
-  
-  const getFilteredUsers = useCallback(() => {
+  // Activities and template executions are filtered and paginated by the server.
+  // Only the users list is filtered client-side - it is fetched whole.
+  const filteredUsers = useMemo(() => {
     if (!userSearch) return adminUsers;
-    
+
     const searchTerm = userSearch.toLowerCase();
     return adminUsers.filter((user: AdminUser) =>
       user.username?.toLowerCase().includes(searchTerm) ||
@@ -449,36 +454,7 @@ export default function AdminDashboard() {
       user.full_name?.toLowerCase().includes(searchTerm)
     );
   }, [adminUsers, userSearch]);
-  
-  const getFilteredTemplateExecutions = useCallback(() => {
-    let filtered = [...allTemplateExecutions];
-    
-    if (templateNameFilter !== 'all') {
-      filtered = filtered.filter(exec => exec.template_name === templateNameFilter);
-    }
-    
-    if (templateLanguageFilter !== 'all') {
-      filtered = filtered.filter(exec => exec.language === templateLanguageFilter);
-    }
-    
-    if (templateStatusFilter !== 'all') {
-      filtered = filtered.filter(exec => exec.status === templateStatusFilter);
-    }
-    
-    if (templateUserFilter && templateUserFilter !== 'all') {
-      const filterValue = templateUserFilter.toLowerCase();
-      filtered = filtered.filter(exec => 
-        exec.username?.toLowerCase().includes(filterValue) ||
-        exec.email?.toLowerCase().includes(filterValue)
-      );
-    }
-    
-    return filtered;
-  }, [allTemplateExecutions, templateNameFilter, templateLanguageFilter, templateStatusFilter, templateUserFilter]);
   const [classroomNotifications, setClassroomNotifications] = useState<{[key: number]: {message: string, type: 'success' | 'error'} | null}>({});
-
-  
-  const pageSize = 20;
 
   // Request user activation/deactivation with confirmation
   const requestUserActivationToggle = (userId: number, username: string, currentStatus: boolean) => {
@@ -544,10 +520,9 @@ export default function AdminDashboard() {
         createdAt: Date.now() 
       };
       
-      // Save to state and localStorage
+      // Held in memory only - never persisted, so it cannot outlive the session
       setTempPasswordResult(tempPasswordData);
-      localStorage.setItem('admin_temp_password', JSON.stringify(tempPasswordData));
-      
+
       // Automatically expand the user row to show success
       setExpandedUser(userId);
       
@@ -593,28 +568,18 @@ export default function AdminDashboard() {
     setResetUsernameDialog({ open: false, userId: null, newUsername: '', currentUsername: '' });
   };
 
-  // Helper function to get remaining time for temp password
-  const getRemainingTime = useMemo(() => {
-    if (!tempPasswordResult) return () => 'Expired';
-    
-    return (createdAt: number) => {
-      // tempPasswordUpdateTrigger ensures re-calculation when time updates
-      const now = Date.now();
-      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-      const timeLeft = TWENTY_FOUR_HOURS - (now - createdAt);
-      
-      if (timeLeft <= 0) return 'Expired';
-      
-      const hours = Math.floor(timeLeft / (60 * 60 * 1000));
-      const minutes = Math.floor((timeLeft % (60 * 60 * 1000)) / (60 * 1000));
-      
-      if (hours > 0) {
-        return `${hours}h ${minutes}m remaining`;
-      } else {
-        return `${minutes}m remaining`;
-      }
-    };
-  }, [tempPasswordResult, tempPasswordUpdateTrigger]);
+  // Recomputed on every render; the minute tick comes from tempPasswordUpdateTrigger
+  const getRemainingTime = (createdAt: number) => {
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    const timeLeft = TWENTY_FOUR_HOURS - (Date.now() - createdAt);
+
+    if (timeLeft <= 0) return 'Expired';
+
+    const hours = Math.floor(timeLeft / (60 * 60 * 1000));
+    const minutes = Math.floor((timeLeft % (60 * 60 * 1000)) / (60 * 1000));
+
+    return hours > 0 ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`;
+  };
 
   // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
   const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
@@ -955,43 +920,15 @@ export default function AdminDashboard() {
     setClassroomToDelete(null);
   };
 
-  // Load temp password from localStorage and clean up expired ones
-  useEffect(() => {
-    const loadTempPassword = () => {
-      try {
-        const stored = localStorage.getItem('admin_temp_password');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          const now = Date.now();
-          const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-          
-          // Check if temp password has expired (24 hours)
-          if (now - parsed.createdAt < TWENTY_FOUR_HOURS) {
-            setTempPasswordResult(parsed);
-          } else {
-            // Expired, remove from localStorage
-            localStorage.removeItem('admin_temp_password');
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load temp password from localStorage:', err);
-        localStorage.removeItem('admin_temp_password');
-      }
-    };
-
-    loadTempPassword();
-  }, []);
-
   // Check for expired temp password and update remaining time every minute
   useEffect(() => {
     const interval = setInterval(() => {
       if (tempPasswordResult) {
         const now = Date.now();
         const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-        
+
         if (now - tempPasswordResult.createdAt >= TWENTY_FOUR_HOURS) {
           setTempPasswordResult(null);
-          localStorage.removeItem('admin_temp_password');
         } else {
           // Trigger update to refresh remaining time display
           setTempPasswordUpdateTrigger(prev => prev + 1);
@@ -1011,21 +948,15 @@ export default function AdminDashboard() {
       const classroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
       initializeWebSocket(user?.id, classroomIds);
       
-      // Debug: Log user data to understand classroom context
-      console.log('🔍 Current user data:', user);
-      console.log('🔍 Classroom context:', user?.classroom_context);
-      
       // Force refresh user data to get latest classroom context
       const refreshUserData = async () => {
         try {
-          const success = await refreshUser();
-          console.log('🔄 User data refresh success:', success);
-          console.log('🔄 Updated user:', user);
+          await refreshUser();
         } catch (err) {
           console.error('Failed to refresh user data:', err);
         }
       };
-      
+
       refreshUserData();
     }
     
@@ -1066,9 +997,9 @@ export default function AdminDashboard() {
     }
   };
 
-  // Client-side pagination based on filtered data
-  const filteredActivities = getFilteredActivities();
-  const totalPages = Math.ceil(filteredActivities.length / pageSize);
+  // Pagination driven by the server's total, not the size of the current page
+  const totalPages = Math.ceil(activitiesTotal / pageSize);
+  const executionsTotalPages = Math.ceil(executionsTotal / pageSize);
 
   // Authentication check
   if (!isAuthenticated) {
@@ -1119,17 +1050,6 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-foreground">Loading admin dashboard...</p>
         </div>
       </div>
     );
@@ -1534,8 +1454,8 @@ export default function AdminDashboard() {
                         <Activity className="w-5 h-5 mr-2" />
                         User Activities
                       </span>
-                      {activities.length > 0 ? (
-                        <Badge variant="outline">{filteredActivities.length} shown</Badge>
+                      {allActivities.length > 0 ? (
+                        <Badge variant="outline">{activitiesTotal} shown</Badge>
                       ) : (
                         <div className="bg-muted rounded h-6 w-16 animate-pulse"></div>
                       )}
@@ -1543,7 +1463,7 @@ export default function AdminDashboard() {
                 
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-2 mt-4">
-                  <Select value={activityType} onValueChange={setActivityType}>
+                  <Select value={activityType} onValueChange={(v) => { setActivityType(v); setCurrentPage(1); }}>
                     <SelectTrigger className="w-full sm:w-[180px]">
                       <SelectValue placeholder="Activity type" />
                     </SelectTrigger>
@@ -1555,7 +1475,7 @@ export default function AdminDashboard() {
                     </SelectContent>
                   </Select>
                   
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
                     <SelectTrigger className="w-full sm:w-[150px]">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
@@ -1568,14 +1488,14 @@ export default function AdminDashboard() {
                     </SelectContent>
                   </Select>
                   
-                  <Select value={activityUserFilter} onValueChange={setActivityUserFilter}>
+                  <Select value={activityUserFilter} onValueChange={(v) => { setActivityUserFilter(v); setCurrentPage(1); }}>
                     <SelectTrigger className="w-full sm:w-[250px]">
                       <SelectValue placeholder="User" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All users</SelectItem>
                       {combinedUsers.map((user: any) => (
-                        <SelectItem key={user.display} value={user.display}>
+                        <SelectItem key={user.username} value={user.username}>
                           {user.display}
                         </SelectItem>
                       ))}
@@ -1585,7 +1505,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {activities.length === 0 && activitiesLoading ? (
+                  {allActivities.length === 0 && activitiesLoading ? (
                     // Skeleton loading for activities
                     [...Array(5)].map((_, i) => (
                       <div key={i} className="border rounded-lg p-3">
@@ -1605,7 +1525,7 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     ))
-                  ) : activities.length === 0 ? (
+                  ) : allActivities.length === 0 ? (
                     // Empty state when no activities and not loading
                     <div className="text-center py-8 text-muted-foreground">
                       <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1614,7 +1534,7 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     // Actual activities
-                    getFilteredActivities().slice((currentPage - 1) * pageSize, currentPage * pageSize).map((activity) => (
+                    allActivities.map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3">
@@ -1669,7 +1589,7 @@ export default function AdminDashboard() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between pt-4 border-t">
                     <div className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, filteredActivities.length)} of {filteredActivities.length} activities
+                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, activitiesTotal)} of {activitiesTotal} activities
                     </div>
                     <div className="flex space-x-2">
                       <Button
@@ -1736,7 +1656,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {getFilteredUsers().map((user: AdminUser) => (
+                  {filteredUsers.map((user: AdminUser) => (
                     <div key={user.id} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -2239,12 +2159,12 @@ export default function AdminDashboard() {
                           <Play className="w-5 h-5 mr-2" />
                           Template Executions
                         </span>
-                        <Badge variant="outline">{getFilteredTemplateExecutions().length} shown</Badge>
+                        <Badge variant="outline">{executionsTotal} shown</Badge>
                       </CardTitle>
                       
                       {/* Filters */}
                       <div className="flex flex-col sm:flex-row gap-2 mt-4">
-                        <Select value={templateNameFilter} onValueChange={setTemplateNameFilter}>
+                        <Select value={templateNameFilter} onValueChange={(v) => { setTemplateNameFilter(v); setTemplateExecutionsPage(1); }}>
                           <SelectTrigger className="w-full sm:w-[200px]">
                             <SelectValue placeholder="Template" />
                           </SelectTrigger>
@@ -2258,21 +2178,21 @@ export default function AdminDashboard() {
                           </SelectContent>
                         </Select>
                         
-                        <Select value={templateUserFilter} onValueChange={setTemplateUserFilter}>
+                        <Select value={templateUserFilter} onValueChange={(v) => { setTemplateUserFilter(v); setTemplateExecutionsPage(1); }}>
                           <SelectTrigger className="w-full sm:w-[250px]">
                             <SelectValue placeholder="User" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All users</SelectItem>
                             {combinedUsers.map((user: any) => (
-                              <SelectItem key={user.display} value={user.display}>
+                              <SelectItem key={user.username} value={user.username}>
                                 {user.display}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                         
-                        <Select value={templateLanguageFilter} onValueChange={setTemplateLanguageFilter}>
+                        <Select value={templateLanguageFilter} onValueChange={(v) => { setTemplateLanguageFilter(v); setTemplateExecutionsPage(1); }}>
                           <SelectTrigger className="w-full sm:w-[150px]">
                             <SelectValue placeholder="Language" />
                           </SelectTrigger>
@@ -2287,7 +2207,7 @@ export default function AdminDashboard() {
                           </SelectContent>
                         </Select>
                         
-                        <Select value={templateStatusFilter} onValueChange={setTemplateStatusFilter}>
+                        <Select value={templateStatusFilter} onValueChange={(v) => { setTemplateStatusFilter(v); setTemplateExecutionsPage(1); }}>
                           <SelectTrigger className="w-full sm:w-[120px]">
                             <SelectValue placeholder="Status" />
                           </SelectTrigger>
@@ -2301,7 +2221,7 @@ export default function AdminDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * pageSize, templateExecutionsPage * pageSize).map((execution: TemplateExecution) => (
+                        {allTemplateExecutions.map((execution: TemplateExecution) => (
                           <div key={execution.id} className="border rounded-lg overflow-hidden">
                             {/* Clickable Row */}
                             <div 
@@ -2438,10 +2358,10 @@ export default function AdminDashboard() {
                       </div>
                       
                       {/* Pagination */}
-                      {Math.ceil(getFilteredTemplateExecutions().length / pageSize) > 1 && (
+                      {executionsTotalPages > 1 && (
                         <div className="flex items-center justify-between pt-4 border-t">
                           <div className="text-sm text-muted-foreground">
-                            Showing {((templateExecutionsPage - 1) * pageSize) + 1} to {Math.min(templateExecutionsPage * pageSize, getFilteredTemplateExecutions().length)} of {getFilteredTemplateExecutions().length} executions
+                            Showing {((templateExecutionsPage - 1) * pageSize) + 1} to {Math.min(templateExecutionsPage * pageSize, executionsTotal)} of {executionsTotal} executions
                           </div>
                           <div className="flex space-x-2">
                             <Button
@@ -2456,7 +2376,7 @@ export default function AdminDashboard() {
                               variant="outline"
                               size="sm"
                               onClick={() => setTemplateExecutionsPage(templateExecutionsPage + 1)}
-                              disabled={templateExecutionsPage >= Math.ceil(getFilteredTemplateExecutions().length / pageSize)}
+                              disabled={templateExecutionsPage >= executionsTotalPages}
                             >
                               <ChevronRight className="w-4 h-4" />
                             </Button>
@@ -2501,7 +2421,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {getFilteredUsers().map((user: AdminUser) => (
+                  {filteredUsers.map((user: AdminUser) => (
                     <div key={user.id} className="border rounded-lg overflow-hidden">
                       <div 
                         className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -2781,7 +2701,6 @@ export default function AdminDashboard() {
                                       size="sm"
                                       onClick={() => {
                                         setTempPasswordResult(null);
-                                        localStorage.removeItem('admin_temp_password');
                                       }}
                                       title="Dismiss"
                                       className="h-6 w-6 p-0 text-blue-600 dark:text-blue-400"
@@ -2947,12 +2866,12 @@ export default function AdminDashboard() {
                     <Activity className="w-5 h-5 mr-2" />
                     Recent Activities
                   </span>
-                  <Badge variant="outline">{getFilteredActivities().length} shown</Badge>
+                  <Badge variant="outline">{activitiesTotal} shown</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-80 overflow-y-auto">
-                  {getFilteredActivities().slice(0, 5).map((activity) => (
+                  {allActivities.slice(0, 5).map((activity) => (
                     <div key={`${activity.activity_type}-${activity.id}`} className="border rounded-lg p-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3">
@@ -3297,13 +3216,13 @@ export default function AdminDashboard() {
                         Template Executions
                         </span>
                         <Badge variant="outline" className="text-xs">
-                          {getFilteredTemplateExecutions().length} shown
+                          {executionsTotal} shown
                         </Badge>
                       </CardTitle>
                       
                       {/* Mobile-optimized Filters */}
                       <div className="space-y-2 mt-4">
-                        <Select value={templateNameFilter} onValueChange={setTemplateNameFilter}>
+                        <Select value={templateNameFilter} onValueChange={(v) => { setTemplateNameFilter(v); setTemplateExecutionsPage(1); }}>
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder="Filter by template" />
                           </SelectTrigger>
@@ -3318,7 +3237,7 @@ export default function AdminDashboard() {
                         </Select>
                         
                         <div className="grid grid-cols-2 gap-2">
-                          <Select value={templateLanguageFilter} onValueChange={setTemplateLanguageFilter}>
+                          <Select value={templateLanguageFilter} onValueChange={(v) => { setTemplateLanguageFilter(v); setTemplateExecutionsPage(1); }}>
                             <SelectTrigger>
                               <SelectValue placeholder="Language" />
                             </SelectTrigger>
@@ -3333,7 +3252,7 @@ export default function AdminDashboard() {
                             </SelectContent>
                           </Select>
                           
-                          <Select value={templateStatusFilter} onValueChange={setTemplateStatusFilter}>
+                          <Select value={templateStatusFilter} onValueChange={(v) => { setTemplateStatusFilter(v); setTemplateExecutionsPage(1); }}>
                             <SelectTrigger>
                               <SelectValue placeholder="Status" />
                             </SelectTrigger>
@@ -3348,7 +3267,7 @@ export default function AdminDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {getFilteredTemplateExecutions().slice((templateExecutionsPage - 1) * 10, templateExecutionsPage * 10).map((execution: TemplateExecution) => (
+                        {allTemplateExecutions.map((execution: TemplateExecution) => (
                           <div key={execution.id} className="border rounded-lg overflow-hidden">
                             {/* Mobile Execution Card */}
                             <div 
@@ -3476,7 +3395,7 @@ export default function AdminDashboard() {
                           </div>
                         ))}
                         
-                        {getFilteredTemplateExecutions().length === 0 && (
+                        {executionsTotal === 0 && (
                           <div className="text-center py-8 text-muted-foreground">
                             <Play className="w-8 h-8 mx-auto mb-3 opacity-50" />
                             <p className="text-sm font-medium text-foreground mb-1">No executions found</p>
@@ -3486,10 +3405,10 @@ export default function AdminDashboard() {
                       </div>
                       
                       {/* Mobile Pagination */}
-                      {Math.ceil(getFilteredTemplateExecutions().length / 10) > 1 && (
+                      {executionsTotalPages > 1 && (
                         <div className="flex items-center justify-between pt-4 border-t">
                           <div className="text-xs text-muted-foreground">
-                            Page {templateExecutionsPage} of {Math.ceil(getFilteredTemplateExecutions().length / 10)}
+                            Page {templateExecutionsPage} of {executionsTotalPages}
                           </div>
                           <div className="flex space-x-2">
                             <Button
@@ -3505,7 +3424,7 @@ export default function AdminDashboard() {
                               variant="outline"
                               size="sm"
                               onClick={() => setTemplateExecutionsPage(templateExecutionsPage + 1)}
-                              disabled={templateExecutionsPage >= Math.ceil(getFilteredTemplateExecutions().length / 10)}
+                              disabled={templateExecutionsPage >= executionsTotalPages}
                               className="h-8 w-8 p-0"
                             >
                               <ChevronRight className="w-3 h-3" />
@@ -3540,7 +3459,7 @@ export default function AdminDashboard() {
                         User Management
                         </span>
                         <Badge variant="outline" className="text-xs">
-                          {getFilteredUsers().length} shown
+                          {filteredUsers.length} shown
                         </Badge>
                       </CardTitle>
                       
@@ -3578,7 +3497,7 @@ export default function AdminDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {getFilteredUsers().map((user: AdminUser) => (
+                        {filteredUsers.map((user: AdminUser) => (
                           <div key={user.id} className="border rounded-lg overflow-hidden">
                             <div 
                               className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -3725,7 +3644,6 @@ export default function AdminDashboard() {
                                             size="sm"
                                             onClick={() => {
                                               setTempPasswordResult(null);
-                                              localStorage.removeItem('admin_temp_password');
                                             }}
                                             title="Dismiss"
                                             className="h-8 w-8 p-0 text-blue-600 dark:text-blue-400"
@@ -3746,7 +3664,7 @@ export default function AdminDashboard() {
                           </div>
                         ))}
                         
-                        {getFilteredUsers().length === 0 && (
+                        {filteredUsers.length === 0 && (
                           <div className="text-center py-8 text-muted-foreground">
                             <Users className="w-8 h-8 mx-auto mb-3 opacity-50" />
                             <p className="text-sm font-medium text-foreground mb-1">No users found</p>
