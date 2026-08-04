@@ -70,6 +70,7 @@ interface AuthState {
   validateSession: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
   adoptOidcSession: (tokens: AuthToken, confirmLink?: boolean) => Promise<'ok' | 'link_required' | 'failed'>;
+  adoptVerifiedSession: (tokens: AuthToken) => Promise<boolean>;
   clearError: () => void;
   forgotPassword: (email: string) => Promise<boolean>;
   resetPassword: (token: string, newPassword: string) => Promise<boolean>;
@@ -235,6 +236,27 @@ export const useAuthStore = create<AuthState>()(
             error: error?.response?.data?.detail || 'Sign-in failed',
           });
           return 'failed';
+        }
+      },
+
+      // Email verification returns a session, so the user lands signed in
+      // instead of being bounced to the login form.
+      adoptVerifiedSession: async (tokens: AuthToken) => {
+        set({ token: tokens, authMethod: 'password', isLoading: true, error: null });
+        try {
+          const user = await apiService.getCurrentUser();
+          set({ user, isAuthenticated: true, isLoading: false, error: null });
+          return true;
+        } catch (error: any) {
+          set({
+            token: null,
+            authMethod: null,
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: error?.response?.data?.detail || 'Could not sign you in',
+          });
+          return false;
         }
       },
 

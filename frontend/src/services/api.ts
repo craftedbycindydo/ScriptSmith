@@ -388,8 +388,13 @@ export const apiService = {
     return response.data;
   },
 
-  async verifyEmail(token: string): Promise<void> {
-    await api.post('/auth/verify-email', { token });
+  async verifyEmail(token: string): Promise<AuthToken> {
+    const response = await api.post('/auth/verify-email', { token });
+    return response.data;
+  },
+
+  async resendVerification(email: string): Promise<void> {
+    await api.post('/auth/resend-verification', { email });
   },
 
   async logout(): Promise<void> {
