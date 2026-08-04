@@ -1,4 +1,3 @@
-import { Badge } from '@/components/ui/badge';
 import { CheckCircle, XCircle, Clock, Loader2, User } from 'lucide-react';
 
 interface OutputConsoleProps {
@@ -15,56 +14,59 @@ export default function OutputConsole({ output, error, isLoading, executionTime,
   const hasContent = hasOutput || hasError;
 
   return (
-    <div className="h-full flex flex-col bg-background rounded-b-lg overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Status and timing info */}
-      <div className="px-4 py-2 flex items-center justify-between border-b bg-muted/10">
-        <div className="flex items-center space-x-2">
+      <div className="ide-console-status px-3 py-1.5 flex items-center justify-between gap-2 border-b flex-shrink-0">
+        <div className="flex items-center gap-2">
           {lastExecutedBy && hasContent && (
-            <Badge variant="outline" className="text-xs">
-              <User className="w-3 h-3 mr-1" />
+            <span className="status-pill" data-tone="neutral">
+              <User className="w-3 h-3" />
               {lastExecutedBy}
-            </Badge>
+            </span>
           )}
         </div>
-        <div className="flex items-center space-x-2">
-          {executionTime && executionTime > 0 && (
-            <Badge variant="secondary" className="text-xs">
-              <Clock className="w-3 h-3 mr-1" />
+        <div className="flex items-center gap-2">
+          {executionTime && executionTime > 0 ? (
+            <span className="status-pill" data-tone="neutral">
+              <Clock className="w-3 h-3" />
               {executionTime.toFixed(3)}s
-            </Badge>
-          )}
+            </span>
+          ) : null}
           {hasContent && !isLoading && (
-            <div className="flex items-center space-x-1">
-              {hasError ? (
-                <XCircle className="w-4 h-4 text-destructive" />
-              ) : (
-                <CheckCircle className="w-4 h-4 text-green-500" />
-              )}
-            </div>
+            hasError ? (
+              <span className="status-pill" data-tone="error">
+                <XCircle className="w-3 h-3" />
+                Error
+              </span>
+            ) : (
+              <span className="status-pill" data-tone="success">
+                <CheckCircle className="w-3 h-3" />
+                OK
+              </span>
+            )
           )}
         </div>
       </div>
-      
+
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        <div className="h-full bg-zinc-950 p-4 font-mono text-sm overflow-auto rounded-b-lg">
+        <div className="console-surface h-full p-4 text-sm overflow-auto">
           {isLoading ? (
-            <div className="flex items-center space-x-2 text-muted-foreground">
+            <div className="console-dim flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>Running code...</span>
             </div>
           ) : hasContent ? (
             <div className="whitespace-pre-wrap">
               {hasError ? (
-                <span className="text-red-400">{error}</span>
+                <span className="console-error">{error}</span>
               ) : (
-                <span className="text-green-400">{output}</span>
+                <span className="console-ok">{output}</span>
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <div className="console-dim flex flex-col items-center justify-center h-full">
               <div className="text-center">
-                <div className="text-2xl mb-2">⚡</div>
                 <p className="text-sm">No output yet.</p>
                 <p className="text-xs">Run your code to see results.</p>
               </div>

@@ -1,4 +1,12 @@
 @import "tailwindcss";
+@import "./styles/admin.css";
+@import "./styles/ide.css";
+@import "./styles/resume.css";
+@import "./styles/settings.css";
+
+/* Class-based dark mode: `dark:` utilities follow the `.dark` class on <html>,
+   matching how the token variables already switch (ThemeContext). */
+@custom-variant dark (&:is(.dark *));
 
 /* Tailwind v4 Theme Configuration */
 @theme {
@@ -41,14 +49,36 @@
     border-color: var(--color-border, currentColor);
   }
 
+  :root {
+    /* Workbench structural tokens (single design direction) */
+    --font-display-d: "IBM Plex Sans", ui-sans-serif, sans-serif;
+    --font-body-d: "IBM Plex Sans", ui-sans-serif, sans-serif;
+    --font-mono-d: "IBM Plex Mono", ui-monospace, monospace;
+    --r-ui: 4px;
+    --r-panel: 6px;
+    --r-pill: 9999px;
+    --dur-enter: 180ms;
+    --dur-fast: 120ms;
+    --ease-d: cubic-bezier(0.2, 0.7, 0.3, 1);
+    --shadow-panel: none;
+    --color-tint: hsl(210 40% 94%);
+    --color-console: #18181b;
+    --color-preview-canvas: hsl(215 16% 60%);
+    --cta-bg: var(--color-primary);
+    --cta-fg: var(--color-primary-foreground);
+    --cta-border: var(--color-primary);
+    --nav-offset: 57px;
+  }
+
   /* Set global styles */
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-body-d);
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Dark mode theme variables */
+  /* Dark mode theme variables (generic fallback; palettes override below) */
   .dark {
     --color-background: hsl(222.2 84% 4.9%);
     --color-foreground: hsl(210 40% 98%);
@@ -76,6 +106,1234 @@
     --color-info: hsl(199 89% 58%);
     --color-info-foreground: hsl(210 40% 98%);
   }
+}
+
+/* ============================================================
+   PALETTE 1 — "MONO" (white / black)
+   ============================================================ */
+[data-palette="mono"] {
+  --color-background: #f7f7f7;
+  --color-foreground: #111111;
+  --color-card: #ffffff;
+  --color-card-foreground: #111111;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #111111;
+  --color-primary: #111111;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #efefef;
+  --color-secondary-foreground: #111111;
+  --color-muted: #f0f0f0;
+  --color-muted-foreground: #666666;
+  --color-accent: #ececec;
+  --color-accent-foreground: #111111;
+  --color-border: #e2e2e2;
+  --color-input: #d4d4d4;
+  --color-ring: #111111;
+  --color-tint: #e9e9e9;
+  --color-console: #161616;
+  --color-preview-canvas: #e4e4e4;
+  --cta-bg: #111111;
+  --cta-fg: #ffffff;
+  --cta-border: #111111;
+}
+
+[data-palette="mono"].dark {
+  --color-background: #0f0f0f;
+  --color-foreground: #f2f2f2;
+  --color-card: #191919;
+  --color-card-foreground: #f2f2f2;
+  --color-popover: #1f1f1f;
+  --color-popover-foreground: #f2f2f2;
+  --color-primary: #f2f2f2;
+  --color-primary-foreground: #111111;
+  --color-secondary: #232323;
+  --color-secondary-foreground: #f2f2f2;
+  --color-muted: #222222;
+  --color-muted-foreground: #9a9a9a;
+  --color-accent: #262626;
+  --color-accent-foreground: #f2f2f2;
+  --color-border: #2a2a2a;
+  --color-input: #3a3a3a;
+  --color-ring: #f2f2f2;
+  --color-tint: #2c2c2c;
+  --color-console: #0a0a0a;
+  --color-preview-canvas: #090909;
+  --cta-bg: #f2f2f2;
+  --cta-fg: #111111;
+  --cta-border: #f2f2f2;
+}
+
+/* ============================================================
+   PALETTE 2 — "GREY" (cool neutral, slate ink)
+   ============================================================ */
+[data-palette="grey"] {
+  --color-background: #eef0f2;
+  --color-foreground: #1f242b;
+  --color-card: #ffffff;
+  --color-card-foreground: #1f242b;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1f242b;
+  --color-primary: #3a424d;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e4e7eb;
+  --color-secondary-foreground: #1f242b;
+  --color-muted: #e4e7eb;
+  --color-muted-foreground: #5b6470;
+  --color-accent: #e0e4e9;
+  --color-accent-foreground: #1f242b;
+  --color-border: #d7dbe0;
+  --color-input: #c6ccd3;
+  --color-ring: #3a424d;
+  --color-tint: #dde2e8;
+  --color-console: #1a1e24;
+  --color-preview-canvas: #dfe3e8;
+  --cta-bg: #3a424d;
+  --cta-fg: #ffffff;
+  --cta-border: #3a424d;
+}
+
+[data-palette="grey"].dark {
+  --color-background: #16181b;
+  --color-foreground: #e8eaed;
+  --color-card: #1f2226;
+  --color-card-foreground: #e8eaed;
+  --color-popover: #24272c;
+  --color-popover-foreground: #e8eaed;
+  --color-primary: #dfe3e8;
+  --color-primary-foreground: #16181b;
+  --color-secondary: #26292e;
+  --color-secondary-foreground: #e8eaed;
+  --color-muted: #26292e;
+  --color-muted-foreground: #979ea8;
+  --color-accent: #2b2f34;
+  --color-accent-foreground: #e8eaed;
+  --color-border: #2e3237;
+  --color-input: #3c4147;
+  --color-ring: #dfe3e8;
+  --color-tint: #30353c;
+  --color-console: #101317;
+  --color-preview-canvas: #101216;
+  --cta-bg: #dfe3e8;
+  --cta-fg: #16181b;
+  --cta-border: #dfe3e8;
+}
+
+/* ============================================================
+   PALETTE 3 — "ANTHROPIC" (warm ivory & charcoal, Claude-style)
+   ============================================================ */
+[data-palette="anthropic"] {
+  --color-background: #faf9f5;
+  --color-foreground: #141413;
+  --color-card: #ffffff;
+  --color-card-foreground: #141413;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #141413;
+  --color-primary: #141413;
+  --color-primary-foreground: #faf9f5;
+  --color-secondary: #f0efe8;
+  --color-secondary-foreground: #141413;
+  --color-muted: #f0efe8;
+  --color-muted-foreground: #6e6c64;
+  --color-accent: #edece3;
+  --color-accent-foreground: #141413;
+  --color-border: #e3e1d9;
+  --color-input: #d3d1c7;
+  --color-ring: #141413;
+  --color-tint: #e8e6dc;
+  --color-console: #1f1e1d;
+  --color-preview-canvas: #dedcd1;
+  --cta-bg: #141413;
+  --cta-fg: #faf9f5;
+  --cta-border: #141413;
+}
+
+[data-palette="anthropic"].dark {
+  --color-background: #1f1e1d;
+  --color-foreground: #f0eee6;
+  --color-card: #262624;
+  --color-card-foreground: #f0eee6;
+  --color-popover: #30302e;
+  --color-popover-foreground: #f0eee6;
+  --color-primary: #f0eee6;
+  --color-primary-foreground: #1f1e1d;
+  --color-secondary: #30302e;
+  --color-secondary-foreground: #f0eee6;
+  --color-muted: #2c2b29;
+  --color-muted-foreground: #a29e93;
+  --color-accent: #34332f;
+  --color-accent-foreground: #f0eee6;
+  --color-border: #3a3835;
+  --color-input: #4a4844;
+  --color-ring: #f0eee6;
+  --color-tint: #3a3835;
+  --color-console: #161514;
+  --color-preview-canvas: #171615;
+  --cta-bg: #f0eee6;
+  --cta-fg: #1f1e1d;
+  --cta-border: #f0eee6;
+}
+
+/* ============================================================
+   PALETTE 4 — "OCEAN" (cool blue-teal accents)
+   ============================================================ */
+[data-palette="ocean"] {
+  --color-background: #f0f5f7;
+  --color-foreground: #12232b;
+  --color-card: #ffffff;
+  --color-card-foreground: #12232b;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #12232b;
+  --color-primary: #146d8f;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e2ebef;
+  --color-secondary-foreground: #12232b;
+  --color-muted: #e2ebef;
+  --color-muted-foreground: #52707d;
+  --color-accent: #dcebf1;
+  --color-accent-foreground: #12232b;
+  --color-border: #d3e0e6;
+  --color-input: #bfd2da;
+  --color-ring: #146d8f;
+  --color-tint: #d8e7ee;
+  --color-console: #0f1c22;
+  --color-preview-canvas: #dbe5ea;
+  --cta-bg: #146d8f;
+  --cta-fg: #ffffff;
+  --cta-border: #146d8f;
+}
+
+[data-palette="ocean"].dark {
+  --color-background: #0f181d;
+  --color-foreground: #e4eef2;
+  --color-card: #16232a;
+  --color-card-foreground: #e4eef2;
+  --color-popover: #1b2b33;
+  --color-popover-foreground: #e4eef2;
+  --color-primary: #4db1d6;
+  --color-primary-foreground: #0c191f;
+  --color-secondary: #1d2d35;
+  --color-secondary-foreground: #e4eef2;
+  --color-muted: #1d2d35;
+  --color-muted-foreground: #8fa8b3;
+  --color-accent: #21414d;
+  --color-accent-foreground: #e4eef2;
+  --color-border: #24363f;
+  --color-input: #31454f;
+  --color-ring: #4db1d6;
+  --color-tint: #1f3641;
+  --color-console: #0a1216;
+  --color-preview-canvas: #0b1418;
+  --cta-bg: #4db1d6;
+  --cta-fg: #0c191f;
+  --cta-border: #4db1d6;
+}
+
+/* ============================================================
+   PALETTE 5 — "FOREST" (deep green accents)
+   ============================================================ */
+[data-palette="forest"] {
+  --color-background: #f1f5ef;
+  --color-foreground: #16211a;
+  --color-card: #ffffff;
+  --color-card-foreground: #16211a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #16211a;
+  --color-primary: #2f6b3a;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e3eadf;
+  --color-secondary-foreground: #16211a;
+  --color-muted: #e3eadf;
+  --color-muted-foreground: #55684f;
+  --color-accent: #e0e9da;
+  --color-accent-foreground: #16211a;
+  --color-border: #d5decf;
+  --color-input: #c2cfba;
+  --color-ring: #2f6b3a;
+  --color-tint: #dbe6d3;
+  --color-console: #121a14;
+  --color-preview-canvas: #dde5d7;
+  --cta-bg: #2f6b3a;
+  --cta-fg: #ffffff;
+  --cta-border: #2f6b3a;
+}
+
+[data-palette="forest"].dark {
+  --color-background: #121a14;
+  --color-foreground: #e6ede4;
+  --color-card: #1a241c;
+  --color-card-foreground: #e6ede4;
+  --color-popover: #202c22;
+  --color-popover-foreground: #e6ede4;
+  --color-primary: #7fbf6a;
+  --color-primary-foreground: #10190f;
+  --color-secondary: #212e24;
+  --color-secondary-foreground: #e6ede4;
+  --color-muted: #212e24;
+  --color-muted-foreground: #93a68e;
+  --color-accent: #2e4433;
+  --color-accent-foreground: #e6ede4;
+  --color-border: #2b3a2e;
+  --color-input: #3a4c3e;
+  --color-ring: #7fbf6a;
+  --color-tint: #2a3d2c;
+  --color-console: #0c120d;
+  --color-preview-canvas: #0d130e;
+  --cta-bg: #7fbf6a;
+  --cta-fg: #10190f;
+  --cta-border: #7fbf6a;
+}
+
+/* ============================================================
+   PALETTE 6 — "TERRACOTTA" (warm clay accents)
+   ============================================================ */
+[data-palette="terracotta"] {
+  --color-background: #faf3ee;
+  --color-foreground: #291812;
+  --color-card: #ffffff;
+  --color-card-foreground: #291812;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #291812;
+  --color-primary: #b0552f;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f1e4da;
+  --color-secondary-foreground: #291812;
+  --color-muted: #f1e4da;
+  --color-muted-foreground: #7c5f4e;
+  --color-accent: #f0e0d3;
+  --color-accent-foreground: #291812;
+  --color-border: #e6d5c8;
+  --color-input: #d6bfae;
+  --color-ring: #b0552f;
+  --color-tint: #eeddcf;
+  --color-console: #201510;
+  --color-preview-canvas: #e8dacd;
+  --cta-bg: #b0552f;
+  --cta-fg: #ffffff;
+  --cta-border: #b0552f;
+}
+
+[data-palette="terracotta"].dark {
+  --color-background: #1f1611;
+  --color-foreground: #f2e7dd;
+  --color-card: #291e17;
+  --color-card-foreground: #f2e7dd;
+  --color-popover: #31251c;
+  --color-popover-foreground: #f2e7dd;
+  --color-primary: #d98a5f;
+  --color-primary-foreground: #221207;
+  --color-secondary: #2e2119;
+  --color-secondary-foreground: #f2e7dd;
+  --color-muted: #2e2119;
+  --color-muted-foreground: #b39a86;
+  --color-accent: #42301f;
+  --color-accent-foreground: #f2e7dd;
+  --color-border: #3c2d22;
+  --color-input: #4c3a2c;
+  --color-ring: #d98a5f;
+  --color-tint: #3c2b1e;
+  --color-console: #170f0a;
+  --color-preview-canvas: #150e09;
+  --cta-bg: #d98a5f;
+  --cta-fg: #221207;
+  --cta-border: #d98a5f;
+}
+
+/* ============================================================
+   PALETTE 7 — "SAGE" (muted green-grey accents)
+   ============================================================ */
+[data-palette="sage"] {
+  --color-background: #f2f4f0;
+  --color-foreground: #1c211a;
+  --color-card: #ffffff;
+  --color-card-foreground: #1c211a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1c211a;
+  --color-primary: #5f7355;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e5e9e1;
+  --color-secondary-foreground: #1c211a;
+  --color-muted: #e5e9e1;
+  --color-muted-foreground: #5f6b58;
+  --color-accent: #e2e8dc;
+  --color-accent-foreground: #1c211a;
+  --color-border: #d7ddd1;
+  --color-input: #c4cdbc;
+  --color-ring: #5f7355;
+  --color-tint: #dee5d6;
+  --color-console: #171a14;
+  --color-preview-canvas: #dfe4d9;
+  --cta-bg: #5f7355;
+  --cta-fg: #ffffff;
+  --cta-border: #5f7355;
+}
+
+[data-palette="sage"].dark {
+  --color-background: #171a15;
+  --color-foreground: #e7eae2;
+  --color-card: #1f231c;
+  --color-card-foreground: #e7eae2;
+  --color-popover: #262b22;
+  --color-popover-foreground: #e7eae2;
+  --color-primary: #a9bb96;
+  --color-primary-foreground: #151910;
+  --color-secondary: #252a21;
+  --color-secondary-foreground: #e7eae2;
+  --color-muted: #252a21;
+  --color-muted-foreground: #9aa590;
+  --color-accent: #353f2c;
+  --color-accent-foreground: #e7eae2;
+  --color-border: #2f352a;
+  --color-input: #3f463a;
+  --color-ring: #a9bb96;
+  --color-tint: #303827;
+  --color-console: #10120d;
+  --color-preview-canvas: #11130e;
+  --cta-bg: #a9bb96;
+  --cta-fg: #151910;
+  --cta-border: #a9bb96;
+}
+
+/* ============================================================
+   PALETTE 8 — "ROSE" (muted berry accents)
+   ============================================================ */
+[data-palette="rose"] {
+  --color-background: #faf2f4;
+  --color-foreground: #27151a;
+  --color-card: #ffffff;
+  --color-card-foreground: #27151a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #27151a;
+  --color-primary: #a84c63;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f2e1e6;
+  --color-secondary-foreground: #27151a;
+  --color-accent: #f1dde3;
+  --color-accent-foreground: #27151a;
+  --color-muted: #f2e1e6;
+  --color-muted-foreground: #7d5a64;
+  --color-border: #e8d3da;
+  --color-input: #d8bcc5;
+  --color-ring: #a84c63;
+  --color-tint: #f0dae1;
+  --color-console: #201317;
+  --color-preview-canvas: #ead9de;
+  --cta-bg: #a84c63;
+  --cta-fg: #ffffff;
+  --cta-border: #a84c63;
+}
+
+[data-palette="rose"].dark {
+  --color-background: #1e1418;
+  --color-foreground: #f1e5e9;
+  --color-card: #281b20;
+  --color-card-foreground: #f1e5e9;
+  --color-popover: #302127;
+  --color-popover-foreground: #f1e5e9;
+  --color-primary: #d98ba0;
+  --color-primary-foreground: #220e15;
+  --color-secondary: #2d1f24;
+  --color-secondary-foreground: #f1e5e9;
+  --color-muted: #2d1f24;
+  --color-muted-foreground: #b2959e;
+  --color-accent: #422c35;
+  --color-accent-foreground: #f1e5e9;
+  --color-border: #3a2930;
+  --color-input: #4a353d;
+  --color-ring: #d98ba0;
+  --color-tint: #3b2830;
+  --color-console: #160d10;
+  --color-preview-canvas: #140c0f;
+  --cta-bg: #d98ba0;
+  --cta-fg: #220e15;
+  --cta-border: #d98ba0;
+}
+
+/* ============================================================
+   PALETTE 9 — "SAND" (warm tan accents)
+   ============================================================ */
+[data-palette="sand"] {
+  --color-background: #f7f2e9;
+  --color-foreground: #241d12;
+  --color-card: #ffffff;
+  --color-card-foreground: #241d12;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #241d12;
+  --color-primary: #8a6a3b;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #eee5d5;
+  --color-secondary-foreground: #241d12;
+  --color-muted: #eee5d5;
+  --color-muted-foreground: #776a52;
+  --color-accent: #ede2cd;
+  --color-accent-foreground: #241d12;
+  --color-border: #e2d7c1;
+  --color-input: #d0c1a4;
+  --color-ring: #8a6a3b;
+  --color-tint: #eadfc8;
+  --color-console: #1d1810;
+  --color-preview-canvas: #e7ddc9;
+  --cta-bg: #8a6a3b;
+  --cta-fg: #ffffff;
+  --cta-border: #8a6a3b;
+}
+
+[data-palette="sand"].dark {
+  --color-background: #1c1712;
+  --color-foreground: #f0e9dc;
+  --color-card: #262019;
+  --color-card-foreground: #f0e9dc;
+  --color-popover: #2e271e;
+  --color-popover-foreground: #f0e9dc;
+  --color-primary: #cdac72;
+  --color-primary-foreground: #1c130a;
+  --color-secondary: #2b241b;
+  --color-secondary-foreground: #f0e9dc;
+  --color-muted: #2b241b;
+  --color-muted-foreground: #b0a288;
+  --color-accent: #40351f;
+  --color-accent-foreground: #f0e9dc;
+  --color-border: #392f22;
+  --color-input: #483c2b;
+  --color-ring: #cdac72;
+  --color-tint: #3a2f1d;
+  --color-console: #14100a;
+  --color-preview-canvas: #130f0a;
+  --cta-bg: #cdac72;
+  --cta-fg: #1c130a;
+  --cta-border: #cdac72;
+}
+
+/* ============================================================
+   PALETTE 10 — "MIDNIGHT" (deep navy accents)
+   ============================================================ */
+[data-palette="midnight"] {
+  --color-background: #eef1f6;
+  --color-foreground: #131a28;
+  --color-card: #ffffff;
+  --color-card-foreground: #131a28;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #131a28;
+  --color-primary: #23395d;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e2e7f0;
+  --color-secondary-foreground: #131a28;
+  --color-muted: #e2e7f0;
+  --color-muted-foreground: #55617a;
+  --color-accent: #dfe5f0;
+  --color-accent-foreground: #131a28;
+  --color-border: #d4dbe8;
+  --color-input: #bfc9dc;
+  --color-ring: #23395d;
+  --color-tint: #dde4f0;
+  --color-console: #0e1420;
+  --color-preview-canvas: #dde2ec;
+  --cta-bg: #23395d;
+  --cta-fg: #ffffff;
+  --cta-border: #23395d;
+}
+
+[data-palette="midnight"].dark {
+  --color-background: #0d1220;
+  --color-foreground: #e6eaf2;
+  --color-card: #141b2c;
+  --color-card-foreground: #e6eaf2;
+  --color-popover: #192134;
+  --color-popover-foreground: #e6eaf2;
+  --color-primary: #8fb0e8;
+  --color-primary-foreground: #0a1020;
+  --color-secondary: #1a2234;
+  --color-secondary-foreground: #e6eaf2;
+  --color-muted: #1a2234;
+  --color-muted-foreground: #8f9ab0;
+  --color-accent: #24314e;
+  --color-accent-foreground: #e6eaf2;
+  --color-border: #232e45;
+  --color-input: #33405c;
+  --color-ring: #8fb0e8;
+  --color-tint: #202c46;
+  --color-console: #080d17;
+  --color-preview-canvas: #0a0e19;
+  --cta-bg: #8fb0e8;
+  --cta-fg: #0a1020;
+  --cta-border: #8fb0e8;
+}
+
+/* ============================================================
+   BACKDROPS — Outlook-style photo themes (CC0 images).
+   The photo fills the canvas; chrome surfaces go translucent
+   with blur so content stays legible over the image.
+   ============================================================ */
+:root {
+  /* Mode-aware wash over backdrop photos so chrome stays legible */
+  --backdrop-scrim: rgb(255 255 255 / 0.3);
+}
+
+.dark {
+  --backdrop-scrim: rgb(0 0 0 / 0.5);
+}
+
+[data-backdrop="beach"] .app-canvas {
+  background-image: linear-gradient(var(--backdrop-scrim), var(--backdrop-scrim)),
+    url("./assets/backdrops/beach.jpg");
+}
+
+[data-backdrop="forest"] .app-canvas {
+  background-image: linear-gradient(var(--backdrop-scrim), var(--backdrop-scrim)),
+    url("./assets/backdrops/forest.jpg");
+}
+
+[data-backdrop="sunset"] .app-canvas {
+  background-image: linear-gradient(var(--backdrop-scrim), var(--backdrop-scrim)),
+    url("./assets/backdrops/sunset.jpg");
+}
+
+[data-backdrop="mountains"] .app-canvas {
+  background-image: linear-gradient(var(--backdrop-scrim), var(--backdrop-scrim)),
+    url("./assets/backdrops/mountains.jpg");
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .app-canvas {
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+[data-backdrop]:not([data-backdrop="none"]) :is(.panel, .table-shell, .kpi-strip, .toolbar) {
+  background-color: color-mix(in srgb, var(--color-card) 84%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+[data-backdrop]:not([data-backdrop="none"]) :is(.navbar, .admin-rail) {
+  background-color: color-mix(in srgb, var(--color-background) 78%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .data-table th {
+  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+}
+
+/* Text sitting directly on the photo: strong background-colored halo
+   (white halo in light mode, dark halo in dark mode) + full-contrast ink */
+[data-backdrop]:not([data-backdrop="none"])
+  :is(.page-title, .page-sub, .section-title, .nav-group-label, .pane-label) {
+  text-shadow: 0 1px 3px var(--color-background), 0 0 14px var(--color-background),
+    0 0 4px var(--color-background);
+}
+
+[data-backdrop]:not([data-backdrop="none"]) :is(.page-sub, .pane-label, .nav-group-label) {
+  color: color-mix(in srgb, var(--color-foreground) 78%, var(--color-background));
+}
+
+/* Quiet/outline buttons on the photo need their own surface */
+[data-backdrop]:not([data-backdrop="none"]) .cta-quiet {
+  background: color-mix(in srgb, var(--color-card) 80%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .cta-quiet:hover {
+  background: color-mix(in srgb, var(--color-card) 95%, transparent);
+}
+
+/* IDE: the photo shows through the gaps AROUND the panes; the panes
+   themselves stay solid for editor/output legibility */
+[data-backdrop]:not([data-backdrop="none"]) .ide-stage {
+  padding: 12px;
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .ide-stage .panel:not(.ide-pane-dark) {
+  background: var(--color-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .ide-split-t {
+  padding-bottom: 6px;
+}
+
+[data-backdrop]:not([data-backdrop="none"]) .ide-split-b {
+  padding-top: 6px;
+}
+
+@media (min-width: 768px) {
+  [data-backdrop]:not([data-backdrop="none"]) .ide-split-l {
+    padding-right: 6px;
+  }
+
+  [data-backdrop]:not([data-backdrop="none"]) .ide-split-r {
+    padding-left: 6px;
+  }
+}
+
+/* ============================================================
+   APP SHELL & CANVAS
+   ============================================================ */
+.app-canvas {
+  background: var(--color-background);
+  min-height: 100vh;
+}
+
+/* Viewport height minus the top chrome */
+.screen-h {
+  height: calc(100vh - var(--nav-offset));
+}
+
+/* ============================================================
+   NAVBAR
+   ============================================================ */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  width: 100%;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background);
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--r-ui);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-d), background-color var(--dur-fast) var(--ease-d);
+}
+
+.nav-link:hover {
+  color: var(--color-foreground);
+  background: var(--color-accent);
+}
+
+.nav-link[data-active="true"] {
+  color: var(--color-foreground);
+  background: var(--color-tint);
+  font-weight: 600;
+}
+
+.brand-word {
+  font-family: var(--font-display-d);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+/* ============================================================
+   PAGE ANATOMY: title row → control row → content
+   ============================================================ */
+.page-shell {
+  width: 100%;
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.page-title {
+  font-family: var(--font-display-d);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.page-sub {
+  color: var(--color-muted-foreground);
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+}
+
+.title-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+/* ============================================================
+   CTAs (tactile press — Workbench)
+   ============================================================ */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: var(--cta-bg);
+  color: var(--cta-fg);
+  border: 1px solid var(--cta-border);
+  border-radius: var(--r-ui);
+  padding: 0.48rem 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: inset 0 -1.5px 0 rgb(0 0 0 / 0.22);
+  transition: transform var(--dur-fast) var(--ease-d), filter var(--dur-fast) var(--ease-d),
+    background-color var(--dur-fast) var(--ease-d), box-shadow var(--dur-fast) var(--ease-d);
+}
+
+.cta:hover {
+  filter: brightness(0.93);
+}
+
+.cta:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+.cta:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.cta-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  font-weight: 500;
+  font-size: 0.82rem;
+  background: transparent;
+  color: var(--color-foreground);
+  border: 1px solid var(--color-input);
+  border-radius: var(--r-ui);
+  padding: 0.44rem 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-d), border-color var(--dur-fast) var(--ease-d);
+}
+
+.cta-quiet:hover {
+  background: var(--color-muted);
+}
+
+.cta-quiet:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Keyboard hint chip rendered inside a CTA (e.g. Run ⌘↵) */
+.kbd-hint {
+  font-family: var(--font-mono-d);
+  font-size: 0.62rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: calc(var(--r-ui) / 2);
+  background: rgb(255 255 255 / 0.2);
+  border: 1px solid rgb(255 255 255 / 0.25);
+  line-height: 1.2;
+}
+
+.dark .kbd-hint {
+  background: rgb(0 0 0 / 0.18);
+  border-color: rgb(0 0 0 / 0.25);
+}
+
+/* ============================================================
+   PANELS & PANES
+   ============================================================ */
+.panel {
+  background: var(--color-card);
+  border-radius: var(--r-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
+}
+
+.pane-label {
+  font-family: var(--font-mono-d);
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-muted-foreground);
+}
+
+/* ============================================================
+   KPI STRIP — one segmented strip, hairline-divided (PostHog)
+   ============================================================ */
+.kpi-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+
+.kpi-cell {
+  padding: 1rem 1.25rem;
+  min-width: 0;
+}
+
+.kpi-cell + .kpi-cell {
+  border-left: 1px solid var(--color-border);
+}
+
+.kpi-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.kpi-value {
+  font-family: var(--font-display-d);
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-top: 0.2rem;
+}
+
+.kpi-delta {
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+  margin-top: 0.1rem;
+}
+
+@media (max-width: 900px) {
+  .kpi-strip {
+    grid-auto-flow: row;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .kpi-cell + .kpi-cell {
+    border-left: none;
+  }
+
+  .kpi-cell:nth-child(even) {
+    border-left: 1px solid var(--color-border);
+  }
+
+  .kpi-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--color-border);
+  }
+}
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+.table-shell {
+  background: var(--color-card);
+  border-radius: var(--r-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.data-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--color-muted) 40%, var(--color-card));
+}
+
+.data-table td {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr {
+  transition: background-color var(--dur-fast) var(--ease-d);
+}
+
+.data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-muted) 55%, transparent);
+}
+
+/* Full-row state tinting (n8n) */
+.row-error {
+  background: color-mix(in srgb, var(--color-destructive) 8%, transparent);
+}
+
+.row-success {
+  background: transparent;
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.14rem 0.55rem;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.status-pill[data-tone="success"] {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 25%, transparent);
+}
+
+.status-pill[data-tone="warning"] {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 28%, transparent);
+}
+
+.status-pill[data-tone="error"] {
+  background: color-mix(in srgb, var(--color-destructive) 10%, transparent);
+  color: var(--color-destructive);
+  border-color: color-mix(in srgb, var(--color-destructive) 25%, transparent);
+}
+
+.status-pill[data-tone="info"] {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 25%, transparent);
+}
+
+.status-pill[data-tone="neutral"] {
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+}
+
+/* ============================================================
+   ADMIN NAVIGATION — flush left rail, warm-tint active item
+   ============================================================ */
+.nav-group-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted-foreground);
+  padding: 0.9rem 0.7rem 0.3rem;
+  display: block;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  text-align: left;
+  font-size: 0.84rem;
+  padding: 0.42rem 0.7rem;
+  border-radius: var(--r-ui);
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-d), color var(--dur-fast) var(--ease-d);
+}
+
+.nav-item:hover {
+  color: var(--color-foreground);
+  background: var(--color-muted);
+}
+
+.nav-item[data-active="true"] {
+  color: var(--color-foreground);
+  background: var(--color-tint);
+  font-weight: 600;
+}
+
+.admin-rail {
+  width: 230px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border);
+  padding: 0.75rem 0.6rem;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   IDE / TOOLBAR
+   ============================================================ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background);
+  flex-shrink: 0;
+}
+
+.toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.4rem 0.15rem;
+  background: var(--color-border);
+}
+
+/* Console/output surface */
+.console-surface {
+  background: var(--color-console);
+  color: #e4e4e7;
+  font-family: var(--font-mono-d);
+}
+
+/* User-selected output console background (Settings › Editor Preferences) */
+[data-console-bg="black"] {
+  --color-console: #000000;
+}
+
+[data-console-bg="charcoal"] {
+  --color-console: #1e1e1e;
+}
+
+[data-console-bg="navy"] {
+  --color-console: #0b1826;
+}
+
+[data-console-bg="espresso"] {
+  --color-console: #221712;
+}
+
+[data-console-bg="forest"] {
+  --color-console: #0c1510;
+}
+
+/* ============================================================
+   RESUME BUILDER
+   ============================================================ */
+.preview-canvas {
+  background: var(--color-preview-canvas);
+  position: relative;
+}
+
+.export-anchor {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  display: flex;
+  gap: 0.5rem;
+  z-index: 10;
+}
+
+.saved-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: rgb(255 255 255 / 0.85);
+  background: rgb(0 0 0 / 0.25);
+  border-radius: var(--r-pill);
+  padding: 0.2rem 0.6rem;
+}
+
+/* ============================================================
+   MOTION (tactile: short rises, press-down buttons)
+   ============================================================ */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.anim-enter {
+  animation: rise-in var(--dur-enter) var(--ease-d) both;
+}
+
+.anim-sheet {
+  animation: sheet-in var(--dur-enter) var(--ease-d) both;
+}
+
+.stagger > * {
+  animation: rise-in var(--dur-enter) var(--ease-d) both;
+}
+
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 30ms; }
+.stagger > *:nth-child(3) { animation-delay: 60ms; }
+.stagger > *:nth-child(4) { animation-delay: 90ms; }
+.stagger > *:nth-child(5) { animation-delay: 120ms; }
+.stagger > *:nth-child(6) { animation-delay: 150ms; }
+.stagger > *:nth-child(7) { animation-delay: 180ms; }
+.stagger > *:nth-child(8) { animation-delay: 210ms; }
+.stagger > *:nth-child(9) { animation-delay: 240ms; }
+.stagger > *:nth-child(10) { animation-delay: 270ms; }
+.stagger > *:nth-child(11) { animation-delay: 300ms; }
+.stagger > *:nth-child(12) { animation-delay: 330ms; }
+
+.hover-lift {
+  transition: transform var(--dur-fast) var(--ease-d), border-color var(--dur-fast) var(--ease-d);
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-input);
+}
+
+.press {
+  transition: transform var(--dur-fast) var(--ease-d);
+}
+
+.press:active {
+  transform: translateY(1px);
+}
+
+/* ============================================================
+   GLOBAL CHROME — shadcn primitives follow the 4px/6px scale
+   ============================================================ */
+:is([data-slot="button"], [data-slot="input"], [data-slot="textarea"],
+[data-slot="select-trigger"], [data-slot="badge"], [data-slot="tabs-trigger"]) {
+  border-radius: 4px !important;
+}
+
+:is([data-slot="card"], [data-slot="dialog-content"],
+[data-slot="select-content"], [data-slot="dropdown-menu-content"], [data-slot="popover-content"],
+[data-slot="tabs-list"]) {
+  border-radius: 6px !important;
 }
 
 /* Specific component overrides for shadcn UI transparency fixes */
@@ -141,23 +1399,23 @@
 
 /* Status badge styles */
 .badge-success {
-  background-color: hsl(142 76% 36% / 0.1);
+  background-color: color-mix(in srgb, var(--color-success) 10%, transparent);
   color: var(--color-success);
-  border-color: hsl(142 76% 36% / 0.2);
+  border-color: color-mix(in srgb, var(--color-success) 20%, transparent);
   border-width: 1px;
 }
 
 .badge-warning {
-  background-color: hsl(38 92% 50% / 0.1);
+  background-color: color-mix(in srgb, var(--color-warning) 10%, transparent);
   color: var(--color-warning);
-  border-color: hsl(38 92% 50% / 0.2);
+  border-color: color-mix(in srgb, var(--color-warning) 20%, transparent);
   border-width: 1px;
 }
 
 .badge-info {
-  background-color: hsl(199 89% 48% / 0.1);
+  background-color: color-mix(in srgb, var(--color-info) 10%, transparent);
   color: var(--color-info);
-  border-color: hsl(199 89% 48% / 0.2);
+  border-color: color-mix(in srgb, var(--color-info) 20%, transparent);
   border-width: 1px;
 }
 
@@ -166,22 +1424,6 @@
   color: var(--color-muted-foreground);
   border-color: var(--color-muted);
   border-width: 1px;
-}
-
-/* Dark mode adjustments for badges */
-.dark .badge-success {
-  background-color: hsl(142 76% 46% / 0.1);
-  border-color: hsl(142 76% 46% / 0.2);
-}
-
-.dark .badge-warning {
-  background-color: hsl(38 92% 60% / 0.1);
-  border-color: hsl(38 92% 60% / 0.2);
-}
-
-.dark .badge-info {
-  background-color: hsl(199 89% 58% / 0.1);
-  border-color: hsl(199 89% 58% / 0.2);
 }
 
 /* Remote cursor styles for collaborative editing */
@@ -215,8 +1457,8 @@
 
 .dark .resume-editor [data-slot="input"],
 .dark .resume-editor [data-slot="textarea"] {
-  background-color: hsl(222.2 84% 8%);
-  border-color: hsl(215 20% 30%);
+  background-color: color-mix(in srgb, var(--color-card) 80%, black);
+  border-color: var(--color-input);
 }
 
 [class*="remote-cursor-after-"]::after {

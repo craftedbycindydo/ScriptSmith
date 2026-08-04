@@ -41,6 +41,9 @@ class User(Base):
     # Profile fields
     bio = Column(Text, nullable=True)
     avatar_url = Column(String(500), nullable=True)
+
+    # UI preferences (JSON: {"palette": ..., "mode": ..., "backdrop": ...})
+    ui_preferences = Column(Text, nullable=True)
     
     # Relationships
     created_templates = relationship("Template", back_populates="creator")

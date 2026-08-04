@@ -22,8 +22,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Select,
@@ -203,33 +201,37 @@ function SortableSection({
     transition,
     opacity: isDragging ? 0.5 : 1,
   };
+  // Outer div is a plain wrapper so parent `.stagger` entry animations never
+  // fight with dnd-kit's inline transform (applied to the inner node).
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className="mb-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5">
-          <button {...listeners} className="cursor-grab active:cursor-grabbing touch-none p-0.5 rounded hover:bg-accent">
-            <GripVertical className="h-4 w-4 text-muted-foreground" />
-          </button>
-          <span className="relative inline-grid items-center">
-            <span
-              className="invisible whitespace-pre text-xs font-bold uppercase tracking-wider px-1 py-0.5 col-start-1 row-start-1"
-              aria-hidden="true"
-            >
-              {title || ' '}
+    <div className="mb-4">
+      <div ref={setNodeRef} style={style} {...attributes}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5">
+            <button {...listeners} className="cursor-grab active:cursor-grabbing touch-none p-0.5 rounded hover:bg-accent">
+              <GripVertical className="h-4 w-4 text-muted-foreground" />
+            </button>
+            <span className="relative inline-grid items-center">
+              <span
+                className="rb-section-title invisible whitespace-pre px-1 py-0.5 col-start-1 row-start-1"
+                aria-hidden="true"
+              >
+                {title || ' '}
+              </span>
+              <input
+                className="rb-section-title bg-transparent border-none outline-none focus:ring-1 focus:ring-ring rounded px-1 py-0.5 col-start-1 row-start-1 min-w-[3rem]"
+                value={title}
+                onChange={(e) => onTitleChange(e.target.value)}
+              />
             </span>
-            <input
-              className="text-xs font-bold uppercase tracking-wider text-foreground bg-transparent border-none outline-none focus:ring-1 focus:ring-ring rounded px-1 py-0.5 col-start-1 row-start-1 min-w-[3rem]"
-              value={title}
-              onChange={(e) => onTitleChange(e.target.value)}
-            />
-          </span>
+          </div>
+          <Button variant="outline" size="sm" className="h-7 text-xs press" onClick={onAdd}>
+            <Plus className="h-3 w-3 mr-1" />
+            Add
+          </Button>
         </div>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAdd}>
-          <Plus className="h-3 w-3 mr-1" />
-          Add
-        </Button>
+        <div className="border-t border-border pt-2">{children}</div>
       </div>
-      <div className="border-t border-border pt-2">{children}</div>
     </div>
   );
 }
@@ -254,24 +256,22 @@ function SortableItem({
   };
   return (
     <div ref={setNodeRef} style={style} {...attributes}>
-      <Card className="mb-2 py-0 gap-0">
-        <CardContent className="p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1">
-              <button {...listeners} className="cursor-grab active:cursor-grabbing touch-none p-0.5 rounded hover:bg-accent">
-                <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-              <span className="text-xs text-muted-foreground font-semibold ml-1">{label}</span>
-            </div>
-            {onRemove && (
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={onRemove}>
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            )}
+      <div className="panel mb-2 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1">
+            <button {...listeners} className="cursor-grab active:cursor-grabbing touch-none p-0.5 rounded hover:bg-accent">
+              <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+            <span className="text-xs text-muted-foreground font-semibold ml-1">{label}</span>
           </div>
-          {children}
-        </CardContent>
-      </Card>
+          {onRemove && (
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={onRemove}>
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
@@ -564,7 +564,7 @@ export default function ResumeBuilder() {
 
     iframeDoc.open();
     iframeDoc.write(`<!DOCTYPE html>
-<html class="${document.documentElement.className}">
+<html class="${document.documentElement.className}" data-palette="${document.documentElement.getAttribute('data-palette') ?? ''}">
 <head>
   <title>${resume.fullName || 'Resume'}</title>
   ${stylesheets}
@@ -741,11 +741,11 @@ export default function ResumeBuilder() {
       {/* Contact Information (not draggable, always first) */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
-          <Label className="text-xs font-bold uppercase tracking-wider text-foreground">Contact Information</Label>
+          <span className="rb-section-title px-1 py-0.5">Contact Information</span>
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs"
+            className="h-7 text-xs press"
             onClick={() => addItem('contactFields', { label: '', value: '' })}
           >
             <Plus className="h-3 w-3 mr-1" />
@@ -783,29 +783,31 @@ export default function ResumeBuilder() {
       </div>
 
       {/* Draggable sections */}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
-        <SortableContext items={sectionOrder} strategy={verticalListSortingStrategy}>
-          {sectionOrder.map((key) => (
-            <SortableSection
-              key={key}
-              id={key}
-              title={sectionTitles[key]}
-              onTitleChange={(v) => setSectionTitles((prev) => ({ ...prev, [key]: v }))}
-              onAdd={() => {
-                const items: Record<SectionKey, unknown> = {
-                  education: { school: '', degree: '', date: '' },
-                  skillCategories: { label: '', skills: '' },
-                  experience: { company: '', role: '', startDate: '', endDate: '', bullets: [''] },
-                  projects: { name: '', subtitle: '', link: '', date: '', bullets: [''] },
-                };
-                addItem(key, items[key]);
-              }}
-            >
-              {renderSectionContent(key)}
-            </SortableSection>
-          ))}
-        </SortableContext>
-      </DndContext>
+      <div className="stagger">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
+          <SortableContext items={sectionOrder} strategy={verticalListSortingStrategy}>
+            {sectionOrder.map((key) => (
+              <SortableSection
+                key={key}
+                id={key}
+                title={sectionTitles[key]}
+                onTitleChange={(v) => setSectionTitles((prev) => ({ ...prev, [key]: v }))}
+                onAdd={() => {
+                  const items: Record<SectionKey, unknown> = {
+                    education: { school: '', degree: '', date: '' },
+                    skillCategories: { label: '', skills: '' },
+                    experience: { company: '', role: '', startDate: '', endDate: '', bullets: [''] },
+                    projects: { name: '', subtitle: '', link: '', date: '', bullets: [''] },
+                  };
+                  addItem(key, items[key]);
+                }}
+              >
+                {renderSectionContent(key)}
+              </SortableSection>
+            ))}
+          </SortableContext>
+        </DndContext>
+      </div>
       <div className="h-10" />
     </div>
   );
@@ -813,8 +815,7 @@ export default function ResumeBuilder() {
   const previewContent = (
     <div
       ref={previewContainerRef}
-      className="flex justify-center items-start min-h-full overflow-auto"
-      style={{ padding: isMobile ? '12px' : '20px' }}
+      className={`h-full overflow-y-auto flex justify-center items-start ${isMobile ? 'p-3' : 'p-5'}`}
     >
       <div
         ref={paperRef}
@@ -923,14 +924,32 @@ export default function ResumeBuilder() {
     </div>
   );
 
+  // Export CTA placement: anchored to the preview canvas on desktop, toolbar on mobile.
+  const exportInToolbar = isMobile;
+
+  const exportButton = (
+    <button className="cta press" onClick={handleExportPDF}>
+      <Download className="h-4 w-4" />
+      Export PDF
+    </button>
+  );
+
+  const savedChip = (
+    <div className="rb-chip-slot">
+      <span className="saved-chip">
+        {isSaving ? 'Saving…' : currentResumeId ? currentResumeTitle || 'Saved' : 'Unsaved'}
+      </span>
+    </div>
+  );
+
   return (
-    <div className="w-full max-w-[1600px] mx-auto px-4 pb-0">
-      {/* Controls bar */}
-      <div className="flex items-center justify-between p-2 px-4 bg-background border border-border rounded-xl my-2 shadow-sm flex-wrap gap-2">
-        {!isMobile && (
-          <div className="flex items-center gap-4 flex-wrap">
+    <div className="screen-h flex flex-col">
+      {/* Toolbar */}
+      <div className={isMobile ? 'toolbar flex-wrap' : 'toolbar'}>
+        {!isMobile ? (
+          <>
             <div className="flex items-center gap-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Font</Label>
+              <span className="pane-label">Font</span>
               <Select value={fontFamily} onValueChange={setFontFamily}>
                 <SelectTrigger size="sm" className="w-[150px] h-8 text-xs">
                   <SelectValue />
@@ -943,7 +962,7 @@ export default function ResumeBuilder() {
               </Select>
             </div>
             <div className="flex items-center gap-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Size</Label>
+              <span className="pane-label">Size</span>
               <Select value={String(fontSize)} onValueChange={(v) => setFontSize(parseFloat(v))}>
                 <SelectTrigger size="sm" className="w-[80px] h-8 text-xs">
                   <SelectValue />
@@ -956,7 +975,7 @@ export default function ResumeBuilder() {
               </Select>
             </div>
             <div className="flex items-center gap-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Margin</Label>
+              <span className="pane-label">Margin</span>
               <Select value={String(margin)} onValueChange={(v) => setMargin(parseFloat(v))}>
                 <SelectTrigger size="sm" className="w-[90px] h-8 text-xs">
                   <SelectValue />
@@ -968,10 +987,9 @@ export default function ResumeBuilder() {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-        )}
-        {isMobile && (
-          <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+          </>
+        ) : (
+          <>
             <Select value={fontFamily} onValueChange={setFontFamily}>
               <SelectTrigger size="sm" className="flex-1 min-w-[100px] h-8 text-xs">
                 <SelectValue />
@@ -1002,118 +1020,125 @@ export default function ResumeBuilder() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </>
         )}
-        <div className="flex items-center gap-2">
-          {isAuthenticated && (
-            <>
-              {savedResumes.length > 0 && (
-                <Select
-                  value={currentResumeId ? String(currentResumeId) : ''}
-                  onValueChange={(v) => {
-                    if (v) handleLoadResume(Number(v));
-                  }}
-                >
-                  <SelectTrigger size="sm" className="w-[160px] h-8 text-xs">
-                    <SelectValue placeholder="Load resume..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {savedResumes.map((r) => (
-                      <SelectItem key={r.id} value={String(r.id)}>
-                        <div className="flex items-center justify-between w-full gap-2">
-                          <span className="truncate">{r.title || 'Untitled'}</span>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
-                            {new Date(r.updated_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Button onClick={handleSave} size="sm" variant="outline" className="whitespace-nowrap" disabled={isSaving}>
-                {isSaving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
-                Save
-              </Button>
-            </>
-          )}
-          <Button onClick={handleExportPDF} size="sm" className="whitespace-nowrap">
-            <Download className="h-4 w-4 mr-1.5" />
-            Export PDF
-          </Button>
-        </div>
-
-        {/* Save Dialog */}
-        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>
-                {saveDialogMode === 'overwrite' ? 'Save Resume' : 'Save New Resume'}
-              </DialogTitle>
-              <DialogDescription>
-                {saveDialogMode === 'overwrite'
-                  ? `You are editing "${currentResumeTitle}". Overwrite it or save as a new resume.`
-                  : 'Enter a name for your resume.'}
-              </DialogDescription>
-            </DialogHeader>
-            <Input
-              placeholder="Resume name"
-              value={saveDialogName}
-              onChange={(e) => setSaveDialogName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && saveDialogName.trim()) {
-                  handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new');
-                }
-              }}
-              autoFocus
-            />
-            <DialogFooter className="gap-2 sm:gap-0">
-              {saveDialogMode === 'overwrite' && (
-                <Button
-                  variant="outline"
-                  onClick={() => handleSaveDialogConfirm('new')}
-                  disabled={!saveDialogName.trim()}
-                >
-                  Save as New
-                </Button>
-              )}
-              <Button
-                onClick={() => handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new')}
-                disabled={!saveDialogName.trim()}
+        {isAuthenticated && (
+          <>
+            <div className="toolbar-sep" />
+            {savedResumes.length > 0 && (
+              <Select
+                value={currentResumeId ? String(currentResumeId) : ''}
+                onValueChange={(v) => {
+                  if (v) handleLoadResume(Number(v));
+                }}
               >
-                {saveDialogMode === 'overwrite' ? 'Overwrite' : 'Save'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                <SelectTrigger size="sm" className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="Load resume..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {savedResumes.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      <div className="flex items-center justify-between w-full gap-2">
+                        <span className="truncate">{r.title || 'Untitled'}</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {new Date(r.updated_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <button className="cta-quiet press" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
+            </button>
+          </>
+        )}
+        {exportInToolbar && <div className="ml-auto">{exportButton}</div>}
       </div>
 
-      {/* Mobile tab switcher */}
+      {/* Split: form left, preview canvas right (tabs on mobile) */}
       {isMobile ? (
-        <Tabs defaultValue="edit" className="w-full">
-          <TabsList className="w-full mb-3">
-            <TabsTrigger value="edit" className="flex-1">
-              <FileText className="h-4 w-4 mr-1.5" />
-              Editor
-            </TabsTrigger>
-            <TabsTrigger value="preview" className="flex-1">
-              <Download className="h-4 w-4 mr-1.5" />
-              Preview
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="edit">
-            <div className="w-full min-h-[70vh] bg-muted rounded-xl overflow-hidden">{editorContent}</div>
+        <Tabs defaultValue="edit" className="flex-1 min-h-0 flex flex-col">
+          <div className="px-3 pt-2 shrink-0">
+            <TabsList className="w-full">
+              <TabsTrigger value="edit" className="flex-1">
+                <FileText className="h-4 w-4 mr-1.5" />
+                Editor
+              </TabsTrigger>
+              <TabsTrigger value="preview" className="flex-1">
+                <Download className="h-4 w-4 mr-1.5" />
+                Preview
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <TabsContent value="edit" className="anim-enter flex-1 min-h-0 mt-2 overflow-y-auto bg-background">
+            {editorContent}
           </TabsContent>
-          <TabsContent value="preview">
-            <div className="w-full min-h-[70vh] bg-muted-foreground/10 rounded-xl overflow-hidden">{previewContent}</div>
+          <TabsContent value="preview" className="anim-enter flex-1 min-h-0 mt-2 overflow-hidden">
+            <div className="preview-canvas h-full overflow-hidden">
+              {savedChip}
+              {previewContent}
+            </div>
           </TabsContent>
         </Tabs>
       ) : (
-        <div className="flex w-full h-[80vh] rounded-xl overflow-hidden border border-border shadow-sm">
-          <div className="w-[38%] min-w-[340px] overflow-y-auto bg-muted border-r border-border">{editorContent}</div>
-          <div className="w-[62%] overflow-y-auto bg-muted-foreground/10">{previewContent}</div>
+        <div className="flex-1 min-h-0 flex">
+          <div className="anim-enter w-[40%] min-w-[340px] shrink-0 overflow-y-auto bg-background border-r border-border">
+            {editorContent}
+          </div>
+          <div className="preview-canvas anim-enter flex-1 min-w-0 overflow-hidden">
+            {savedChip}
+            {previewContent}
+            {!exportInToolbar && <div className="export-anchor">{exportButton}</div>}
+          </div>
         </div>
       )}
+
+      {/* Save Dialog */}
+      <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {saveDialogMode === 'overwrite' ? 'Save Resume' : 'Save New Resume'}
+            </DialogTitle>
+            <DialogDescription>
+              {saveDialogMode === 'overwrite'
+                ? `You are editing "${currentResumeTitle}". Overwrite it or save as a new resume.`
+                : 'Enter a name for your resume.'}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Resume name"
+            value={saveDialogName}
+            onChange={(e) => setSaveDialogName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && saveDialogName.trim()) {
+                handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new');
+              }
+            }}
+            autoFocus
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            {saveDialogMode === 'overwrite' && (
+              <Button
+                variant="outline"
+                onClick={() => handleSaveDialogConfirm('new')}
+                disabled={!saveDialogName.trim()}
+              >
+                Save as New
+              </Button>
+            )}
+            <Button
+              onClick={() => handleSaveDialogConfirm(saveDialogMode === 'overwrite' ? 'overwrite' : 'new')}
+              disabled={!saveDialogName.trim()}
+            >
+              {saveDialogMode === 'overwrite' ? 'Overwrite' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

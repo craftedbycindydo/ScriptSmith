@@ -201,7 +201,10 @@ async def startup_event():
             # Run classroom migration if needed
             print("🔄 Checking for database migrations...")
             from app.services.database_migration import DatabaseMigrationService
-            
+
+            # Lightweight column migration for per-user UI preferences
+            DatabaseMigrationService.add_column_if_not_exists(db, "users", "ui_preferences", "TEXT")
+
             if DatabaseMigrationService.is_migration_needed(db):
                 print("🚀 Running classroom migration...")
                 migration_result = DatabaseMigrationService.run_classroom_migration(db)

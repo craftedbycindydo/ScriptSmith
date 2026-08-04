@@ -1,0 +1,101 @@
+/* IDE-specific semantic classes (tokens live in index.css). */
+
+/* ============================================================
+   STAGE — content wrapper under the IDE toolbar.
+   ============================================================ */
+.ide-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px;
+}
+
+/* ============================================================
+   PANE GAP SPACERS — wrappers around each resizable pane.
+   Padding (not margin) so the inner h-full panel stays exact.
+   ============================================================ */
+.ide-split-l,
+.ide-split-r,
+.ide-split-t,
+.ide-split-b {
+  height: 100%;
+}
+
+.ide-split-t {
+  padding-bottom: 4px;
+}
+
+.ide-split-b {
+  padding-top: 4px;
+}
+
+@media (min-width: 768px) {
+  .ide-split-l {
+    padding-right: 4px;
+  }
+
+  .ide-split-r {
+    padding-left: 4px;
+  }
+}
+
+/* ============================================================
+   PANE HEADER — slim strip with a .pane-label + micro-actions
+   ============================================================ */
+.ide-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 32px;
+  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   DARK OUTPUT PANE (light-form / dark-code contrast)
+   ============================================================ */
+.panel.ide-pane-dark {
+  background: var(--color-console);
+  border-color: color-mix(in srgb, var(--color-console) 70%, black);
+}
+
+.ide-pane-dark .ide-pane-head,
+.ide-pane-dark .ide-console-status {
+  border-color: rgb(255 255 255 / 0.08);
+}
+
+.ide-pane-dark .pane-label {
+  color: rgb(255 255 255 / 0.55);
+}
+
+.ide-pane-dark .status-pill[data-tone="neutral"] {
+  background: rgb(255 255 255 / 0.08);
+  color: rgb(255 255 255 / 0.72);
+  border-color: transparent;
+}
+
+/* ============================================================
+   FORM STRIP — collapsible save/share/download rows under the
+   toolbar. Content inside is a .panel.
+   ============================================================ */
+.ide-form-strip {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem 0;
+}
+
+/* ============================================================
+   CONSOLE TEXT TONES — bright enough on var(--color-console)
+   ============================================================ */
+.console-error {
+  color: color-mix(in srgb, var(--color-destructive) 70%, white);
+}
+
+.console-ok {
+  color: color-mix(in srgb, var(--color-success) 65%, white);
+}
+
+.console-dim {
+  color: rgb(228 228 231 / 0.5);
+}

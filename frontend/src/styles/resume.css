@@ -1,0 +1,28 @@
+/* Resume-builder-specific semantic classes (tokens live in index.css). */
+
+/* Editable section-header title (pane-label styling, but foreground ink
+   since it doubles as an input). */
+.rb-section-title {
+  font-family: var(--font-mono-d);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-foreground);
+}
+
+/* Positioning slot for the save-state chip, pinned to the top-left of the
+   preview canvas (the canvas itself is position: relative). */
+.rb-chip-slot {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.rb-chip-slot .saved-chip {
+  max-width: 18rem;
+  overflow: hidden;
+  white-space: nowrap;
+}

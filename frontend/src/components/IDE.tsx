@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useMotionPreset } from '@/lib/designMotion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -20,6 +22,7 @@ import { Play, Save, Download, Share2, Users, Send, CheckCircle, ChevronDown, Fi
 
 export default function IDE() {
   const navigate = useNavigate();
+  const { enter: enterMotion } = useMotionPreset();
   const { user, isAuthenticated } = useAuthStore();
   const {
     settings: adminSettings,
@@ -388,6 +391,28 @@ export default function IDE() {
     }
   };
 
+  // Cmd/Ctrl+Enter runs the code (guarded against modals + in-flight runs).
+  // A ref keeps the guards fresh for the Monaco editor command, which is
+  // registered once at editor mount: Monaco swallows Cmd/Ctrl+Enter when the
+  // editor has focus (it maps to insertLineAfter), so the shortcut must be
+  // registered on the editor itself — the window listener only covers focus
+  // outside the editor.
+  const runShortcutRef = useRef<() => void>(() => {});
+  runShortcutRef.current = () => {
+    if (isLoading || showSubmitModal || showRunFirstModal || showSubmissionErrorModal || showDraftChoice) return;
+    handleRunCode();
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
+      e.preventDefault();
+      runShortcutRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const handleSubmitTemplate = async () => {
     if (!selectedAdminTemplate) return;
     
@@ -754,606 +779,418 @@ export default function IDE() {
 
 
   return (
-    <div className="h-[calc(100vh-56px)] flex flex-col bg-background">
+    <div className="screen-h flex flex-col">
       {/* Toolbar */}
-      <div className="border-b bg-card flex-shrink-0">
-        <div className="px-4 py-3 md:px-6 lg:px-8">
-          <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between space-y-3 xl:space-y-0 xl:space-x-6">
-            {/* Language and Template selectors */}
-            <div className="w-full lg:w-auto">
-              {/* Mobile: Compact grid layout */}
-              <div className="grid grid-cols-3 gap-1.5 lg:hidden">
-                {/* Language selector */}
-                <div className="col-span-1">
-                  <LanguageSelector
-                    selectedLanguage={language}
-                    languages={languages}
-                    onLanguageChange={setLanguage}
-                  />
-                </div>
-                
-                {/* Template selectors - only for authenticated users */}
-                {isAuthenticated && (
-                  <>
-                    <div className="col-span-1">
-                      <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
-                        <SelectTrigger 
-                          size="sm" 
-                          disabled={loadingTemplates}
-                          className="w-full"
-                        >
-                          <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
-                            {selectedAdminTemplateName || "Professor Templates"}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[480px] overflow-y-auto">
-                          {selectedAdminTemplateName && (
-                            <SelectItem value="clear-admin">
-                              <span className="text-muted-foreground">Clear selection</span>
-                            </SelectItem>
-                          )}
-                          {!templates || templates.length === 0 ? (
-                            <SelectItem value="no-templates" disabled>
-                              No professor templates available
-                            </SelectItem>
-                          ) : (
-                            templates.map((template) => template && template.id ? (
-                              <SelectItem 
-                                key={template.id} 
-                                value={template.id.toString()}
-                                textValue={formatTemplateName(template.name || 'Untitled Template')}
-                              >
-                                <div className="flex flex-col gap-1.5 w-80 min-w-80">
-                                  {/* Row 1: Template name */}
-                                  <div className="font-medium text-sm truncate w-full">
-                                    {formatTemplateName(template.name || 'Untitled Template')}
-                                  </div>
-                                  {/* Row 2: Date and status - fixed width independent of row 1 */}
-                                  <div className="flex items-center justify-between text-xs w-80">
-                                    <span className="text-muted-foreground font-mono text-xs">
-                                      {formatDate(template)}
-                                    </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
-                                      template.can_submit === false 
-                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
-                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                                    }`}>
-                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </SelectItem>
-                            ) : null)
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    <div className="col-span-1">
-                      <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
-                        <SelectTrigger 
-                          size="sm" 
-                          disabled={loadingUserTemplates}
-                          className="w-full"
-                        >
-                          <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {selectedUserTemplateName && (
-                            <SelectItem value="clear-user">
-                              <span className="text-muted-foreground">Clear selection</span>
-                            </SelectItem>
-                          )}
-                          {!userTemplates || userTemplates.length === 0 ? (
-                            <SelectItem value="no-user-templates" disabled>
-                              No personal templates saved
-                            </SelectItem>
-                          ) : (
-                            userTemplates.map((template) => template && template.id ? (
-                              <SelectItem key={template.id} value={template.id.toString()}>
-                                {template.name || 'Untitled Template'}
-                                {template.description && (
-                                  <span className="text-muted-foreground text-xs ml-1">
-                                    - {template.description}
-                                  </span>
-                                )}
-                              </SelectItem>
-                            ) : null)
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-                
-                {/* Fill empty space when not authenticated */}
-                {!isAuthenticated && (
-                  <>
-                    <div className="col-span-1"></div>
-                    <div className="col-span-1"></div>
-                  </>
-                )}
-              </div>
-
-              {/* Desktop: Original horizontal layout */}
-              <div className="hidden lg:flex lg:items-center lg:space-x-4">
-                {/* Language selector */}
-                <div className="min-w-[200px]">
-                  <LanguageSelector
-                    selectedLanguage={language}
-                    languages={languages}
-                    onLanguageChange={setLanguage}
-                  />
-                </div>
-                
-                {/* Template selector - only for authenticated users */}
-                {isAuthenticated && (
-                  <div className="flex items-center gap-4">
-                    <div className="max-w-[220px]">
-                      <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
-                        <SelectTrigger 
-                          size="sm" 
-                          disabled={loadingTemplates}
-                          className="w-full"
-                        >
-                          <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
-                            {selectedAdminTemplateName || "Professor Templates"}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[480px] overflow-y-auto">
-                          {selectedAdminTemplateName && (
-                            <SelectItem value="clear-admin">
-                              <span className="text-muted-foreground">Clear selection</span>
-                            </SelectItem>
-                          )}
-                          {!templates || templates.length === 0 ? (
-                            <SelectItem value="no-templates" disabled>
-                              No professor templates available
-                            </SelectItem>
-                          ) : (
-                            templates.map((template) => template && template.id ? (
-                              <SelectItem 
-                                key={template.id} 
-                                value={template.id.toString()}
-                                textValue={formatTemplateName(template.name || 'Untitled Template')}
-                              >
-                                <div className="flex flex-col gap-1.5 w-80 min-w-80">
-                                  {/* Row 1: Template name */}
-                                  <div className="font-medium text-sm truncate w-full">
-                                    {formatTemplateName(template.name || 'Untitled Template')}
-                                  </div>
-                                  {/* Row 2: Date and status - fixed width independent of row 1 */}
-                                  <div className="flex items-center justify-between text-xs w-80">
-                                    <span className="text-muted-foreground font-mono text-xs">
-                                      {formatDate(template)}
-                                    </span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
-                                      template.can_submit === false 
-                                        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" 
-                                        : "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                                    }`}>
-                                      {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </SelectItem>
-                            ) : null)
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    <div className="max-w-[220px]">
-                      <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
-                        <SelectTrigger 
-                          size="sm" 
-                          disabled={loadingUserTemplates}
-                          className="w-full"
-                        >
-                          <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {selectedUserTemplateName && (
-                            <SelectItem value="clear-user">
-                              <span className="text-muted-foreground">Clear selection</span>
-                            </SelectItem>
-                          )}
-                          {!userTemplates || userTemplates.length === 0 ? (
-                            <SelectItem value="no-user-templates" disabled>
-                              No personal templates saved
-                            </SelectItem>
-                          ) : (
-                            userTemplates.map((template) => template && template.id ? (
-                              <SelectItem key={template.id} value={template.id.toString()}>
-                                {template.name || 'Untitled Template'}
-                                {template.description && (
-                                  <span className="text-muted-foreground text-xs ml-1">
-                                    - {template.description}
-                                  </span>
-                                )}
-                              </SelectItem>
-                            ) : null)
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Draft status indicator */}
-                {isAuthenticated && selectedAdminTemplate && lastDraftSave && (
-                  <div className="text-xs text-muted-foreground mt-2 lg:mt-0 lg:ml-4">
-                    <span className="inline-flex items-center px-2 py-1 rounded-md bg-muted/50">
-                      📝 Draft saved {lastDraftSave}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {/* Action buttons */}
-            <div className="flex items-center space-x-2 lg:space-x-3 xl:space-x-4 flex-wrap gap-1 sm:gap-0 lg:gap-0">
-              <Button
-                onClick={handleRunCode}
-                disabled={isLoading}
-                className="btn-success flex sm:inline-flex"
-                size="sm"
-              >
-                <Play className="w-4 h-4 mr-1 lg:mr-2" />
-                <span className="hidden sm:inline">{isLoading ? 'Running...' : 'Run'}</span>
-                <span className="sm:hidden">{isLoading ? '...' : 'Run'}</span>
-              </Button>
-
-              {/* Submit button for admin templates */}
-              {isAuthenticated && selectedAdminTemplate && (
-                <Button
-                  onClick={handleSubmitTemplate}
-                  disabled={!canSubmit}
-                  variant={hasSubmitted && !canSubmit ? "secondary" : 
-                          (!hasExecutedCode || codeHasChanged) ? "outline" : "default"}
-                  size="sm"
-                  className={`flex sm:inline-flex ${(!hasExecutedCode || codeHasChanged) ? 
-                    'border-amber-300 text-amber-600 hover:bg-amber-50' : ''}`}
-                  title={
-                    !hasExecutedCode ? 'Run your code first before submitting' :
-                    codeHasChanged ? 'You changed your code after running it. Run again to submit current code.' :
-                    (hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' : 
-                    'Ready to submit'
-                  }
-                >
-                  {hasSubmitted && !canSubmit ? (
-                    <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
-                  ) : (!hasExecutedCode || codeHasChanged) ? (
-                    <div className="w-4 h-4 mr-1 sm:mr-2 text-amber-500">⚠️</div>
-                  ) : (
-                    <Send className="w-4 h-4 mr-1 sm:mr-2" />
-                  )}
-                  <span className="hidden sm:inline">
-                    {hasSubmitted && !canSubmit ? 'Submitted' : 
-                     (!hasExecutedCode || codeHasChanged) ? 'Run First' :
-                     hasSubmitted && canSubmit ? 'Submit Again' : 'Submit'}
-                  </span>
-                  <span className="sm:hidden">
-                    {hasSubmitted && !canSubmit ? 'Done' : 
-                     (!hasExecutedCode || codeHasChanged) ? '⚠️' : 
-                     hasSubmitted && canSubmit ? 'Again' : 'Submit'}
-                  </span>
-                </Button>
-              )}
-
-
-              {/* Authenticated user features */}
-              {isAuthenticated && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handleCreateShare}
-                  disabled={creating}
-                  className="flex sm:inline-flex"
-                >
-                  <Share2 className="w-4 h-4 mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">{creating ? 'Creating...' : 'Share'}</span>
-                  <span className="sm:hidden">Share</span>
-                </Button>
-              )}
-
-              {/* Save dropdown - visible on mobile with text */}
-              {isAuthenticated && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="flex sm:inline-flex">
-                      <Save className="w-4 h-4 mr-2" />
-                      <span>Save</span>
-                      <ChevronDown className="w-3 h-3 ml-1" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    {selectedAdminTemplate && (
-                      <DropdownMenuItem onClick={handleSaveDraftOption} className="cursor-pointer">
-                        <FileText className="w-4 h-4 mr-2" />
-                        <div className="flex flex-col">
-                          <span>Save Draft</span>
-                          <span className="text-xs text-muted-foreground">Save progress for this template</span>
-                        </div>
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem onClick={handleSaveAsTemplate} className="cursor-pointer">
-                      <Save className="w-4 h-4 mr-2" />
-                      <div className="flex flex-col">
-                        <span>Save as My Template</span>
-                        <span className="text-xs text-muted-foreground">Create personal template</span>
-                      </div>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-              
-              {/* Download button - visible on mobile with text */}
-              <Button variant="outline" onClick={handleDownload} size="sm" className="flex sm:inline-flex">
-                <Download className="w-4 h-4 mr-2" />
-                <span>Download</span>
-              </Button>
-            </div>
-          </div>
+      <div className="toolbar flex-wrap">
+        {/* Language + template selectors */}
+        <div className="w-[130px] sm:w-auto">
+          <LanguageSelector
+            selectedLanguage={language}
+            languages={languages}
+            onLanguageChange={setLanguage}
+          />
         </div>
-        
-        {/* Save as My Template Form - Collapsible section between toolbar and content */}
-        {showSaveForm && (
-          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
-            <div className="px-4 py-3 md:px-6 lg:px-8">
-              <div className="relative">
-                {/* Chat bubble arrow pointing up - positioned within the section to avoid overlap */}
-                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
-                
-                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
-                  <div className="px-4 py-4 md:px-6 lg:px-8">
-                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6">
-                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
-                        <Save className="w-4 h-4" />
-                        Save as My Template
-                      </div>
-                      
-                      <div className="flex flex-col sm:flex-row lg:flex-row items-start sm:items-center lg:items-center gap-3 sm:gap-4 lg:gap-6 w-full lg:flex-1">
-                        <div className="w-full sm:flex-1 lg:flex-1 max-w-xs lg:max-w-sm">
-                          <Input
-                            type="text"
-                            placeholder="Template name"
-                            value={templateName}
-                            onChange={(e) => setTemplateName(e.target.value)}
-                            className="h-9 text-sm w-full"
-                            autoFocus
-                          />
+
+        {isAuthenticated && (
+          <>
+            <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
+              <SelectTrigger size="sm" disabled={loadingTemplates} className="w-[150px] lg:w-[200px]">
+                <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
+                  {selectedAdminTemplateName || "Professor Templates"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="max-h-[480px] overflow-y-auto">
+                {selectedAdminTemplateName && (
+                  <SelectItem value="clear-admin">
+                    <span className="text-muted-foreground">Clear selection</span>
+                  </SelectItem>
+                )}
+                {!templates || templates.length === 0 ? (
+                  <SelectItem value="no-templates" disabled>
+                    No professor templates available
+                  </SelectItem>
+                ) : (
+                  templates.map((template) => template && template.id ? (
+                    <SelectItem
+                      key={template.id}
+                      value={template.id.toString()}
+                      textValue={formatTemplateName(template.name || 'Untitled Template')}
+                    >
+                      <div className="flex flex-col gap-1.5 w-80 min-w-80">
+                        {/* Row 1: Template name */}
+                        <div className="font-medium text-sm truncate w-full">
+                          {formatTemplateName(template.name || 'Untitled Template')}
                         </div>
-                        
-                        <div className="w-full sm:flex-1 lg:flex-1 max-w-xs lg:max-w-md">
-                          <Input
-                            type="text"
-                            placeholder="Description (optional)"
-                            value={templateDescription}
-                            onChange={(e) => setTemplateDescription(e.target.value)}
-                            className="h-9 text-sm w-full"
-                          />
-                        </div>
-                        
-                        <div className="flex items-center justify-center text-xs text-muted-foreground px-3 py-2 bg-muted/50 rounded-md min-w-[80px] lg:min-w-[100px]">
-                          <span className="font-medium">{language}</span>
-                        </div>
-                        
-                        <div className="flex items-center gap-3 w-full sm:w-auto lg:w-auto">
-                          <Button 
-                            onClick={handleSaveTemplate} 
-                            disabled={saving || !templateName.trim()}
-                            size="sm"
-                            className="h-9 px-6 flex-1 sm:flex-none lg:flex-none"
+                        {/* Row 2: Date and status */}
+                        <div className="flex items-center justify-between text-xs w-80">
+                          <span className="text-muted-foreground font-mono text-xs">
+                            {formatDate(template)}
+                          </span>
+                          <span
+                            className="status-pill"
+                            data-tone={template.can_submit === false ? "error" : "success"}
                           >
-                            {saving ? 'Saving...' : 'Save'}
-                          </Button>
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={handleCancelSave}
-                            className="h-9 w-9 p-0"
-                          >
-                            ✕
-                          </Button>
+                            {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
+                          </span>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+                    </SelectItem>
+                  ) : null)
+                )}
+              </SelectContent>
+            </Select>
+
+            <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
+              <SelectTrigger size="sm" disabled={loadingUserTemplates} className="w-[130px] lg:w-[170px]">
+                <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedUserTemplateName && (
+                  <SelectItem value="clear-user">
+                    <span className="text-muted-foreground">Clear selection</span>
+                  </SelectItem>
+                )}
+                {!userTemplates || userTemplates.length === 0 ? (
+                  <SelectItem value="no-user-templates" disabled>
+                    No personal templates saved
+                  </SelectItem>
+                ) : (
+                  userTemplates.map((template) => template && template.id ? (
+                    <SelectItem key={template.id} value={template.id.toString()}>
+                      {template.name || 'Untitled Template'}
+                      {template.description && (
+                        <span className="text-muted-foreground text-xs ml-1">
+                          - {template.description}
+                        </span>
+                      )}
+                    </SelectItem>
+                  ) : null)
+                )}
+              </SelectContent>
+            </Select>
+          </>
         )}
 
-        {/* Share Form - Collapsible section for sharing collaborative sessions */}
-        {showShareForm && (
-          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
-            <div className="px-4 py-3 md:px-6 lg:px-8">
-              <div className="relative">
-                {/* Chat bubble arrow pointing up */}
-                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
-                
-                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
-                  <div className="px-4 py-4 md:px-6 lg:px-8">
-                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4 lg:gap-6">
-                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
-                        <Share2 className="w-4 h-4" />
-                        Share Collaborative Session
-                      </div>
-                      
-                      <div className="flex flex-col sm:flex-row lg:flex-row items-start sm:items-center lg:items-center gap-3 sm:gap-4 lg:gap-6 w-full lg:flex-1">
-                        <div className="w-full sm:flex-1 lg:flex-1">
-                          <Input
-                            type="text"
-                            value={shareLink}
-                            readOnly
-                            className="h-9 text-sm w-full font-mono text-xs"
-                            placeholder="Share link will appear here..."
-                          />
-                        </div>
-                        
-                        <div className="flex items-center gap-3 w-full sm:w-auto lg:w-auto">
-                          <Button 
-                            onClick={handleCopyShareLink} 
-                            disabled={!shareLink}
-                            size="sm"
-                            className="h-9 px-6 flex-1 sm:flex-none lg:flex-none"
-                          >
-                            {linkCopied ? 'Copied!' : 'Copy Link'}
-                          </Button>
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={handleCancelShare}
-                            className="h-9 w-9 p-0"
-                          >
-                            ✕
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-4 pt-4 border-t border-border/30">
-                      <div className="text-xs text-muted-foreground">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <Users className="w-4 h-4" />
-                          <span className="font-medium">Collaboration Features:</span>
-                        </div>
-                        <ul className="list-disc list-inside space-y-1 ml-6 text-xs">
-                          <li>Real-time collaborative editing</li>
-                          <li>Live cursor tracking with usernames</li>
-                          <li>Shared code execution</li>
-                          <li>Up to 10 collaborators</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        {isAuthenticated && selectedAdminTemplate && lastDraftSave && (
+          <span className="status-pill hidden md:inline-flex" data-tone="neutral">
+            Draft saved {lastDraftSave}
+          </span>
         )}
 
-        {/* Download Form - Collapsible section for custom filename download */}
-        {showDownloadForm && (
-          <div className="bg-muted/20 border-b border-border/50 overflow-hidden animate-in slide-in-from-top-2 duration-300">
-            <div className="px-4 py-3 md:px-6 lg:px-8">
-              <div className="relative">
-                {/* Chat bubble arrow pointing up */}
-                <div className="absolute -top-1 right-20 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-muted/20"></div>
-                
-                <div className="bg-card border border-border/50 rounded-lg shadow-sm">
-                  <div className="px-4 py-4 md:px-6 lg:px-8">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-                      <div className="flex items-center gap-2 text-sm font-medium whitespace-nowrap">
-                        <Download className="w-4 h-4" />
-                        Download Code
-                      </div>
-                      
-                      <div className="flex items-center gap-2 flex-1">
-                        <Input
-                          type="text"
-                          placeholder="Enter filename"
-                          value={downloadFilename}
-                          onChange={(e) => setDownloadFilename(e.target.value)}
-                          className="h-9 text-sm flex-1"
-                          autoFocus
-                        />
-                        
-                        <div className="flex items-center justify-center text-xs text-muted-foreground px-2 py-1 bg-muted/50 rounded text-nowrap">
-                          <span className="font-medium">.{getFileExtension(language)}</span>
-                        </div>
-                        
-                        <Button 
-                          onClick={handleDownloadFile} 
-                          disabled={!downloadFilename.trim()}
-                          size="sm"
-                          className="h-9 px-4"
-                        >
-                          Download
-                        </Button>
-                        
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={handleCancelDownload}
-                          className="h-9 w-9 p-0"
-                        >
-                          ✕
-                        </Button>
-                      </div>
+        <div className="toolbar-sep hidden sm:block" />
+        <div className="flex-1" />
+
+        {/* Action cluster: quiet icon actions, then Submit, then Run */}
+        <div className="flex items-center gap-1.5">
+          {isAuthenticated && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="press h-8 w-8 p-0"
+              onClick={handleCreateShare}
+              disabled={creating}
+              title={creating ? 'Creating share link...' : 'Share collaborative session'}
+            >
+              <Share2 className="w-4 h-4" />
+            </Button>
+          )}
+
+          {isAuthenticated && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="press h-8 px-1.5" title="Save options">
+                  <Save className="w-4 h-4" />
+                  <ChevronDown className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {selectedAdminTemplate && (
+                  <DropdownMenuItem onClick={handleSaveDraftOption} className="cursor-pointer">
+                    <FileText className="w-4 h-4 mr-2" />
+                    <div className="flex flex-col">
+                      <span>Save Draft</span>
+                      <span className="text-xs text-muted-foreground">Save progress for this template</span>
                     </div>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={handleSaveAsTemplate} className="cursor-pointer">
+                  <Save className="w-4 h-4 mr-2" />
+                  <div className="flex flex-col">
+                    <span>Save as My Template</span>
+                    <span className="text-xs text-muted-foreground">Create personal template</span>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="press h-8 w-8 p-0"
+            onClick={handleDownload}
+            title="Download code"
+          >
+            <Download className="w-4 h-4" />
+          </Button>
+
+          {isAuthenticated && selectedAdminTemplate && (
+            <button
+              type="button"
+              className="cta-quiet press"
+              onClick={handleSubmitTemplate}
+              disabled={!canSubmit}
+              title={
+                !hasExecutedCode ? 'Run your code first before submitting' :
+                codeHasChanged ? 'You changed your code after running it. Run again to submit current code.' :
+                (hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' :
+                'Ready to submit'
+              }
+            >
+              {hasSubmitted && !canSubmit ? (
+                <CheckCircle className="w-3.5 h-3.5" />
+              ) : (!hasExecutedCode || codeHasChanged) ? (
+                <span aria-hidden="true">⚠️</span>
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {hasSubmitted && !canSubmit ? 'Submitted' :
+                 (!hasExecutedCode || codeHasChanged) ? 'Run First' :
+                 hasSubmitted && canSubmit ? 'Submit Again' : 'Submit'}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="cta press"
+            onClick={handleRunCode}
+            disabled={isLoading}
+          >
+            <Play className="w-3.5 h-3.5" />
+            <span>{isLoading ? 'Running...' : 'Run'}</span>
+            <span className="kbd-hint">⌘↵</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Content - Full Width Resizable Panels */}
-      <div className="flex-1 overflow-hidden p-2 md:p-4 bg-muted/5">
+      {/* Collapsible strips: save / share / download */}
+      <AnimatePresence initial={false}>
+        {showSaveForm && (
+          <motion.div
+            key="save-form"
+            className="ide-form-strip"
+            initial={enterMotion.initial}
+            animate={enterMotion.animate}
+            exit={enterMotion.exit}
+            transition={enterMotion.transition}
+          >
+            <div className="panel px-3 py-2.5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+                <span className="pane-label whitespace-nowrap">Save as template</span>
+                <Input
+                  type="text"
+                  placeholder="Template name"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="h-8 text-sm w-full sm:max-w-xs"
+                  autoFocus
+                />
+                <Input
+                  type="text"
+                  placeholder="Description (optional)"
+                  value={templateDescription}
+                  onChange={(e) => setTemplateDescription(e.target.value)}
+                  className="h-8 text-sm w-full sm:max-w-sm"
+                />
+                <span className="status-pill" data-tone="neutral">{language}</span>
+                <div className="flex items-center gap-2 sm:ml-auto">
+                  <Button
+                    onClick={handleSaveTemplate}
+                    disabled={saving || !templateName.trim()}
+                    size="sm"
+                    className="press h-8 px-4"
+                  >
+                    {saving ? 'Saving...' : 'Save'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancelSave}
+                    className="press h-8 w-8 p-0"
+                    title="Close"
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {showShareForm && (
+          <motion.div
+            key="share-form"
+            className="ide-form-strip"
+            initial={enterMotion.initial}
+            animate={enterMotion.animate}
+            exit={enterMotion.exit}
+            transition={enterMotion.transition}
+          >
+            <div className="panel px-3 py-2.5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+                <span className="pane-label whitespace-nowrap">Share session</span>
+                <Input
+                  type="text"
+                  value={shareLink}
+                  readOnly
+                  className="h-8 w-full sm:flex-1 font-mono text-xs"
+                  placeholder="Share link will appear here..."
+                />
+                <div className="flex items-center gap-2 sm:ml-auto">
+                  <Button
+                    onClick={handleCopyShareLink}
+                    disabled={!shareLink}
+                    size="sm"
+                    className="press h-8 px-4"
+                  >
+                    {linkCopied ? 'Copied!' : 'Copy Link'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancelShare}
+                    className="press h-8 w-8 p-0"
+                    title="Close"
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Users className="w-3.5 h-3.5" />
+                <span>Real-time editing · live cursors · shared execution · up to 10 collaborators</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {showDownloadForm && (
+          <motion.div
+            key="download-form"
+            className="ide-form-strip"
+            initial={enterMotion.initial}
+            animate={enterMotion.animate}
+            exit={enterMotion.exit}
+            transition={enterMotion.transition}
+          >
+            <div className="panel px-3 py-2.5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+                <span className="pane-label whitespace-nowrap">Download code</span>
+                <Input
+                  type="text"
+                  placeholder="Enter filename"
+                  value={downloadFilename}
+                  onChange={(e) => setDownloadFilename(e.target.value)}
+                  className="h-8 text-sm w-full sm:max-w-xs"
+                  autoFocus
+                />
+                <span className="status-pill" data-tone="neutral">.{getFileExtension(language)}</span>
+                <div className="flex items-center gap-2 sm:ml-auto">
+                  <Button
+                    onClick={handleDownloadFile}
+                    disabled={!downloadFilename.trim()}
+                    size="sm"
+                    className="press h-8 px-4"
+                  >
+                    Download
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancelDownload}
+                    className="press h-8 w-8 p-0"
+                    title="Close"
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main content: resizable panes */}
+      <div className="ide-stage anim-enter">
         <ResizablePanels
           defaultLeftWidth={65}
           minLeftWidth={40}
           minRightWidth={25}
           leftPanel={
-            <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:mr-2">
-              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium">Code Editor</h3>
+            <div className="ide-split-l">
+              <div className="panel h-full flex flex-col overflow-hidden">
+                <div className="ide-pane-head">
+                  <span className="pane-label">Editor</span>
                   {copyPasteDisabled && (
-                    <div className="text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded">
+                    <span className="status-pill" data-tone="warning">
                       Copy-paste disabled
-                    </div>
+                    </span>
                   )}
                 </div>
-              </div>
-              <div className="flex-1 overflow-hidden rounded-b-lg">
-                <CodeEditor
-                  language={language}
-                  value={code}
-                  onChange={(value) => setCode(value || '')}
-                  copyPasteDisabled={copyPasteDisabled}
-                />
+                <div className="flex-1 overflow-hidden">
+                  <CodeEditor
+                    language={language}
+                    value={code}
+                    onChange={(value) => setCode(value || '')}
+                    onMount={(editor, monaco) => {
+                      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () =>
+                        runShortcutRef.current()
+                      );
+                    }}
+                    copyPasteDisabled={copyPasteDisabled}
+                  />
+                </div>
               </div>
             </div>
           }
           rightPanel={
-            <div className="h-full md:ml-2">
+            <div className="ide-split-r">
               <ResizablePanels
                 orientation="vertical"
                 defaultLeftWidth={50}
                 minLeftWidth={25}
                 minRightWidth={25}
                 leftPanel={
-                  <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm">
-                    <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                      <h3 className="text-sm font-medium">Output</h3>
-                    </div>
-                    <div className="flex-1 overflow-hidden rounded-b-lg">
-                      <OutputConsole
-                        output={output}
-                        error={error}
-                        isLoading={isLoading}
-                        executionTime={executionTime}
-                      />
+                  <div className="ide-split-t">
+                    <div className="panel ide-pane-dark h-full flex flex-col overflow-hidden">
+                      <div className="ide-pane-head">
+                        <span className="pane-label">Output</span>
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <OutputConsole
+                          output={output}
+                          error={error}
+                          isLoading={isLoading}
+                          executionTime={executionTime}
+                        />
+                      </div>
                     </div>
                   </div>
                 }
                 rightPanel={
-                  <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm">
-                    <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                      <h3 className="text-sm font-medium">Complexity Analysis</h3>
-                    </div>
-                    <div className="flex-1 p-4 overflow-hidden rounded-b-lg">
-                      <ComplexityAnalysis
-                        complexity={complexity}
-                        isLoading={isLoading}
-                      />
+                  <div className="ide-split-b">
+                    <div className="panel h-full flex flex-col overflow-hidden">
+                      <div className="ide-pane-head">
+                        <span className="pane-label">Complexity</span>
+                      </div>
+                      <div className="flex-1 p-4 overflow-auto">
+                        <ComplexityAnalysis
+                          complexity={complexity}
+                          isLoading={isLoading}
+                        />
+                      </div>
                     </div>
                   </div>
                 }

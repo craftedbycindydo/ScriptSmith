@@ -11,12 +11,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuthStore } from '@/store/authStore';
 import { useTheme } from '@/contexts/ThemeContext';
-import { 
-  Settings, 
-  User, 
-  LogOut, 
-  Sun, 
-  Moon, 
+import {
+  Settings,
+  User,
+  LogOut,
+  Sun,
+  Moon,
   Monitor,
   Shield,
   Menu,
@@ -35,11 +35,9 @@ export default function Navbar() {
 
   // Use backend API to verify admin status instead of hardcoded email
   const [isAdmin, setIsAdmin] = useState(false);
-  
+
   useEffect(() => {
     if (user) {
-      // Use server-side validated admin status from user object
-      // This avoids making unnecessary API calls for non-admin users
       setIsAdmin(user.is_admin || false);
     }
   }, [user]);
@@ -86,45 +84,36 @@ export default function Navbar() {
   };
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b bg-background">
-      <div className="w-full px-4 sm:px-6">
-        <div className="flex h-14 items-center">
+    <nav className="navbar">
+      <div className="w-full px-3 sm:px-4">
+        <div className="flex h-14 items-center gap-1">
           {/* Logo */}
-          <div 
-            className="flex items-center space-x-2 cursor-pointer"
+          <div
+            className="flex items-center gap-2 cursor-pointer pr-2"
             onClick={() => handleNavigation('/')}
           >
-            <img 
-              src={ScriptingSmithLogo} 
-              alt="Scripting Smith" 
-              className="h-8 w-8 hover:opacity-80 transition-opacity" 
+            <img
+              src={ScriptingSmithLogo}
+              alt="Scripting Smith"
+              className="h-7 w-7 hover:opacity-80 transition-opacity"
             />
-            <span 
-              className="font-bold hover:text-primary transition-colors text-sm sm:text-base"
-            >
-              Scripting Smith
-            </span>
+            <span className="brand-word hidden sm:inline">Scripting Smith</span>
           </div>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex md:items-center md:space-x-6 ml-8">
+          {/* Desktop Navigation — compact cluster */}
+          <div className="hidden md:flex md:items-center gap-1">
             {navigationItems
               .filter((item) => !item.requireAuth || isAuthenticated)
               .map((item) => {
                 const IconComponent = item.icon;
-                const isCurrent = isCurrentPath(item.path);
-                
                 return (
                   <button
                     key={item.path}
                     onClick={() => handleNavigation(item.path, item.requireAuth)}
-                    className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                      isCurrent 
-                        ? 'bg-primary/10 text-primary' 
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                    }`}
+                    className="nav-link"
+                    data-active={isCurrentPath(item.path)}
                   >
-                    <IconComponent className="h-4 w-4" />
+                    <IconComponent className="h-3.5 w-3.5" />
                     <span>{item.name}</span>
                   </button>
                 );
@@ -132,7 +121,7 @@ export default function Navbar() {
           </div>
 
           {/* Right side */}
-          <div className="ml-auto flex items-center space-x-2">
+          <div className="ml-auto flex items-center gap-1.5">
             {/* Theme Toggle */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -161,9 +150,9 @@ export default function Navbar() {
             {isAuthenticated ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="flex items-center space-x-2">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      <User className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" className="flex items-center gap-1.5 px-2">
+                    <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User className="h-3.5 w-3.5" />
                     </div>
                     <span className="text-sm font-medium max-w-[80px] sm:max-w-none truncate">
                       {user?.username}
@@ -203,7 +192,7 @@ export default function Navbar() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-1.5">
                 <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
                   Sign In
                 </Button>
@@ -220,46 +209,35 @@ export default function Navbar() {
               className="md:hidden"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
-              {isMobileMenuOpen ? (
-                <X className="h-5 w-5" />
-              ) : (
-                <Menu className="h-5 w-5" />
-              )}
+              {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
           </div>
         </div>
 
         {/* Mobile Menu */}
         {isMobileMenuOpen && (
-          <div className="md:hidden border-t bg-background">
+          <div className="md:hidden border-t">
             <div className="px-2 pt-2 pb-3 space-y-1">
               {navigationItems
                 .filter((item) => !item.requireAuth || isAuthenticated)
                 .map((item) => {
                   const IconComponent = item.icon;
-                  const isCurrent = isCurrentPath(item.path);
-                  
                   return (
                     <button
                       key={item.path}
                       onClick={() => handleNavigation(item.path, item.requireAuth)}
-                      className={`w-full flex items-center space-x-2 px-3 py-2 rounded-md text-left font-medium transition-colors ${
-                        isCurrent 
-                          ? 'bg-primary/10 text-primary' 
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                      }`}
+                      className="nav-link w-full"
+                      data-active={isCurrentPath(item.path)}
                     >
                       <IconComponent className="h-4 w-4" />
                       <span>{item.name}</span>
                     </button>
                   );
                 })}
-              
+
               {/* Mobile Theme Toggle */}
               <div className="pt-2 border-t">
-                <div className="px-3 py-2 text-sm font-medium text-muted-foreground">
-                  Theme
-                </div>
+                <div className="px-3 py-2 text-sm font-medium text-muted-foreground">Theme</div>
                 <div className="flex space-x-1">
                   <Button
                     variant={theme === 'light' ? 'default' : 'ghost'}
