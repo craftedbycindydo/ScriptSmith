@@ -205,8 +205,26 @@ class AuthService:
         return True
     
     @staticmethod
+    def resend_verification(db: Session, email: str) -> bool:
+        """Issue a fresh verification token and email it.
+
+        Mirrors initiate_password_reset: never reveals whether the address
+        exists, and silently no-ops for an already-verified account.
+        """
+        user = AuthService.get_user_by_email(db, email)
+        if not user or user.is_verified:
+            return True
+
+        user.verification_token = SecurityService.generate_verification_token()
+        db.commit()
+
+        EmailService.send_verification(user.email, user.verification_token)
+
+        return True
+
+    @staticmethod
     def reset_password(
-        db: Session, 
+        db: Session,
         token: str, 
         new_password: str
     ) -> bool:
@@ -241,18 +259,20 @@ class AuthService:
         return True
     
     @staticmethod
-    def verify_email(db: Session, token: str) -> bool:
-        """Verify user email using token"""
+    def verify_email(db: Session, token: str) -> Optional[User]:
+        """Verify user email using token. Returns the user so the caller can
+        issue a session, or None if the token matched nothing."""
         user = db.query(User).filter(User.verification_token == token).first()
-        
+
         if not user:
-            return False
-        
+            return None
+
         user.is_verified = True
         user.verification_token = None
         db.commit()
-        
-        return True
+        db.refresh(user)
+
+        return user
     
     @staticmethod
     def change_password(

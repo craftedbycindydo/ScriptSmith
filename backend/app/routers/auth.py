@@ -71,6 +71,9 @@ class PasswordReset(BaseModel):
 class EmailVerification(BaseModel):
     token: str
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
@@ -605,21 +608,59 @@ async def reset_password(
             detail="Failed to reset password"
         )
 
-@router.post("/verify-email", status_code=status.HTTP_200_OK)
+@router.post("/verify-email", response_model=Token, status_code=status.HTTP_200_OK)
 async def verify_email(
     request: EmailVerification,
     db: Session = Depends(get_db)
 ):
-    """Verify user email"""
-    success = AuthService.verify_email(db, request.token)
-    
-    if not success:
+    """Verify user email and sign the user in.
+
+    The verification link doubles as a magic link: the token is single-use
+    (cleared on verification), so it grants exactly one session.
+    """
+    user = AuthService.verify_email(db, request.token)
+
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid verification token"
         )
-    
-    return {"message": "Email verified successfully"}
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is disabled"
+        )
+
+    token_data = {
+        "sub": user.email,
+        "user_id": user.id,
+        "tv": user.token_version or 0
+    }
+
+    access_token = SecurityService.create_access_token(
+        data=token_data,
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
+    )
+    refresh_token = SecurityService.create_refresh_token(data=token_data)
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.access_token_expire_minutes * 60
+    )
+
+@router.post("/resend-verification", status_code=status.HTTP_200_OK)
+async def resend_verification(
+    request: ResendVerificationRequest,
+    db: Session = Depends(get_db)
+):
+    """Send a fresh verification link."""
+    AuthService.resend_verification(db, request.email)
+
+    # Always the same answer, to prevent email enumeration.
+    return {"message": "If that address needs verifying, a new link has been sent"}
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
