@@ -25,13 +25,17 @@ import {
   ChevronDown,
   ChevronUp,
   Play,
+  List,
+  Table2,
   Loader2
 } from 'lucide-react';
 import type { TemplateSubmission } from '@/services/api';
+import Gradebook from './Gradebook';
 
 // ⚠️  ADMIN ONLY COMPONENT - This component calls admin endpoints
 // Only use within AdminDashboard or other admin-protected routes
 const TemplateSubmissions: React.FC = () => {
+  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('matrix');
   const [submissions, setSubmissions] = useState<TemplateSubmission[]>([]);
   const [filteredSubmissions, setFilteredSubmissions] = useState<TemplateSubmission[]>([]);
   const [loading, setLoading] = useState(false);
@@ -591,12 +595,34 @@ const TemplateSubmissions: React.FC = () => {
             Monitor and review student template submissions
           </p>
         </div>
-        <Button onClick={fetchSubmissions} disabled={loading} className="flex items-center gap-2">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        {/* Refresh lives in the admin shell header - not duplicated here. */}
+        {/* List = per-submission detail. Matrix = roster x template grid. */}
+        <div className="inline-flex rounded-md border overflow-hidden">
+          <Button
+            variant={viewMode === 'list' ? 'default' : 'ghost'}
+            size="sm"
+            className="rounded-none"
+            onClick={() => setViewMode('list')}
+          >
+            <List className="w-4 h-4 mr-1.5" />
+            List
+          </Button>
+          <Button
+            variant={viewMode === 'matrix' ? 'default' : 'ghost'}
+            size="sm"
+            className="rounded-none"
+            onClick={() => setViewMode('matrix')}
+          >
+            <Table2 className="w-4 h-4 mr-1.5" />
+            Matrix
+          </Button>
+        </div>
       </div>
 
+      {viewMode === 'matrix' && <Gradebook />}
+
+      {viewMode === 'list' && (
+      <>
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
@@ -1123,6 +1149,8 @@ const TemplateSubmissions: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
 
     </div>
   );

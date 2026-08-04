@@ -167,6 +167,39 @@ export interface TemplateSubmissionRequest {
   error_message?: string;
 }
 
+export interface GradebookStudent {
+  user_id: number;
+  name: string;
+  username: string;
+  email?: string;
+}
+
+export interface GradebookTemplate {
+  template_id: number;
+  name: string;
+  language?: string;
+  submitted_count: number;
+}
+
+/** One submitted cell. Absent from `cells` means the student never submitted. */
+export interface GradebookCell {
+  user_id: number;
+  template_id: number;
+  status: string; // "success" | "error" — execution outcome, not correctness
+  output?: string | null;
+  error_message?: string | null;
+  execution_time?: number | null;
+  submitted_at?: string | null;
+}
+
+export interface Gradebook {
+  classroom_id: number;
+  classroom_name: string;
+  students: GradebookStudent[];
+  templates: GradebookTemplate[];
+  cells: GradebookCell[];
+}
+
 export interface TemplateSubmission {
   id: number;
   template_id: number;
@@ -632,8 +665,21 @@ export const apiService = {
     return response.data;
   },
 
+  async getClassroomGradebook(classroomId: number): Promise<Gradebook> {
+    const response = await api.get(`/admin/classrooms/${classroomId}/gradebook`);
+    return response.data;
+  },
+
+  /** Two-sheet workbook (Matrix + Details) built server-side. */
+  async downloadClassroomGradebookXlsx(classroomId: number): Promise<Blob> {
+    const response = await api.get(`/admin/classrooms/${classroomId}/gradebook.xlsx`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
   async getTemplateSubmissions(
-    templateId: number, 
+    templateId: number,
     skip: number = 0, 
     limit: number = 100
   ): Promise<TemplateSubmission[]> {
