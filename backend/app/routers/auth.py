@@ -232,7 +232,18 @@ async def register_user(
             full_name=user.full_name
         )
         
-        EmailService.send_verification(db_user.email, db_user.verification_token)
+        email_sent = EmailService.send_verification(db_user.email, db_user.verification_token)
+
+        if not email_sent and settings.require_email_verification:
+            # Verification is mandatory to log in, so an account whose email
+            # never arrived is unreachable - and the address is now taken, so
+            # signing up again would fail too. Roll back instead.
+            db.delete(db_user)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="We could not send your verification email. Please try again in a few minutes."
+            )
 
         # Check if user email is in admin emails and promote to admin if needed
         if admin_service.is_initial_admin_email(user.email):
