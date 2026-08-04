@@ -1956,3 +1956,177 @@ async def admin_force_logout_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to force logout user"
         )
+
+
+# ---------------------------------------------------------------------------
+# Gradebook matrix: students (rows) x templates (columns), scoped to one classroom
+# ---------------------------------------------------------------------------
+
+class GradebookStudent(BaseModel):
+    user_id: int
+    name: str
+    username: str
+    email: Optional[str] = None
+
+class GradebookTemplate(BaseModel):
+    template_id: int
+    name: str
+    language: Optional[str] = None
+    submitted_count: int
+
+class GradebookCell(BaseModel):
+    user_id: int
+    template_id: int
+    status: str  # "success" | "error" | (absent means not submitted)
+    output: Optional[str] = None
+    error_message: Optional[str] = None
+    execution_time: Optional[float] = None
+    submitted_at: Optional[str] = None
+
+class GradebookResponse(BaseModel):
+    classroom_id: int
+    classroom_name: str
+    students: List[GradebookStudent]
+    templates: List[GradebookTemplate]
+    cells: List[GradebookCell]
+
+
+@router.get("/admin/classrooms/{classroom_id}/gradebook", response_model=GradebookResponse)
+async def get_classroom_gradebook(
+    classroom_id: int,
+    template_id: Optional[int] = Query(None, description="Limit to a single template column"),
+    include_output: bool = Query(True, description="Include stdout per cell"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Student x template execution-status matrix for one classroom.
+
+    Status is the recorded execution outcome (success/error) - it means the code
+    ran, not that it is correct. Cells absent from `cells` are not submitted.
+    """
+    from app.models.template import TemplateSubmission, template_classroom_association as tca
+
+    classroom = db.query(Classroom).filter(Classroom.id == classroom_id).first()
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+
+    # Rows: enrolled students only, scoped to this classroom
+    student_rows = (
+        db.query(User.id, User.username, User.full_name, User.email)
+        .join(UserClassroom, UserClassroom.user_id == User.id)
+        .filter(
+            UserClassroom.classroom_id == classroom_id,
+            User.role == UserRole.USER,
+        )
+        .order_by(func.lower(func.coalesce(User.full_name, User.username)))
+        .all()
+    )
+    students = [
+        GradebookStudent(
+            user_id=r.id,
+            name=(r.full_name or r.username),
+            username=r.username,
+            email=r.email,
+        )
+        for r in student_rows
+    ]
+    student_ids = [s.user_id for s in students]
+
+    # Columns: templates assigned to THIS classroom only
+    template_q = (
+        db.query(Template.id, Template.name, Template.language)
+        .join(tca, tca.c.template_id == Template.id)
+        .filter(tca.c.classroom_id == classroom_id)
+    )
+    if template_id:
+        template_q = template_q.filter(Template.id == template_id)
+    template_rows = template_q.order_by(Template.id).all()
+    template_ids = [r.id for r in template_rows]
+
+    # Cells: one submission per (student, template)
+    cells: List[GradebookCell] = []
+    counts: Dict[int, int] = {tid: 0 for tid in template_ids}
+    if student_ids and template_ids:
+        sub_rows = (
+            db.query(TemplateSubmission)
+            .filter(
+                TemplateSubmission.template_id.in_(template_ids),
+                TemplateSubmission.user_id.in_(student_ids),
+            )
+            .all()
+        )
+        for s in sub_rows:
+            counts[s.template_id] = counts.get(s.template_id, 0) + 1
+            cells.append(
+                GradebookCell(
+                    user_id=s.user_id,
+                    template_id=s.template_id,
+                    status=s.status or "unknown",
+                    output=(s.output if include_output else None),
+                    error_message=s.error_message,
+                    execution_time=s.execution_time,
+                    submitted_at=safe_datetime_format(s.submitted_at),
+                )
+            )
+
+    templates = [
+        GradebookTemplate(
+            template_id=r.id,
+            name=r.name,
+            language=r.language,
+            submitted_count=counts.get(r.id, 0),
+        )
+        for r in template_rows
+    ]
+
+    return GradebookResponse(
+        classroom_id=classroom.id,
+        classroom_name=classroom.name,
+        students=students,
+        templates=templates,
+        cells=cells,
+    )
+
+
+@router.get("/admin/classrooms/{classroom_id}/gradebook.xlsx")
+async def export_classroom_gradebook_xlsx(
+    classroom_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Gradebook as a two-sheet workbook.
+
+    Sheet "Matrix"  - one row per student, one column per template (status).
+    Sheet "Details" - one row per student, each template split into
+                      status + output columns.
+    Both sheets are scoped to this classroom's roster and templates, because
+    this reuses the matrix endpoint's query rather than re-deriving it.
+    """
+    from fastapi.responses import StreamingResponse
+
+    from app.services.gradebook_export import (
+        build_gradebook_workbook,
+        workbook_filename,
+    )
+
+    book = await get_classroom_gradebook(
+        classroom_id=classroom_id,
+        template_id=None,
+        include_output=True,
+        db=db,
+        admin_user=admin_user,
+    )
+
+    stream = build_gradebook_workbook(
+        classroom_name=book.classroom_name,
+        students=book.students,
+        templates=book.templates,
+        cells=book.cells,
+    )
+    filename = workbook_filename(book.classroom_name)
+
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
