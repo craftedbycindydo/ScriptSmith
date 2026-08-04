@@ -1,22 +1,32 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
-import { 
-  TrendingUp, 
-  Code, 
-  Clock, 
+import {
+  TrendingUp,
   Target,
   Award,
   BarChart3,
-  Activity,
   AlertCircle,
-  ArrowUp,
-  ArrowDown,
-  Minus
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ListChecks,
+  Repeat,
+  Users,
+  CalendarClock,
+  Play,
+  Code,
+  PieChart
 } from 'lucide-react';
+import StatTile from '@/components/charts/StatTile';
+import Meter from '@/components/charts/Meter';
+import BarList from '@/components/charts/BarList';
+import ShareBar from '@/components/charts/ShareBar';
+import TrendChart from '@/components/charts/TrendChart';
+import RankedBarList from '@/components/charts/RankedBarList';
+import HourWeekMatrix from '@/components/charts/HourWeekMatrix';
+import { STATUS } from '@/lib/chartTheme';
 import { apiService } from '@/services/api';
 
 interface UserAnalyticsData {
@@ -42,8 +52,56 @@ interface UserAnalyticsData {
   }>;
   activity_heatmap: Record<string, number>;
   recent_submissions: number;
+  // Added by a newer backend — every one of these is optional so an older
+  // deployment (which omits them entirely) still renders.
+  error_breakdown?: Array<{ type: string; count: number }>;
+  assignment_history?: Array<{
+    name: string;
+    status: string;
+    passed: boolean;
+    submitted_at: string | null;
+    execution_time: number | null;
+  }>;
+  activity_by_weekday_hour?: Array<{ dow: number; hour: number; runs: number }>;
+  runs_per_submission?: number;
+  class_comparison?: {
+    class_average_success_rate: number;
+    student_vs_class: number;
+    peers: number;
+    /** Volume comparison — older backends omit these. */
+    class_average_submissions?: number;
+    your_submissions?: number;
+  } | null;
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Plain-language next step per error type. Keyed on the backend's own bucket
+ * names (`_classify_error` emits the exception class, plus "Timeout" and
+ * "Platform error"), with a generic fallback for anything unlisted.
+ */
+const ERROR_HINTS: Record<string, string> = {
+  SyntaxError: 'check indentation, colons and matching brackets before running.',
+  NameError: "a name is used before it exists — check spelling, and that it's defined above.",
+  IndentationError: 'Python counts spaces — keep every line in a block indented the same way.',
+  TypeError: 'a value is the wrong kind for the operation — print it to see what it holds.',
+  AttributeError: "that method or field doesn't exist on the object — print it to see what it offers.",
+  Timeout: 'the code ran too long — look for a loop that never reaches its end.',
+  'Platform error': "these are on the platform, not on you — just run it again.",
+};
+
+const errorHint = (type: string) =>
+  ERROR_HINTS[type] ?? 'open the run output and read the last line of the traceback first.';
+
+const formatDate = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      })
+    : 'not submitted';
 
 export default function UserAnalytics() {
   const [analyticsData, setAnalyticsData] = useState<UserAnalyticsData | null>(null);
@@ -128,325 +186,458 @@ export default function UserAnalytics() {
     );
   }
 
-  // Prepare data for display
-  const languageData = Object.entries(analyticsData.language_performance).map(([language, stats]) => ({
-    name: language.charAt(0).toUpperCase() + language.slice(1),
-    success_rate: Math.round(stats.success_rate),
-    total: stats.total,
-    successful: stats.successful
-  })).sort((a, b) => b.total - a.total);
+  const overview = analyticsData.overview;
 
-  // Create activity calendar data (last 30 days)
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(today.getDate() - 29);
+  // Newer-backend fields — always guarded, never assumed present.
+  const errorBreakdown = analyticsData.error_breakdown ?? [];
+  const assignmentHistory = analyticsData.assignment_history ?? [];
+  const weekdayHour = analyticsData.activity_by_weekday_hour ?? [];
+  const runsPerSubmission = analyticsData.runs_per_submission ?? 0;
+  const classComparison = analyticsData.class_comparison ?? null;
 
-  const activityCalendarData = [];
-  for (let d = new Date(thirtyDaysAgo); d <= today; d.setDate(d.getDate() + 1)) {
-    const dateKey = d.toISOString().split('T')[0];
-    activityCalendarData.push({
-      date: dateKey,
-      day: d.getDate(),
-      activity: analyticsData.activity_heatmap[dateKey] || 0
-    });
+  // --- Assignment history -------------------------------------------------
+  // The API sends it oldest-first; the student's current state belongs at the
+  // top, so the rendered list is reversed.
+  const historyNewestFirst = [...assignmentHistory].reverse();
+  const historyPassed = assignmentHistory.filter((a) => a.passed).length;
+
+  // Trailing run of passes, counted from the most recent submission backwards.
+  let passStreak = 0;
+  for (const item of historyNewestFirst) {
+    if (!item.passed) break;
+    passStreak += 1;
   }
 
-  // Calculate trend (comparing first half vs second half of performance data)
-  const getTrend = () => {
-    if (analyticsData.performance_trend.length < 4) return { direction: 'stable', percentage: 0 };
-    
-    const midPoint = Math.floor(analyticsData.performance_trend.length / 2);
-    const firstHalf = analyticsData.performance_trend.slice(0, midPoint);
-    const secondHalf = analyticsData.performance_trend.slice(midPoint);
-    
-    const firstHalfAvg = firstHalf.reduce((sum, item) => sum + item.success_rate, 0) / firstHalf.length;
-    const secondHalfAvg = secondHalf.reduce((sum, item) => sum + item.success_rate, 0) / secondHalf.length;
-    
-    const diff = secondHalfAvg - firstHalfAvg;
-    
-    if (Math.abs(diff) < 5) return { direction: 'stable', percentage: Math.abs(diff) };
-    return { 
-      direction: diff > 0 ? 'up' : 'down', 
-      percentage: Math.abs(diff) 
-    };
-  };
+  // --- Errors -------------------------------------------------------------
+  const totalErrors = errorBreakdown.reduce((sum, e) => sum + e.count, 0);
+  const topError = errorBreakdown.reduce<typeof errorBreakdown[number] | null>(
+    (top, e) => (top === null || e.count > top.count ? e : top),
+    null
+  );
+  const topErrorShare =
+    topError && totalErrors > 0 ? Math.round((topError.count / totalErrors) * 100) : 0;
 
-  const trend = getTrend();
+  // --- When you work ------------------------------------------------------
+  const busiestSlot = weekdayHour.reduce<typeof weekdayHour[number] | null>(
+    (best, cell) => (best === null || cell.runs > best.runs ? cell : best),
+    null
+  );
+  const slotLabel = (dow: number, hour: number) =>
+    `${DAY_NAMES[dow] ?? '?'} ${String(hour).padStart(2, '0')}:00`;
+  const weekdayRuns = weekdayHour.reduce((sum, c) => sum + c.runs, 0);
 
-  // Get risk level based on success rate
-  const getRiskLevel = (successRate: number) => {
-    if (successRate >= 80) return { level: 'excellent', color: 'bg-green-500', text: 'Excellent' };
-    if (successRate >= 60) return { level: 'good', color: 'bg-blue-500', text: 'Good' };
-    if (successRate >= 40) return { level: 'fair', color: 'bg-yellow-500', text: 'Fair' };
-    return { level: 'needs-improvement', color: 'bg-red-500', text: 'Needs Improvement' };
-  };
+  // --- Conditional cards --------------------------------------------------
+  // Both of these come back empty on a finished term (the backend windows the
+  // trend to 30 days), and a single-language install has nothing to compare.
+  // Render nothing rather than an empty canvas.
+  const showTrend = analyticsData.performance_trend.length > 1;
+  const languageData = Object.entries(analyticsData.language_performance)
+    .map(([language, stats]) => ({
+      name: language.charAt(0).toUpperCase() + language.slice(1),
+      success_rate: Math.round(stats.success_rate),
+      total: stats.total,
+      successful: stats.successful
+    }))
+    .sort((a, b) => b.total - a.total);
+  const showLanguages = languageData.length > 1;
 
-  const performanceLevel = getRiskLevel(analyticsData.overview.success_rate);
+  const trendLabels = analyticsData.performance_trend.map((p) =>
+    new Date(p.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  );
+  const latestTrend = analyticsData.performance_trend[analyticsData.performance_trend.length - 1];
+
+  const languageTotal = languageData.reduce((sum, l) => sum + l.total, 0);
+  const bestLanguage = languageData.reduce<typeof languageData[number] | null>(
+    (best, l) => (best === null || l.success_rate > best.success_rate ? l : best),
+    null
+  );
+  const topLanguage = languageData[0];
 
   return (
     <div className="space-y-6">
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
+      {/* Row 1 — KPI strip */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="stat-row">
+            <StatTile
+              label={`Success rate · ${overview.successful_submissions}/${overview.total_submissions} passed`}
+              value={overview.success_rate.toFixed(1)}
+              unit="%"
+              delta={classComparison ? classComparison.student_vs_class : undefined}
+              deltaLabel="vs class average"
+              hint={`${overview.successful_submissions} of ${overview.total_submissions} assignments passed`}
+              icon={<Target className="h-3.5 w-3.5" />}
+            />
+            <StatTile
+              label="Assignments submitted"
+              value={overview.total_submissions}
+              hint={`${overview.successful_submissions} passed · ${Math.max(
+                overview.total_submissions - overview.successful_submissions,
+                0
+              )} still open`}
+              icon={<Code className="h-3.5 w-3.5" />}
+            />
+            <StatTile
+              label="Code runs"
+              value={overview.total_executions}
+              hint={`${overview.execution_success_rate.toFixed(1)}% of these ran clean`}
+              icon={<Play className="h-3.5 w-3.5" />}
+            />
+            <StatTile
+              label="Runs per submission"
+              value={runsPerSubmission.toFixed(1)}
+              hint="runs before each submission"
+              icon={<Repeat className="h-3.5 w-3.5" />}
+            />
+            <StatTile
+              label="Current streak"
+              value={overview.current_streak}
+              hint="assignments passed in a row"
+              icon={<Award className="h-3.5 w-3.5" />}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Row 2 — the record itself, and what keeps tripping it up */}
+      <div className="analytics-grid">
+        <Card className="col-8">
+          <CardHeader>
+            <CardTitle className="flex items-center text-base">
+              <ListChecks className="w-4 h-4 mr-2" />
+              Your assignment history
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="chart-card-head">
               <div>
-                <div className="flex items-center space-x-2">
-                  <p className="text-2xl font-bold">{analyticsData.overview.success_rate}%</p>
-                  <div className="flex items-center">
-                    {trend.direction === 'up' && <ArrowUp className="w-4 h-4 text-green-500" />}
-                    {trend.direction === 'down' && <ArrowDown className="w-4 h-4 text-red-500" />}
-                    {trend.direction === 'stable' && <Minus className="w-4 h-4 text-gray-500" />}
-                    <span className="text-sm text-muted-foreground">
-                      {trend.percentage > 0 && `${trend.percentage.toFixed(1)}%`}
+                <div className="chart-card-metric">
+                  {historyPassed}/{assignmentHistory.length}
+                </div>
+                <div className="chart-card-sub">
+                  assignments passed · newest first
+                  {passStreak > 0 &&
+                    ` · your last ${passStreak} in a row passed`}
+                </div>
+              </div>
+            </div>
+
+            {historyNewestFirst.length > 0 ? (
+              <div className="panel-scroll flex flex-col gap-1.5">
+                {historyNewestFirst.map((item, index) => (
+                  <div
+                    key={`${item.name}-${item.submitted_at ?? index}`}
+                    className="flex items-center gap-2.5 rounded-md border border-border px-2.5 py-2"
+                  >
+                    <span
+                      className="flex shrink-0 items-center gap-1.5"
+                      style={{ color: item.passed ? STATUS.good : STATUS.critical }}
+                    >
+                      {item.passed ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      <span className="text-[0.68rem] font-semibold uppercase tracking-wide">
+                        {item.passed ? 'Passed' : 'Not yet'}
+                      </span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      {item.name}
+                    </span>
+                    {item.execution_time !== null && (
+                      <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
+                        {item.execution_time.toFixed(1)}s
+                      </span>
+                    )}
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {formatDate(item.submitted_at)}
                     </span>
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div className="chart-empty">
+                <ListChecks className="w-5 h-5" />
+                <span>Submit your first assignment to start your record.</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="col-4">
+          <CardHeader>
+            <CardTitle className="flex items-center text-base">
+              <AlertTriangle className="w-4 h-4 mr-2" />
+              Where you get stuck
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="chart-card-head">
+              <div>
+                <div className="chart-card-metric">{totalErrors.toLocaleString()}</div>
+                <div className="chart-card-sub">
+                  errors across {overview.total_executions.toLocaleString()} code runs ·{' '}
+                  {errorBreakdown.length} type{errorBreakdown.length === 1 ? '' : 's'}
                 </div>
-                <p className="text-sm text-muted-foreground">Success Rate</p>
               </div>
-              <div className={`w-3 h-3 rounded-full ${performanceLevel.color}`}></div>
             </div>
-            <Badge 
-              variant={performanceLevel.level === 'excellent' ? 'default' : 'secondary'}
-              className="mt-2"
-            >
-              {performanceLevel.text}
-            </Badge>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-2xl font-bold">{analyticsData.overview.total_submissions}</p>
-                <p className="text-sm text-muted-foreground">Total Submissions</p>
+            {errorBreakdown.length > 0 ? (
+              <>
+                <RankedBarList
+                  data={errorBreakdown.map((e) => ({ label: e.type, value: e.count }))}
+                  topN={5}
+                  tone="critical"
+                />
+                {topError && (
+                  <p className="chart-card-sub mt-3">
+                    {topErrorShare}% of your errors ({topError.count} of {totalErrors}) are{' '}
+                    {topError.type} — {errorHint(topError.type)}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="chart-empty">
+                <CheckCircle2 className="w-5 h-5" />
+                <span>No errors recorded yet — nice.</span>
               </div>
-              <Code className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-2xl font-bold">{analyticsData.overview.current_streak}</p>
-                <p className="text-sm text-muted-foreground">Current Streak</p>
-              </div>
-              <Award className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-2xl font-bold">{analyticsData.overview.average_execution_time.toFixed(1)}s</p>
-                <p className="text-sm text-muted-foreground">Avg Execution Time</p>
-              </div>
-              <Clock className="w-8 h-8 text-muted-foreground" />
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Performance Trend */}
-      {analyticsData.performance_trend.length > 0 && (
-        <Card>
+      {/* Row 3 — where you stand, and when you work */}
+      <div className="analytics-grid">
+        <Card className="col-6">
           <CardHeader>
-            <CardTitle className="flex items-center">
-              <TrendingUp className="w-5 h-5 mr-2" />
-              Performance Trend (Last {analyticsData.performance_trend.length} sessions)
+            <CardTitle className="flex items-center text-base">
+              <Users className="w-4 h-4 mr-2" />
+              You vs your class
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Overall Trend</span>
-                <div className="flex items-center space-x-2">
-                  {trend.direction === 'up' && (
-                    <div className="flex items-center text-green-600">
-                      <ArrowUp className="w-4 h-4 mr-1" />
-                      <span className="text-sm">+{trend.percentage.toFixed(1)}%</span>
+            {classComparison ? (
+              <>
+                <div className="chart-card-head">
+                  <div>
+                    <div className="chart-card-metric">
+                      {classComparison.student_vs_class > 0 ? '+' : ''}
+                      {classComparison.student_vs_class.toFixed(1)} pts
                     </div>
-                  )}
-                  {trend.direction === 'down' && (
-                    <div className="flex items-center text-red-600">
-                      <ArrowDown className="w-4 h-4 mr-1" />
-                      <span className="text-sm">-{trend.percentage.toFixed(1)}%</span>
+                    <div className="chart-card-sub">
+                      {classComparison.student_vs_class >= 0 ? 'above' : 'below'} the class average
+                      of {classComparison.class_average_success_rate.toFixed(1)}% · compared with{' '}
+                      {classComparison.peers} classmate
+                      {classComparison.peers === 1 ? '' : 's'}
                     </div>
-                  )}
-                  {trend.direction === 'stable' && (
-                    <div className="flex items-center text-gray-600">
-                      <Minus className="w-4 h-4 mr-1" />
-                      <span className="text-sm">Stable</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* Recent performance bars */}
-              <div className="space-y-2">
-                {analyticsData.performance_trend.slice(-5).map((session, index) => (
-                  <div key={index} className="space-y-1">
-                    <div className="flex justify-between text-sm">
-                      <span>{new Date(session.date).toLocaleDateString()}</span>
-                      <span>{session.success_rate}% ({session.total_submissions} submissions)</span>
-                    </div>
-                    <Progress value={session.success_rate} className="h-2" />
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+
+                <Meter
+                  label="Your success rate"
+                  value={overview.success_rate}
+                  benchmark={classComparison.class_average_success_rate}
+                  benchmarkLabel="Class average"
+                  caption={`${overview.successful_submissions}/${overview.total_submissions} passed`}
+                />
+
+                {/* Quality beside volume: submitting as much as the class but
+                    passing less is a different story from not submitting. */}
+                {classComparison.class_average_submissions !== undefined && (
+                  <table className="compare-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>You</th>
+                        <th>Class</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Success rate</td>
+                        <td>{overview.success_rate.toFixed(1)}%</td>
+                        <td>{classComparison.class_average_success_rate.toFixed(1)}%</td>
+                      </tr>
+                      <tr>
+                        <td>Assignments submitted</td>
+                        <td>{classComparison.your_submissions ?? overview.total_submissions}</td>
+                        <td>{classComparison.class_average_submissions}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="chart-card-head">
+                  <div>
+                    <div className="chart-card-metric">—</div>
+                    <div className="chart-card-sub">no class benchmark available</div>
+                  </div>
+                </div>
+                <div className="chart-empty">
+                  <Users className="w-5 h-5" />
+                  <span>Join a classroom to compare</span>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
-      )}
 
-      {/* Language Performance and Activity Heatmap */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Language Performance */}
-        {languageData.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <BarChart3 className="w-5 h-5 mr-2" />
-                Language Performance
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {languageData.map((lang) => (
-                  <div key={lang.name} className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">{lang.name}</span>
-                      <div className="text-right text-sm text-muted-foreground">
-                        <div>{lang.success_rate}% success</div>
-                        <div className="text-xs">{lang.successful}/{lang.total} submissions</div>
-                      </div>
-                    </div>
-                    <Progress 
-                      value={lang.success_rate} 
-                      className="h-2"
-                    />
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Language Usage Distribution */}
-        {languageData.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Target className="w-5 h-5 mr-2" />
-                Language Usage
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {languageData.map((lang, index) => {
-                  const totalSubmissions = languageData.reduce((sum, l) => sum + l.total, 0);
-                  const percentage = Math.round((lang.total / totalSubmissions) * 100);
-                  const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-purple-500', 'bg-red-500', 'bg-indigo-500', 'bg-pink-500'];
-                  
-                  return (
-                    <div key={lang.name} className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-3 h-3 rounded-full ${colors[index % colors.length]}`}></div>
-                        <span className="text-sm font-medium">{lang.name}</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-medium">{percentage}%</div>
-                        <div className="text-xs text-muted-foreground">{lang.total} submissions</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Activity Heatmap */}
-      {activityCalendarData.length > 0 && (
-        <Card>
+        <Card className="col-6">
           <CardHeader>
-            <CardTitle className="flex items-center">
-              <Activity className="w-5 h-5 mr-2" />
-              Activity Heatmap (Last 30 Days)
+            <CardTitle className="flex items-center text-base">
+              <CalendarClock className="w-4 h-4 mr-2" />
+              When you work
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-10 gap-1">
-              {activityCalendarData.map((day, index) => {
-                const intensity = Math.min(day.activity / 5, 1); // Normalize to 0-1
-                const opacity = intensity > 0 ? 0.2 + (intensity * 0.8) : 0.1;
-                
-                return (
-                  <div
-                    key={index}
-                    className={`w-6 h-6 rounded-sm border flex items-center justify-center text-xs transition-all hover:scale-110 ${
-                      day.activity > 0 ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800'
-                    }`}
-                    style={{ opacity }}
-                    title={`${day.date}: ${day.activity} submissions`}
-                  >
-                    {day.day}
-                  </div>
-                );
-              })}
+            <div className="chart-card-head">
+              <div>
+                <div className="chart-card-metric">
+                  {busiestSlot ? busiestSlot.runs.toLocaleString() : '—'}
+                </div>
+                <div className="chart-card-sub">
+                  {busiestSlot
+                    ? `runs in your busiest hour · ${slotLabel(busiestSlot.dow, busiestSlot.hour)}`
+                    : 'no code runs recorded yet'}
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
-              <span>Less active</span>
-              <div className="flex items-center space-x-1">
-                {[0.1, 0.3, 0.5, 0.7, 1].map((opacity, i) => (
-                  <div
-                    key={i}
-                    className="w-3 h-3 bg-blue-500 rounded-sm"
-                    style={{ opacity }}
+
+            {weekdayHour.length > 0 ? (
+              <>
+                {/* Short matrix: this is often only a handful of live cells, and a
+                    tall grid of empty ones reads as a broken chart. */}
+                <HourWeekMatrix data={weekdayHour} height={150} />
+                {/* With a sparse week the matrix alone is hard to read exactly, so
+                    the same hours are also listed with their counts and shares. */}
+                <div className="mt-4">
+                  <div className="chart-card-sub mb-2">
+                    {weekdayRuns.toLocaleString()} run{weekdayRuns === 1 ? '' : 's'} across{' '}
+                    {weekdayHour.length} hour{weekdayHour.length === 1 ? '' : 's'} of the week
+                  </div>
+                  <RankedBarList
+                    data={weekdayHour.map((cell) => ({
+                      label: slotLabel(cell.dow, cell.hour),
+                      value: cell.runs
+                    }))}
+                    unit=" runs"
+                    topN={4}
                   />
-                ))}
+                </div>
+              </>
+            ) : (
+              <div className="chart-empty">
+                <CalendarClock className="w-5 h-5" />
+                <span>Run some code to see the hours you work best in.</span>
               </div>
-              <span>More active</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Additional Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-blue-600">{analyticsData.overview.languages_used}</p>
-              <p className="text-sm text-muted-foreground">Languages Used</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-green-600">{analyticsData.overview.execution_success_rate.toFixed(1)}%</p>
-              <p className="text-sm text-muted-foreground">Execution Success Rate</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-purple-600">{analyticsData.recent_submissions}</p>
-              <p className="text-sm text-muted-foreground">Recent Submissions (30 days)</p>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Row 4 — only rendered when there is actually something to plot */}
+      {(showTrend || showLanguages) && (
+        <div className="analytics-grid">
+          {showTrend && (
+            <Card className="col-12">
+              <CardHeader>
+                <CardTitle className="flex items-center text-base">
+                  <TrendingUp className="w-4 h-4 mr-2" />
+                  Success rate over time
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="chart-card-head">
+                  <div>
+                    <div className="chart-card-metric">
+                      {Math.round(latestTrend.success_rate)}%
+                    </div>
+                    <div className="chart-card-sub">
+                      latest week · {latestTrend.total_submissions} submission
+                      {latestTrend.total_submissions === 1 ? '' : 's'} that week ·{' '}
+                      {analyticsData.performance_trend.length} weeks tracked
+                    </div>
+                  </div>
+                </div>
+                <TrendChart
+                  labels={trendLabels}
+                  series={[
+                    {
+                      label: 'Success rate',
+                      points: analyticsData.performance_trend.map((p) => p.success_rate)
+                    }
+                  ]}
+                  height={240}
+                  unit="%"
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {showLanguages && (
+            <>
+              <Card className="col-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-base">
+                    <BarChart3 className="w-4 h-4 mr-2" />
+                    Success rate by language
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="chart-card-head">
+                    <div>
+                      <div className="chart-card-metric">
+                        {bestLanguage ? `${bestLanguage.success_rate}%` : '—'}
+                      </div>
+                      <div className="chart-card-sub">
+                        {bestLanguage
+                          ? `best: ${bestLanguage.name} · ${bestLanguage.successful}/${bestLanguage.total} passed`
+                          : 'no languages yet'}
+                      </div>
+                    </div>
+                  </div>
+                  <BarList
+                    data={languageData.map((lang) => ({
+                      label: lang.name,
+                      value: lang.success_rate,
+                      caption: `${lang.successful}/${lang.total}`
+                    }))}
+                    unit="%"
+                    max={100}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card className="col-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-base">
+                    <PieChart className="w-4 h-4 mr-2" />
+                    Language usage
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="chart-card-head">
+                    <div>
+                      <div className="chart-card-metric">{languageTotal}</div>
+                      <div className="chart-card-sub">
+                        {topLanguage
+                          ? `submissions · ${topLanguage.name} leads with ${topLanguage.total}/${languageTotal}`
+                          : 'submissions'}
+                      </div>
+                    </div>
+                  </div>
+                  <ShareBar
+                    data={languageData.map((lang) => ({ label: lang.name, value: lang.total }))}
+                  />
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

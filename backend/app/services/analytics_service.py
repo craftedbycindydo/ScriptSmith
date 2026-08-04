@@ -2,10 +2,12 @@
 Analytics Service - Business logic for generating user and admin analytics
 """
 
+import re
 from typing import List, Optional, Dict, Any
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, and_, or_
+from sqlalchemy import func, desc, and_, or_, case
 from app.models.template import Template, TemplateSubmission
 from app.models.user import User
 from app.models.classroom import Classroom, UserClassroom
@@ -126,9 +128,289 @@ class AnalyticsService:
             "language_performance": language_stats,
             "performance_trend": performance_trend,
             "activity_heatmap": activity_heatmap,
-            "recent_submissions": len(recent_submissions)
+            "recent_submissions": len(recent_submissions),
+            **AnalyticsService._student_signals(db, user_id),
+            "class_comparison": AnalyticsService._class_comparison_for(
+                db, user_id, round(success_rate, 1)
+            ),
         }
     
+    # Matches the exception class in a Python traceback, e.g. "NameError: name
+    # 'x' is not defined". Extraction runs in Python rather than SQL so it works
+    # on Postgres and SQLite alike. Verified against 3,330 production error
+    # messages: the first match equals the last in all but one row.
+    _ERROR_TYPE_RE = re.compile(r"\b([A-Za-z_]+(?:Error|Exception|Warning))\b")
+
+    @staticmethod
+    def _classify_error(message: str) -> str:
+        """
+        Bucket one failure message.
+
+        Timeouts and platform failures carry no exception class, so a plain
+        regex drops them into "Other" - which is misleading: a timeout is a
+        real teaching signal (runaway loop), and a network failure is the
+        platform's fault, not the student's. Production data showed 79 timeouts
+        and 11 network failures hiding in that bucket, so they are named.
+        """
+        text = message or ""
+        lowered = text.lower()
+
+        if "timed out" in lowered or "timeout" in lowered:
+            return "Timeout"
+        if lowered.startswith("network error") or "cannot connect to host" in lowered:
+            return "Platform error"
+
+        match = AnalyticsService._ERROR_TYPE_RE.search(text)
+        return match.group(1) if match else "Other"
+
+    @staticmethod
+    def _student_signals(db: Session, user_id: int) -> Dict[str, Any]:
+        """
+        Signals a learner can act on, which the summary counters can't carry:
+        which mistakes they actually repeat, how each assignment went in order,
+        how much they run before submitting, and when they work.
+
+        `performance_trend` above is windowed to 30 days, so it is empty for
+        anyone whose term has ended. `assignment_history` is deliberately NOT
+        windowed - a student's own record should never vanish with time.
+        """
+        error_rows = db.query(CodeSubmission.error_message).filter(
+            CodeSubmission.user_id == user_id,
+            CodeSubmission.error_message.isnot(None),
+            CodeSubmission.error_message != "",
+        ).all()
+
+        counter: Counter = Counter()
+        for (message,) in error_rows:
+            counter[AnalyticsService._classify_error(message)] += 1
+        error_breakdown = [{"type": t, "count": c} for t, c in counter.most_common()]
+
+        # Chronological record: which assignment, passed or not, when.
+        history_rows = db.query(
+            TemplateSubmission.template_name,
+            TemplateSubmission.status,
+            TemplateSubmission.submitted_at,
+            TemplateSubmission.execution_time,
+        ).filter(
+            TemplateSubmission.user_id == user_id,
+            TemplateSubmission.template_name.isnot(None),
+        ).order_by(TemplateSubmission.submitted_at).all()
+
+        assignment_history = [
+            {
+                "name": name,
+                "status": status,
+                "passed": status == "success",
+                "submitted_at": submitted_at.isoformat() if submitted_at else None,
+                "execution_time": round(execution_time, 3) if execution_time is not None else None,
+            }
+            for name, status, submitted_at, execution_time in history_rows
+        ]
+
+        dow_rows = db.query(
+            func.extract("dow", CodeSubmission.created_at).label("dow"),
+            func.extract("hour", CodeSubmission.created_at).label("hour"),
+            func.count(CodeSubmission.id).label("runs"),
+        ).filter(
+            CodeSubmission.user_id == user_id,
+            CodeSubmission.created_at.isnot(None),
+        ).group_by("dow", "hour").all()
+
+        activity_by_weekday_hour = [
+            {"dow": int(d), "hour": int(h), "runs": int(r)}
+            for d, h, r in dow_rows
+            if d is not None and h is not None
+        ]
+
+        total_runs = db.query(func.count(CodeSubmission.id)).filter(
+            CodeSubmission.user_id == user_id
+        ).scalar() or 0
+        submissions = len(assignment_history)
+
+        return {
+            "error_breakdown": error_breakdown,
+            "assignment_history": assignment_history,
+            "activity_by_weekday_hour": activity_by_weekday_hour,
+            "runs_per_submission": round(total_runs / submissions, 1) if submissions else 0.0,
+        }
+
+    @staticmethod
+    def _class_comparison_for(db: Session, user_id: int, own_rate: float) -> Optional[Dict[str, Any]]:
+        """
+        How this student sits against the classmates they actually share a room
+        with. Returns None when they have no classroom - an invented benchmark
+        would be worse than none.
+        """
+        memberships = db.query(UserClassroom.classroom_id).filter(
+            UserClassroom.user_id == user_id,
+            UserClassroom.is_active == True
+        ).all()
+        classroom_ids = [c for (c,) in memberships]
+        if not classroom_ids:
+            return None
+
+        peers = db.query(UserClassroom.user_id).filter(
+            UserClassroom.classroom_id.in_(classroom_ids),
+            UserClassroom.role == "STUDENT",
+            UserClassroom.is_active == True
+        ).all()
+        peer_ids = [p for (p,) in peers]
+        if not peer_ids:
+            return None
+
+        totals = db.query(
+            func.count(TemplateSubmission.id),
+            func.sum(case((TemplateSubmission.status == "success", 1), else_=0)),
+        ).filter(TemplateSubmission.user_id.in_(peer_ids)).first()
+
+        total, successful = int(totals[0] or 0), int(totals[1] or 0)
+        if total == 0:
+            return None
+
+        own_submissions = db.query(func.count(TemplateSubmission.id)).filter(
+            TemplateSubmission.user_id == user_id
+        ).scalar() or 0
+
+        class_rate = round(100.0 * successful / total, 1)
+        return {
+            "class_average_success_rate": class_rate,
+            "student_vs_class": round(own_rate - class_rate, 1),
+            "peers": len(peer_ids),
+            # Volume alongside quality: a low rate on 20 attempts and a low rate
+            # on 2 are different situations, and only the pair distinguishes them.
+            "class_average_submissions": round(total / len(peer_ids), 1),
+            "your_submissions": int(own_submissions),
+        }
+
+    @staticmethod
+    def _teaching_signals(db: Session, student_ids: List[int]) -> Dict[str, Any]:
+        """
+        Class-level teaching signals that the per-student summaries can't show:
+        which failures dominate, which assignments are hardest, when the class
+        actually works, and how long their code runs.
+
+        Every field here is derived from columns verified to be populated in
+        production. `memory_used` (always NULL) and `resubmission_count`
+        (always 0) are deliberately not used.
+        """
+        empty = {
+            "error_breakdown": [],
+            "template_difficulty": [],
+            "activity_by_weekday_hour": [],
+            "execution_time_buckets": [],
+            "effort": [],
+        }
+        if not student_ids:
+            return empty
+
+        # --- Error taxonomy: what the class actually gets stuck on -----------
+        error_rows = db.query(CodeSubmission.error_message).filter(
+            CodeSubmission.user_id.in_(student_ids),
+            CodeSubmission.error_message.isnot(None),
+            CodeSubmission.error_message != "",
+        ).all()
+
+        counter: Counter = Counter()
+        for (message,) in error_rows:
+            counter[AnalyticsService._classify_error(message)] += 1
+
+        error_breakdown = [
+            {"type": name, "count": count} for name, count in counter.most_common()
+        ]
+
+        # --- Assignment difficulty: is it the student or the assignment? -----
+        template_rows = db.query(
+            TemplateSubmission.template_name,
+            func.count(TemplateSubmission.id).label("attempts"),
+            func.count(func.distinct(TemplateSubmission.user_id)).label("students"),
+            func.sum(
+                case((TemplateSubmission.status == "success", 1), else_=0)
+            ).label("successful"),
+        ).filter(
+            TemplateSubmission.user_id.in_(student_ids),
+            TemplateSubmission.template_name.isnot(None),
+        ).group_by(TemplateSubmission.template_name).all()
+
+        template_difficulty = sorted(
+            [
+                {
+                    "name": name,
+                    "attempts": int(attempts or 0),
+                    "students": int(students or 0),
+                    "success_rate": round(100.0 * int(successful or 0) / int(attempts), 1)
+                    if attempts
+                    else 0.0,
+                }
+                for name, attempts, students, successful in template_rows
+            ],
+            key=lambda t: (t["success_rate"], -t["attempts"]),
+        )
+
+        # --- When the class works (hour of day, 0-23) ------------------------
+        # Hour-of-day alone can't answer "are they starting the night before?" -
+        # that needs the weekday axis too. Postgres dow: 0=Sunday..6=Saturday.
+        dow_rows = db.query(
+            func.extract("dow", CodeSubmission.created_at).label("dow"),
+            func.extract("hour", CodeSubmission.created_at).label("hour"),
+            func.count(CodeSubmission.id).label("runs"),
+        ).filter(
+            CodeSubmission.user_id.in_(student_ids),
+            CodeSubmission.created_at.isnot(None),
+        ).group_by("dow", "hour").all()
+
+        activity_by_weekday_hour = [
+            {"dow": int(dow), "hour": int(hour), "runs": int(runs)}
+            for dow, hour, runs in dow_rows
+            if dow is not None and hour is not None
+        ]
+
+        # --- Run duration distribution (long-tailed; fixed buckets) ----------
+        bounds = [0.05, 0.1, 0.25, 0.5, 1.0]
+        labels = ["<50ms", "50-100ms", "100-250ms", "250-500ms", "0.5-1s", ">1s"]
+        times = db.query(CodeSubmission.execution_time).filter(
+            CodeSubmission.user_id.in_(student_ids),
+            CodeSubmission.execution_time.isnot(None),
+        ).all()
+
+        buckets = [0] * len(labels)
+        for (value,) in times:
+            index = next((i for i, edge in enumerate(bounds) if value < edge), len(bounds))
+            buckets[index] += 1
+        execution_time_buckets = [
+            {"label": label, "count": count} for label, count in zip(labels, buckets)
+        ]
+
+        # --- Effort vs outcome per student (drives the quadrant view) --------
+        run_rows = db.query(
+            CodeSubmission.user_id,
+            func.count(CodeSubmission.id).label("runs"),
+            func.sum(
+                case((CodeSubmission.status == "success", 1), else_=0)
+            ).label("successful"),
+        ).filter(
+            CodeSubmission.user_id.in_(student_ids)
+        ).group_by(CodeSubmission.user_id).all()
+
+        effort = [
+            {
+                "user_id": int(user_id),
+                "runs": int(runs or 0),
+                "run_success_rate": round(100.0 * int(successful or 0) / int(runs), 1)
+                if runs
+                else 0.0,
+            }
+            for user_id, runs, successful in run_rows
+            if user_id is not None
+        ]
+
+        return {
+            "error_breakdown": error_breakdown,
+            "template_difficulty": template_difficulty,
+            "activity_by_weekday_hour": activity_by_weekday_hour,
+            "execution_time_buckets": execution_time_buckets,
+            "effort": effort,
+        }
+
     @staticmethod
     def get_admin_analytics_overview(db: Session, admin_user: User) -> Dict[str, Any]:
         """Get analytics overview for admin dashboard"""
@@ -154,16 +436,19 @@ class AnalyticsService:
         classroom_ids = list(all_classrooms_dict.keys())
         
         if not classroom_ids:
+            # Same shape as the populated response - the client types one payload.
             return {
                 "overview": {
                     "total_students": 0,
-                    "average_success_rate": 0,
+                    "total_classrooms": 0,
                     "total_submissions": 0,
-                    "active_students_count": 0
+                    "class_success_rate": 0,
+                    "active_languages": 0
                 },
                 "classrooms": [],
-                "language_performance": [],
-                "student_performance": []
+                "language_performance": {},
+                "student_performance": [],
+                **AnalyticsService._teaching_signals(db, [])
             }
         
         # Get all students in admin's classrooms
@@ -208,6 +493,11 @@ class AnalyticsService:
             ).all()
             students_map = {s.id: s for s in students}
         
+        # Class-level teaching signals (error taxonomy, assignment difficulty,
+        # working hours, run durations, per-student effort).
+        signals = AnalyticsService._teaching_signals(db, student_ids)
+        effort_by_user = {e["user_id"]: e for e in signals["effort"]}
+
         # Student performance summary
         student_performance = []
         for student_id in student_ids:
@@ -240,10 +530,20 @@ class AnalyticsService:
                 "successful_submissions": student_successful,
                 "success_rate": round(student_success_rate, 1),
                 "risk_level": risk_level,
-                "last_active": last_active.isoformat() if last_active else None
+                "last_active": last_active.isoformat() if last_active else None,
+                # Effort signals: a student grinding through many failing runs
+                # looks fine on submission rate alone, which is why the summary
+                # above can't surface them.
+                "total_runs": effort_by_user.get(student_id, {}).get("runs", 0),
+                "run_success_rate": effort_by_user.get(student_id, {}).get("run_success_rate", 0.0),
             })
-        
+
+        # `effort` stays internal - it is already folded into each student row
+        # above, and the client never reads the raw array.
+        signals.pop("effort", None)
+
         return {
+            **signals,
             "overview": {
                 "total_students": len(student_ids),
                 "total_classrooms": len(admin_classrooms),
@@ -334,9 +634,19 @@ class AnalyticsService:
             "email": student.email
         }
         
+        # Same shape as the student's own view - this used to omit `peers`, so
+        # the client rendered "undefined classmates" depending on which endpoint
+        # it had loaded from.
         student_analytics["class_comparison"] = {
             "class_average_success_rate": round(class_average_success_rate, 1),
-            "student_vs_class": round(student_analytics["overview"]["success_rate"] - class_average_success_rate, 1)
+            "student_vs_class": round(
+                student_analytics["overview"]["success_rate"] - class_average_success_rate, 1
+            ),
+            "peers": len(all_student_ids),
+            "class_average_submissions": round(class_total / len(all_student_ids), 1)
+            if all_student_ids
+            else 0.0,
+            "your_submissions": student_analytics["overview"]["total_submissions"],
         }
         
         return student_analytics

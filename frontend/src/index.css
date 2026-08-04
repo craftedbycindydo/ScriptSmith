@@ -3,6 +3,7 @@
 @import "./styles/ide.css";
 @import "./styles/resume.css";
 @import "./styles/settings.css";
+@import "./styles/charts.css";
 
 /* Class-based dark mode: `dark:` utilities follow the `.dark` class on <html>,
    matching how the token variables already switch (ThemeContext). */

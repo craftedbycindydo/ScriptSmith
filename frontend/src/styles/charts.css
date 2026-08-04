@@ -1,0 +1,592 @@
+/* Analytics + chart primitives (tokens live in index.css). */
+
+/* ============================================================
+   ANALYTICS GRID — charts share rows instead of each owning a
+   full-width card, so a page reads without endless scrolling.
+   ============================================================ */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 1rem;
+  /* Cards in the same row match heights - a short card beside a tall one
+     looked broken, and the taller one then had nowhere to scroll. */
+  align-items: stretch;
+}
+
+.analytics-grid > [class*='col-'] {
+  min-width: 0;
+}
+
+.analytics-grid > [class*='col-'] > [data-slot='card'] {
+  height: 100%;
+}
+
+.analytics-grid > .col-4 { grid-column: span 4; }
+.analytics-grid > .col-6 { grid-column: span 6; }
+.analytics-grid > .col-8 { grid-column: span 8; }
+.analytics-grid > .col-12 { grid-column: span 12; }
+
+@media (max-width: 1100px) {
+  .analytics-grid > .col-4,
+  .analytics-grid > .col-6,
+  .analytics-grid > .col-8 {
+    grid-column: span 12;
+  }
+}
+
+/* KPI strip: headline numbers above the charts */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+/* ============================================================
+   STAT TILE — the form for a single headline number
+   ============================================================ */
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.9rem 1rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  min-width: 0;
+}
+
+.stat-tile-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+}
+
+.stat-tile-value {
+  font-family: var(--font-display-d);
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-foreground);
+  /* Proportional figures: tabular-nums makes large numbers look loose. */
+}
+
+.stat-tile-unit {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-left: 0.1rem;
+  color: var(--color-muted-foreground);
+}
+
+.stat-tile-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-top: 0.1rem;
+}
+
+/* Arrow + label carry the meaning; colour only reinforces it. */
+.stat-tile-delta[data-tone='good'] { color: var(--color-success); }
+.stat-tile-delta[data-tone='bad'] { color: var(--color-destructive); }
+.stat-tile-delta[data-tone='flat'] { color: var(--color-muted-foreground); }
+
+.stat-tile-delta-label,
+.stat-tile-hint {
+  font-weight: 400;
+  color: var(--color-muted-foreground);
+}
+
+.stat-tile-hint {
+  font-size: 0.72rem;
+  margin-top: 0.1rem;
+}
+
+/* ============================================================
+   METER — a ratio against a limit, with an optional benchmark
+   ============================================================ */
+.meter + .meter {
+  margin-top: 0.9rem;
+}
+
+.meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.meter-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+
+.meter-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter-caption {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+  margin-left: 0.4rem;
+}
+
+.meter-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted) 70%, transparent);
+  overflow: visible;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-primary);
+  transition: width var(--dur-enter) var(--ease-d);
+}
+
+/* Benchmark marker: a rule across the track, not a second bar. */
+.meter-benchmark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-foreground);
+  /* 2px surface ring so the marker stays visible over the fill */
+  box-shadow: 0 0 0 2px var(--color-card);
+}
+
+.meter-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+}
+
+.meter-legend-mark {
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--color-foreground);
+}
+
+/* ============================================================
+   SHARE BAR — part-to-whole
+   ============================================================ */
+.share-bar-track {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  /* 2px surface gaps between segments instead of borders */
+  gap: 2px;
+  background: transparent;
+}
+
+.share-bar-segment {
+  height: 100%;
+  min-width: 3px;
+}
+
+.share-bar-segment:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.share-bar-segment:last-child {
+  border-radius: 0 999px 999px 0;
+}
+
+.share-bar-legend {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.share-bar-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.share-bar-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.share-bar-name {
+  color: var(--color-foreground);
+}
+
+.share-bar-value {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.share-bar-count {
+  font-weight: 400;
+  color: var(--color-muted-foreground);
+  margin-left: 0.45rem;
+}
+
+/* ============================================================
+   BAR LIST — category breakdown that always fills its card
+   ============================================================ */
+.bar-list-row + .bar-list-row {
+  margin-top: 0.85rem;
+}
+
+.bar-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.bar-list-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+
+.bar-list-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-list-caption {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+  margin-left: 0.4rem;
+}
+
+.bar-list-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted) 70%, transparent);
+  overflow: hidden;
+}
+
+/* Paired benchmark row sits directly under the value bar, thinner and quieter */
+.bar-list-track-ghost {
+  height: 5px;
+  margin-top: 2px;
+  overflow: visible;
+}
+
+.bar-list-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-enter) var(--ease-d);
+}
+
+.bar-list-ghost-value {
+  position: absolute;
+  top: -3px;
+  right: 0;
+  font-size: 0.65rem;
+  color: var(--color-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-list-legend {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+}
+
+.bar-list-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bar-list-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* ============================================================
+   CHART CARD HEADER — the number is always readable as text,
+   so nobody has to decode a plot to learn the value.
+   ============================================================ */
+.chart-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.chart-card-metric {
+  font-family: var(--font-display-d);
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--color-foreground);
+}
+
+.chart-card-sub {
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+  margin-top: 0.1rem;
+}
+
+/* ============================================================
+   RANKED BAR LIST — DOM rows, label inside the bar
+   ============================================================ */
+.ranked-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ranked-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+button.ranked-row {
+  cursor: pointer;
+  border-radius: var(--r-panel);
+}
+
+button.ranked-row:hover .ranked-track,
+button.ranked-row:focus-visible .ranked-track {
+  outline: 1px solid var(--color-border);
+}
+
+button.ranked-row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.ranked-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ranked-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  transition: width var(--dur-enter) var(--ease-d);
+}
+
+/* Label rides on top of the fill so a short bar never clips its own name. */
+.ranked-label {
+  position: relative;
+  min-width: 0;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--color-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ranked-value {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.ranked-share {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  color: var(--color-muted-foreground);
+}
+
+/* ============================================================
+   CANVAS CHART WRAPPERS — the canvas fills the box it is given
+   ============================================================ */
+.quadrant-scatter,
+.composition-strip,
+.distribution-histogram {
+  position: relative;
+  width: 100%;
+}
+
+/* ============================================================
+   HOUR × WEEKDAY MATRIX — 7 rows of 24 cells, pure DOM
+   ============================================================ */
+.hour-matrix-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hour-matrix-row {
+  display: grid;
+  grid-template-columns: 2rem repeat(24, 1fr);
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+}
+
+.hour-matrix-daylabel {
+  display: flex;
+  align-items: center;
+  font-size: 0.62rem;
+  color: var(--color-muted-foreground);
+}
+
+.hour-matrix-cell {
+  border-radius: 2px;
+  min-height: 10px;
+}
+
+.hour-matrix-hours {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+
+.hour-matrix-hourlabel {
+  font-size: 0.62rem;
+  color: var(--color-muted-foreground);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.hour-matrix-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.66rem;
+  color: var(--color-muted-foreground);
+}
+
+.hour-matrix-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* ============================================================
+   EMPTY STATE — charts with no data yet
+   ============================================================ */
+.chart-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 120px;
+  color: var(--color-muted-foreground);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+/* ============================================================
+   SCROLLING PANEL — a ranked list that must not outgrow the
+   chart beside it. Height is capped; the list scrolls inside.
+   ============================================================ */
+.panel-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  /* Leaves the card header visible while the rows scroll under it. */
+  max-height: 22rem;
+  padding-right: 0.25rem;
+}
+
+.panel-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-input);
+  border-radius: 999px;
+}
+
+/* ============================================================
+   COMPARE TABLE — "you vs class" side by side. Numbers align
+   in columns, so tabular figures are correct here.
+   ============================================================ */
+.compare-table {
+  width: 100%;
+  margin-top: 1rem;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.compare-table th {
+  text-align: right;
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted-foreground);
+  padding: 0 0 0.4rem;
+}
+
+.compare-table th:first-child {
+  text-align: left;
+}
+
+.compare-table td {
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--color-border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+.compare-table td:first-child {
+  text-align: left;
+  font-weight: 400;
+  color: var(--color-muted-foreground);
+}
+
+/* The class column is context, not the subject. */
+.compare-table td:last-child {
+  color: var(--color-muted-foreground);
+}
