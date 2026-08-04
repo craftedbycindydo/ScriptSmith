@@ -28,7 +28,7 @@ import {
 import { 
   History, 
   User, 
-  Bell,
+  Palette,
   Moon,
   Sun,
   Monitor,
@@ -48,7 +48,7 @@ const SETTINGS_TABS = [
   { id: 'submissions', label: 'Submissions', icon: Send },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'profile', label: 'Profile', icon: User },
-  { id: 'preferences', label: 'Preferences', icon: Bell },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
 
 const SETTINGS_NAV_GROUPS = [
@@ -81,7 +81,7 @@ function EditorAppearanceSection() {
     useTheme();
 
   return (
-    <div className="pt-4 border-t space-y-6">
+    <div className="space-y-6">
       <div>
         <label className="text-sm font-medium mb-1 block">Editor theme</label>
         <p className="text-sm text-muted-foreground mb-3">
@@ -176,7 +176,7 @@ function AppearanceSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Appearance</CardTitle>
+        <CardTitle>Theme</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <div>
@@ -263,7 +263,6 @@ export default function Settings() {
   const { user, isAuthenticated, refreshUser, logout } = useAuthStore();
   const { setCode, setLanguage } = useCodeStore();
   const navigate = useNavigate();
-  const [notifications, setNotifications] = useState(true);
 
   // Tab state
   const [activeTab, setActiveTab] = useState('history');
@@ -783,31 +782,17 @@ export default function Settings() {
                   </div>
                 )}
 
-                {activeTab === 'preferences' && (
+                {activeTab === 'appearance' && (
                   <div className="space-y-4">
-          <AppearanceSection />
-          <Card>
-            <CardHeader>
-              <CardTitle>Editor Preferences</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="text-sm font-medium">Notifications</label>
-                  <p className="text-sm text-muted-foreground">Receive notifications about code execution results</p>
-                </div>
-                <Button
-                  variant={notifications ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setNotifications(!notifications)}
-                >
-                  {notifications ? 'Enabled' : 'Disabled'}
-                </Button>
-              </div>
-
-              <EditorAppearanceSection />
-            </CardContent>
-          </Card>
+                    <AppearanceSection />
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Editor</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <EditorAppearanceSection />
+                      </CardContent>
+                    </Card>
                   </div>
                 )}
           </div>
