@@ -388,8 +388,12 @@ async def login_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Ensure admin access for users with admin emails (fixes existing users)
-        admin_service.ensure_initial_admin_access(db)
+        # Ensure admin access for users with admin emails (fixes existing users).
+        # Scans every configured admin email against every active classroom, so
+        # only run it when the user signing in is actually one of those admins -
+        # for everyone else it was pure overhead on the login path.
+        if admin_service.is_initial_admin_email(user.email):
+            admin_service.ensure_initial_admin_access(db)
         
         # Check if email verification is required
         if settings.require_email_verification and not user.is_verified:

@@ -948,16 +948,8 @@ export default function AdminDashboard() {
       const classroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
       initializeWebSocket(user?.id, classroomIds);
       
-      // Force refresh user data to get latest classroom context
-      const refreshUserData = async () => {
-        try {
-          await refreshUser();
-        } catch (err) {
-          console.error('Failed to refresh user data:', err);
-        }
-      };
-
-      refreshUserData();
+      // No user refresh here: validateSession() already fetched /auth/me on
+      // this page load, and it returns the same classroom context.
     }
     
     // Cleanup websocket on unmount
