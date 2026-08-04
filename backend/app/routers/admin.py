@@ -497,17 +497,11 @@ async def get_user_activities(
         'page_size': page_size
     }
     
-    # Temporarily disable cache for activities to prevent Pydantic errors
-    # TODO: Re-enable after cache serialization is confirmed working
-    cached_activities = None  # admin_cache.get_cached_user_activities(filter_params)
-    if cached_activities:
-        # Ensure cached data is in the correct format
-        try:
-            return UserActivityResponse(**cached_activities)
-        except Exception as cache_error:
-            logger.warning(f"Cache data format error, ignoring cache: {cache_error}")
-            # Continue with fresh query if cached data is invalid
-    
+    # Activities are deliberately not cached. The cache stores JSON in Redis, so
+    # the datetimes in this response come back as strings and fail
+    # UserActivityResponse validation. Caching this endpoint needs the payload
+    # made JSON-round-trip safe first; it is not a hot path.
+
     # Simplified approach: Get classroom users first, then fetch activities separately
     # This is more likely to use indexes properly
     
@@ -606,10 +600,8 @@ async def get_user_activities(
         "page_size": page_size
     }
     
-    # Temporarily disable caching to prevent serialization issues
-    # TODO: Re-enable after cache serialization is confirmed working
-    # admin_cache.cache_user_activities(filter_params, result)
-    
+    # Not cached - see the note on the read side above.
+
     return UserActivityResponse(**result)
 
 @router.get("/admin/users", response_model=List[dict])
@@ -706,6 +698,28 @@ async def get_all_users(
         }
         for row in results
     ]
+
+@router.get("/admin/users/admins")
+async def get_admin_users(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user)
+):
+    """Get all users with admin privileges"""
+    admins = admin_service.get_admin_users(db)
+    return {
+        "admins": [
+            {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role.value,
+                "is_admin": user.is_admin,
+                "is_superuser": user.is_superuser,
+                "is_initial_admin": admin_service.is_initial_admin_email(user.email)
+            }
+            for user in admins
+        ]
+    }
 
 @router.get("/admin/users/{user_id}", response_model=UserDetailsResponse)
 async def get_user_details(
@@ -846,27 +860,6 @@ async def demote_user_from_admin(
     }
 
 
-@router.get("/admin/users/admins")
-async def get_admin_users(
-    db: Session = Depends(get_db),
-    admin_user: User = Depends(get_admin_user)
-):
-    """Get all users with admin privileges"""
-    admins = admin_service.get_admin_users(db)
-    return {
-        "admins": [
-            {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role.value,
-                "is_admin": user.is_admin,
-                "is_superuser": user.is_superuser,
-                "is_initial_admin": admin_service.is_initial_admin_email(user.email)
-            }
-            for user in admins
-        ]
-    }
 
 
 # Admin Settings Endpoints
