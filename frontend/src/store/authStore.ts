@@ -261,8 +261,18 @@ export const useAuthStore = create<AuthState>()(
       },
 
       validateSession: async () => {
-        const { token } = get();
+        const { token, user: persistedUser } = get();
         if (!token?.access_token) return;
+
+        // The persisted user is enough to render from. A stale or revoked token
+        // surfaces on the first real API call, where the 401 interceptor
+        // refreshes it or logs out - so there is no reason to spend a /auth/me
+        // round trip proving it up front on every page load.
+        if (persistedUser) {
+          set({ isAuthenticated: true });
+          return;
+        }
+
         try {
           const user = await apiService.getCurrentUser();
           set({ user, isAuthenticated: true });

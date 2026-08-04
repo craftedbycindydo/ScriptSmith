@@ -233,7 +233,11 @@ class ClassroomService:
     def get_classroom_context(db: Session, user: User) -> Dict[str, Any]:
         """Get classroom context for current user"""
         
-        memberships = db.query(UserClassroom).filter(
+        # joinedload: the loop below reads membership.classroom, which would
+        # otherwise emit one SELECT per membership.
+        memberships = db.query(UserClassroom).options(
+            joinedload(UserClassroom.classroom)
+        ).filter(
             and_(
                 UserClassroom.user_id == user.id,
                 UserClassroom.is_active == True
