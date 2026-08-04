@@ -59,9 +59,6 @@ class SessionDetailsResponse(BaseModel):
 class UpdateParticipantStatusRequest(BaseModel):
     is_connected: bool
 
-class UpdateCursorRequest(BaseModel):
-    cursor_position: Optional[Any] = None
-
 class UpdateSessionStateRequest(BaseModel):
     yjs_state: Optional[str] = None
     document_content: Optional[str] = None
@@ -458,26 +455,6 @@ async def update_participant_status(
     db.commit()
     
     return {"success": True, "participant_id": participant_id, "is_connected": request.is_connected}
-
-@router.put("/collaboration/participants/{participant_id}/cursor")
-async def update_participant_cursor(
-    participant_id: int,
-    request: UpdateCursorRequest,
-    db: Session = Depends(get_db)
-):
-    """Update participant cursor position (called by WebSocket service)"""
-    
-    participant = db.query(CollaborationParticipant).filter(
-        CollaborationParticipant.id == participant_id
-    ).first()
-    
-    if not participant:
-        raise HTTPException(status_code=404, detail="Participant not found")
-    
-    participant.cursor_position = request.cursor_position
-    db.commit()
-    
-    return {"success": True, "participant_id": participant_id}
 
 @router.get("/collaboration/sessions/{session_id}/participants", response_model=List[ParticipantResponse])
 async def get_session_participants(

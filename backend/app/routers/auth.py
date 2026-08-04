@@ -31,13 +31,6 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = None
     classroom_key: Optional[str] = None  # Optional for joining a classroom
 
-class AdminUserCreate(BaseModel):
-    """For admin-only registration without classroom key"""
-    email: EmailStr
-    username: str
-    password: str
-    full_name: Optional[str] = None
-
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -283,72 +276,6 @@ async def register_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create user: {str(e)}"
-        )
-
-@router.post("/register-admin", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_admin_user(
-    user: AdminUserCreate, 
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Register a new admin user (for initial setup, doesn't require classroom key)"""
-    try:
-        # Validate client IP and headers
-        client_ip = request.client.host
-        if not SecurityValidator.validate_client_ip(client_ip):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request from invalid IP address"
-            )
-        
-        is_valid, error = SecurityValidator.check_request_headers(dict(request.headers))
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error
-            )
-        
-        # Validate input security
-        validate_input_security(
-            password=user.password,
-            email=user.email,
-            username=user.username
-        )
-        
-        # Sanitize input
-        user.email = SecurityValidator.sanitize_input(user.email, 254)
-        user.username = SecurityValidator.sanitize_input(user.username, 50)
-        if user.full_name:
-            user.full_name = SecurityValidator.sanitize_input(user.full_name, 255)
-        
-        # Create admin user
-        db_user = AuthService.create_user(
-            db=db,
-            email=user.email,
-            username=user.username,
-            password=user.password,
-            full_name=user.full_name
-        )
-        
-        # Promote to admin
-        admin_service.promote_to_admin(db, db_user.id, db_user)
-        
-        return UserResponse(
-            id=db_user.id,
-            email=db_user.email,
-            username=db_user.username,
-            full_name=db_user.full_name,
-            is_active=db_user.is_active,
-            is_verified=db_user.is_verified,
-            is_admin=True,
-            created_at=db_user.created_at.isoformat()
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create admin user: {str(e)}"
         )
 
 @router.post("/login", response_model=Token)
