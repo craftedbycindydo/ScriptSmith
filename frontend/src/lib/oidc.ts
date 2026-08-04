@@ -2,6 +2,10 @@ const ISSUER = import.meta.env.VITE_ZITADEL_ISSUER ?? '';
 const CLIENT_ID = import.meta.env.VITE_ZITADEL_CLIENT_ID ?? '';
 const REDIRECT_URI = `${window.location.origin}/auth/callback`;
 
+// Zitadel's Google provider. This scope makes /authorize redirect straight to
+// accounts.google.com instead of rendering Zitadel's own login page.
+const GOOGLE_IDP_ID = import.meta.env.VITE_ZITADEL_GOOGLE_IDP_ID ?? '384704508522929860';
+
 const VERIFIER_KEY = 'oidc_code_verifier';
 const STATE_KEY = 'oidc_state';
 const RETURN_KEY = 'oidc_return_to';
@@ -41,7 +45,7 @@ export async function beginLogin(returnTo: string = '/', prompt: string = 'selec
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
     response_type: 'code',
-    scope: 'openid profile email offline_access',
+    scope: `openid profile email offline_access urn:zitadel:iam:org:idp:id:${GOOGLE_IDP_ID}`,
     code_challenge: await challengeFor(verifier),
     code_challenge_method: 'S256',
     state,
