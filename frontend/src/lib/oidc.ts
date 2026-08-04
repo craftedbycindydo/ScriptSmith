@@ -32,7 +32,11 @@ async function challengeFor(verifier: string): Promise<string> {
   return base64UrlEncode(digest);
 }
 
-export async function beginLogin(returnTo: string = '/', prompt: string = 'select_account'): Promise<void> {
+// No `prompt` is sent: prompt=select_account makes Zitadel render its own
+// account chooser, which pre-empts the IdP redirect below. Zitadel's Google
+// provider forwards prompt=select_account to Google on its own, so the user
+// still lands on Google's account picker.
+export async function beginLogin(returnTo: string = '/'): Promise<void> {
   if (!isOidcConfigured()) return;
 
   const verifier = randomString();
@@ -49,7 +53,6 @@ export async function beginLogin(returnTo: string = '/', prompt: string = 'selec
     code_challenge: await challengeFor(verifier),
     code_challenge_method: 'S256',
     state,
-    prompt,
   });
 
   window.location.assign(`${ISSUER}/oauth/v2/authorize?${params}`);
