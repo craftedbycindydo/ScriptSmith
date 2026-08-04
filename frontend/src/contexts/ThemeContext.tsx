@@ -40,8 +40,15 @@ export const BACKDROPS: { id: Backdrop; label: string }[] = [
   { id: 'mountains', label: 'Mountains' },
 ];
 
+const DEFAULT_THEME: Theme = 'system';
 const DEFAULT_PALETTE: Palette = 'mono';
 const DEFAULT_BACKDROP: Backdrop = 'none';
+const DEFAULT_EDITOR_THEME = 'vscode';
+const DEFAULT_EDITOR_BG = 'theme';
+const DEFAULT_CONSOLE_BG = 'default';
+
+/** localStorage keys owned by the theme system, cleared on sign-out. */
+const PREF_STORAGE_KEYS = ['theme', 'palette', 'backdrop', 'editorTheme', 'editorBg', 'consoleBg'];
 
 const isPalette = (v: unknown): v is Palette => PALETTES.some((p) => p.id === v);
 const isBackdrop = (v: unknown): v is Backdrop => BACKDROPS.some((b) => b.id === v);
@@ -84,23 +91,26 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const [editorTheme, setEditorTheme] = useState<string>(() => {
     const stored = localStorage.getItem('editorTheme');
-    return isEditorTheme(stored) ? (stored as string) : 'vscode';
+    return isEditorTheme(stored) ? (stored as string) : DEFAULT_EDITOR_THEME;
   });
 
   const [editorBg, setEditorBg] = useState<string>(() => {
     const stored = localStorage.getItem('editorBg');
-    return isEditorBg(stored) ? (stored as string) : 'theme';
+    return isEditorBg(stored) ? (stored as string) : DEFAULT_EDITOR_BG;
   });
 
   const [consoleBg, setConsoleBg] = useState<string>(() => {
     const stored = localStorage.getItem('consoleBg');
-    return isConsoleBg(stored) ? (stored as string) : 'default';
+    return isConsoleBg(stored) ? (stored as string) : DEFAULT_CONSOLE_BG;
   });
 
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('dark');
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const prefsLoadedRef = useRef(false);
+  // Seeded from the mount value so a visitor who was never signed in keeps
+  // their own local choices; only a real sign-out triggers the reset below.
+  const wasAuthenticatedRef = useRef(isAuthenticated);
 
   useEffect(() => {
     const updateResolvedTheme = () => {
@@ -150,12 +160,33 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.setAttribute('data-console-bg', consoleBg);
   }, [consoleBg]);
 
+  // Drop the signed-out user's look locally so the next visitor on this device
+  // starts from the app defaults instead of inheriting someone else's theme.
+  // Local only: the account's saved preferences stay on the server and come
+  // back on the next sign-in.
+  const resetPreferencesToDefaults = () => {
+    setTheme(DEFAULT_THEME);
+    setPalette(DEFAULT_PALETTE);
+    setBackdrop(DEFAULT_BACKDROP);
+    setEditorTheme(DEFAULT_EDITOR_THEME);
+    setEditorBg(DEFAULT_EDITOR_BG);
+    setConsoleBg(DEFAULT_CONSOLE_BG);
+    PREF_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  };
+
   // Load server-side preferences once per login; they win over localStorage.
   useEffect(() => {
     if (!isAuthenticated) {
       prefsLoadedRef.current = false;
+      // Covers every sign-out path (manual, expired session, OIDC), since they
+      // all clear isAuthenticated in the auth store.
+      if (wasAuthenticatedRef.current) {
+        wasAuthenticatedRef.current = false;
+        resetPreferencesToDefaults();
+      }
       return;
     }
+    wasAuthenticatedRef.current = true;
     if (prefsLoadedRef.current) return;
     prefsLoadedRef.current = true;
 
