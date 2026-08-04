@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Shield, UserCheck, UserX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -25,7 +24,6 @@ import {
   useAdminForceLogoutUser,
 } from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
-import { useMotionPreset } from '@/lib/designMotion';
 import AssignmentUpload from './AssignmentUpload';
 import AssignmentReports from './AssignmentReports';
 import TemplateManager from './TemplateManager';
@@ -54,7 +52,6 @@ export default function AdminDashboard() {
     setCurrentClassroom
   } = useAdminSettingsStore();
   const navigate = useNavigate();
-  const motionPreset = useMotionPreset();
 
   // Tab state - must be declared before React Query hooks
   const [activeTab, setActiveTab] = useState('overview');
@@ -835,14 +832,11 @@ export default function AdminDashboard() {
         classroomNames={classroomNames}
         showNoClassroomWarning={!!user?.classroom_context && !user.classroom_context.has_classroom}
       >
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={motionPreset.enter.initial}
-            animate={motionPreset.enter.animate}
-            exit={motionPreset.enter.exit}
-            transition={motionPreset.enter.transition}
-          >
+        {/* Keyed CSS entrance rather than AnimatePresence: `mode="wait"` gates
+            mounting the next tab on the previous one's exit animation, and a
+            stalled exit (observed frozen at opacity 0.27) left the dashboard
+            showing the old tab forever. A CSS animation cannot deadlock. */}
+        <div key={activeTab} className="anim-enter">
             {activeTab === 'overview' && (
               <OverviewTab
                 stats={stats}
@@ -1005,8 +999,7 @@ export default function AdminDashboard() {
                 getRemainingTime={getRemainingTime}
               />
             )}
-          </motion.div>
-        </AnimatePresence>
+        </div>
       </AdminShell>
 
       {/* Global Dialogs - Available on all tabs */}
