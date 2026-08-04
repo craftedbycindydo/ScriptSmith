@@ -1,0 +1,47 @@
+/* Admin-dashboard-specific semantic classes (tokens live in index.css). */
+
+/* Section heading inside a tab (one step below .page-title) */
+.section-title {
+  font-family: var(--font-display-d);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+/* Initial avatar used in user tables */
+.avatar-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border-radius: var(--r-pill);
+  background: var(--color-tint);
+  color: var(--color-foreground);
+  font-family: var(--font-mono-d);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Table footer: compact pagination, bottom-right */
+.table-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+}
+
+/* Expanded detail row inside a .data-table (click-to-expand pattern).
+   Beats the row hover rule on specificity so the detail row never tints. */
+.data-table tbody tr.expand-row,
+.data-table tbody tr.expand-row:hover {
+  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+  color: inherit;
+}

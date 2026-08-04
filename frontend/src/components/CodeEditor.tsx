@@ -1,6 +1,8 @@
 import { Editor } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useEffect, useState } from 'react';
+import { useTheme } from '@/contexts/ThemeContext';
+import { registerMonaco, ensureMonacoTheme } from '@/lib/editorThemes';
 
 interface CodeEditorProps {
   language: string;
@@ -12,7 +14,11 @@ interface CodeEditorProps {
   copyPasteDisabled?: boolean;
 }
 
-export default function CodeEditor({ language, value, onChange, onMount, theme = 'vs-dark', readOnly = false, copyPasteDisabled = false }: CodeEditorProps) {
+export default function CodeEditor({ language, value, onChange, onMount, theme, readOnly = false, copyPasteDisabled = false }: CodeEditorProps) {
+  const { resolvedTheme, editorTheme: userEditorTheme, editorBg } = useTheme();
+  // The user's editor theme + background preference, unless a caller
+  // explicitly pins a Monaco theme (e.g. read-only admin views).
+  const editorTheme = theme ?? ensureMonacoTheme(userEditorTheme, editorBg, resolvedTheme);
   const [isMobile, setIsMobile] = useState(false);
   const [editorInstance, setEditorInstance] = useState<any>(null);
   const [monacoInstance, setMonacoInstance] = useState<any>(null);
@@ -274,8 +280,13 @@ export default function CodeEditor({ language, value, onChange, onMount, theme =
         language={language}
         value={value}
         onChange={onChange}
+        beforeMount={(monaco) => {
+          registerMonaco(monaco);
+          // Define the active custom theme before the editor first renders
+          ensureMonacoTheme(userEditorTheme, editorBg, resolvedTheme);
+        }}
         onMount={handleEditorMount}
-        theme={theme}
+        theme={editorTheme}
         options={editorOptions}
       />
     </div>

@@ -1,0 +1,281 @@
+/* Settings › Appearance section (tokens live in index.css). */
+
+.appearance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.6rem;
+}
+
+/* One selectable palette card. The [data-palette] attribute on the card
+   scopes that palette's CSS variables to the swatch inside it, so the
+   preview colors come straight from the theme system — no duplicated data. */
+.palette-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-d), transform var(--dur-fast) var(--ease-d);
+}
+
+.palette-card:hover {
+  border-color: var(--color-input);
+  transform: translateY(-1px);
+}
+
+.palette-card[data-active="true"] {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 1px var(--color-ring);
+}
+
+.palette-card .palette-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+/* The swatch strip: colored via the scoped palette variables */
+.palette-swatch {
+  display: flex;
+  height: 2.1rem;
+  border-radius: var(--r-ui);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.palette-swatch > span {
+  flex: 1;
+}
+
+.palette-swatch .sw-bg {
+  background: var(--color-background);
+}
+
+.palette-swatch .sw-card {
+  background: var(--color-card);
+}
+
+.palette-swatch .sw-tint {
+  background: var(--color-tint);
+}
+
+.palette-swatch .sw-cta {
+  background: var(--cta-bg);
+}
+
+/* Backdrop (photo theme) cards */
+.backdrop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-d), transform var(--dur-fast) var(--ease-d);
+}
+
+.backdrop-card:hover {
+  border-color: var(--color-input);
+  transform: translateY(-1px);
+}
+
+.backdrop-card[data-active="true"] {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 1px var(--color-ring);
+}
+
+.backdrop-card img,
+.backdrop-card .backdrop-none {
+  width: 100%;
+  height: 3.4rem;
+  object-fit: cover;
+  border-radius: var(--r-ui);
+  border: 1px solid var(--color-border);
+}
+
+.backdrop-card .backdrop-none {
+  background: var(--color-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+}
+
+.backdrop-card .backdrop-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+/* Editor (Monaco) theme cards: mini "code" preview built from the theme's
+   own token colors */
+.editor-theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-d), transform var(--dur-fast) var(--ease-d);
+}
+
+.editor-theme-card:hover {
+  border-color: var(--color-input);
+  transform: translateY(-1px);
+}
+
+.editor-theme-card[data-active="true"] {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 1px var(--color-ring);
+}
+
+.editor-theme-card .theme-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  height: 3rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--r-ui);
+  border: 1px solid var(--color-border);
+}
+
+.editor-theme-card .theme-preview > span {
+  display: block;
+  height: 0.3rem;
+  border-radius: 2px;
+}
+
+/* Paired families: light|dark halves side by side */
+.editor-theme-card .theme-preview.split {
+  flex-direction: row;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.editor-theme-card .theme-half {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.editor-theme-card .theme-half span {
+  display: block;
+  height: 0.3rem;
+  border-radius: 2px;
+}
+
+.editor-theme-card .theme-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+/* Round background swatch (editor/console bg pickers) */
+.bg-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.bg-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.bg-swatch .swatch-dot {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--color-border);
+  transition: transform var(--dur-fast) var(--ease-d), border-color var(--dur-fast) var(--ease-d);
+}
+
+.bg-swatch:hover .swatch-dot {
+  transform: scale(1.08);
+}
+
+.bg-swatch[data-active="true"] .swatch-dot {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ring) 35%, transparent);
+}
+
+.bg-swatch .swatch-label {
+  font-size: 0.62rem;
+  color: var(--color-muted-foreground);
+  max-width: 4.2rem;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.swatch-dot.swatch-default {
+  background: repeating-conic-gradient(var(--color-muted) 0% 25%, var(--color-card) 0% 50%) 0 0 /
+    10px 10px;
+}
+
+/* Light/Dark/System mode segmented row */
+.mode-row {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-panel);
+  overflow: hidden;
+}
+
+.mode-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-d), color var(--dur-fast) var(--ease-d);
+}
+
+.mode-row button + button {
+  border-left: 1px solid var(--color-border);
+}
+
+.mode-row button:hover {
+  background: var(--color-muted);
+  color: var(--color-foreground);
+}
+
+.mode-row button[data-active="true"] {
+  background: var(--color-tint);
+  color: var(--color-foreground);
+  font-weight: 600;
+}

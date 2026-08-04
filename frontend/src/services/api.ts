@@ -85,6 +85,15 @@ export interface User {
   created_at: string;
 }
 
+export interface UIPreferences {
+  palette: string | null;
+  mode: string | null;
+  backdrop: string | null;
+  editor_theme?: string | null;
+  editor_bg?: string | null;
+  console_bg?: string | null;
+}
+
 // Classroom interfaces
 export interface ClassroomInfo {
   id: number;
@@ -362,6 +371,16 @@ export const apiService = {
 
   async getCurrentUser(): Promise<User> {
     const response = await api.get('/auth/me');
+    return response.data;
+  },
+
+  async getUserPreferences(): Promise<UIPreferences> {
+    const response = await api.get('/auth/preferences');
+    return response.data;
+  },
+
+  async updateUserPreferences(prefs: Partial<UIPreferences>): Promise<UIPreferences> {
+    const response = await api.put('/auth/preferences', prefs);
     return response.data;
   },
 

@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Cookie
@@ -521,6 +522,72 @@ async def get_current_user_info(
         created_at=current_user.created_at.isoformat(),
         classroom_context=classroom_context
     )
+
+# --- Per-user UI preferences (theme palette / light-dark mode / backdrop) ---
+
+VALID_PALETTES = {"mono", "grey", "anthropic", "ocean", "forest", "terracotta", "sage", "rose", "sand", "midnight"}
+VALID_MODES = {"light", "dark", "system"}
+VALID_BACKDROPS = {"none", "beach", "forest", "sunset", "mountains"}
+VALID_EDITOR_THEMES = {
+    "vscode", "github", "solarized", "intellij", "monokai", "dracula", "one-dark", "nord",
+}
+VALID_EDITOR_BGS = {"theme", "black", "slate", "navy", "espresso", "sepia", "white"}
+VALID_CONSOLE_BGS = {"default", "black", "charcoal", "navy", "espresso", "forest"}
+
+class UIPreferences(BaseModel):
+    palette: Optional[str] = None
+    mode: Optional[str] = None
+    backdrop: Optional[str] = None
+    editor_theme: Optional[str] = None
+    editor_bg: Optional[str] = None
+    console_bg: Optional[str] = None
+
+def _parse_ui_preferences(raw: Optional[str]) -> dict:
+    try:
+        data = json.loads(raw) if raw else {}
+        return data if isinstance(data, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+@router.get("/preferences", response_model=UIPreferences)
+async def get_ui_preferences(
+    current_user = Depends(get_current_active_user)
+):
+    """Get the current user's UI preferences (theme palette, mode, backdrop)."""
+    data = _parse_ui_preferences(current_user.ui_preferences)
+    return UIPreferences(**{f: data.get(f) for f in UIPreferences.model_fields})
+
+@router.put("/preferences", response_model=UIPreferences)
+async def update_ui_preferences(
+    prefs: UIPreferences,
+    current_user = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update the current user's UI preferences. Only provided fields change."""
+    validators = {
+        "palette": VALID_PALETTES,
+        "mode": VALID_MODES,
+        "backdrop": VALID_BACKDROPS,
+        "editor_theme": VALID_EDITOR_THEMES,
+        "editor_bg": VALID_EDITOR_BGS,
+        "console_bg": VALID_CONSOLE_BGS,
+    }
+    for field, allowed in validators.items():
+        value = getattr(prefs, field)
+        if value is not None and value not in allowed:
+            raise HTTPException(status_code=422, detail=f"Invalid {field} '{value}'")
+
+    data = _parse_ui_preferences(current_user.ui_preferences)
+    for field in validators:
+        value = getattr(prefs, field)
+        if value is not None:
+            data[field] = value
+
+    current_user.ui_preferences = json.dumps(data)
+    db.add(current_user)
+    db.commit()
+
+    return UIPreferences(**{f: data.get(f) for f in UIPreferences.model_fields})
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(

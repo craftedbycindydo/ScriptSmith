@@ -143,8 +143,8 @@ export default function ResizablePanels({
         >
           {/* Larger touch-friendly hit area */}
           <div className="absolute inset-x-0 -top-4 -bottom-4 h-8 flex items-center justify-center touch-manipulation">
-            <div className={`h-1 w-12 bg-muted-foreground/30 group-hover:bg-blue-500 group-active:bg-blue-600 rounded-full transition-colors ${
-              isDragging ? 'bg-blue-500' : ''
+            <div className={`h-1 w-12 bg-muted-foreground/30 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors ${
+              isDragging ? 'bg-primary' : ''
             }`}></div>
           </div>
         </div>
@@ -183,8 +183,8 @@ export default function ResizablePanels({
         >
           {/* Larger hit area for easier grabbing */}
           <div className="absolute inset-x-0 -top-3 -bottom-3 h-6 flex items-center justify-center touch-manipulation">
-            <div className={`h-1 w-8 bg-muted-foreground/20 group-hover:bg-blue-500 group-active:bg-blue-600 rounded-full transition-colors ${
-              isDragging ? 'bg-blue-500' : ''
+            <div className={`h-1 w-8 bg-muted-foreground/20 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors ${
+              isDragging ? 'bg-primary' : ''
             }`}></div>
           </div>
         </div>
@@ -220,8 +220,8 @@ export default function ResizablePanels({
         >
           {/* Larger hit area for easier grabbing */}
           <div className="absolute inset-y-0 -left-3 -right-3 w-6 flex items-center justify-center touch-manipulation">
-            <div className={`w-1 h-8 bg-muted-foreground/20 group-hover:bg-blue-500 group-active:bg-blue-600 rounded-full transition-colors ${
-              isDragging ? 'bg-blue-500' : ''
+            <div className={`w-1 h-8 bg-muted-foreground/20 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors ${
+              isDragging ? 'bg-primary' : ''
             }`}></div>
           </div>
         </div>
