@@ -102,25 +102,31 @@ async def security_middleware(request: Request, call_next):
             if current_time - req_time < 60
         ]
         
-        # Check global rate limit
+        # Check global rate limit. Return rather than raise: an HTTPException thrown
+        # from middleware bypasses the exception handlers, so the client gets a broken
+        # response with no CORS headers instead of a readable 429.
         if len(rate_limit_storage[client_ip]) >= settings.global_rate_limit:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
-        
-        # Check auth endpoint rate limiting
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+            )
+
+        # Check auth endpoint rate limiting. Only auth requests count toward this
+        # budget - counting every request would exhaust it on a normal page load.
         if request.url.path.startswith("/api/auth/"):
             auth_rate_limit_storage[client_ip] = [
                 req_time for req_time in auth_rate_limit_storage[client_ip]
                 if current_time - req_time < 60
             ]
-            
+
             if len(auth_rate_limit_storage[client_ip]) >= settings.auth_rate_limit:
-                raise HTTPException(
-                    status_code=429, 
-                    detail="Authentication rate limit exceeded. Please try again later."
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Authentication rate limit exceeded. Please try again later."},
                 )
-        
-        auth_rate_limit_storage[client_ip].append(current_time)
-        
+
+            auth_rate_limit_storage[client_ip].append(current_time)
+
         # Add current request to global rate limit (only for external requests)
         rate_limit_storage[client_ip].append(current_time)
     
@@ -204,6 +210,17 @@ async def startup_event():
 
             # Lightweight column migration for per-user UI preferences
             DatabaseMigrationService.add_column_if_not_exists(db, "users", "ui_preferences", "TEXT")
+
+            # Lightweight column migration for scheduled template visibility
+            DatabaseMigrationService.add_column_if_not_exists(db, "templates", "visible_from", "TIMESTAMP")
+
+            # In-class submission codes: add the column, then give every existing
+            # template a code so the first-submission check applies to all labs
+            DatabaseMigrationService.add_column_if_not_exists(db, "templates", "submission_code", "VARCHAR(4)")
+            from app.services.template_service import TemplateService
+            backfilled = TemplateService.backfill_submission_codes(db)
+            if backfilled:
+                print(f"🔑 Generated submission codes for {backfilled} template(s)")
 
             if DatabaseMigrationService.is_migration_needed(db):
                 print("🚀 Running classroom migration...")

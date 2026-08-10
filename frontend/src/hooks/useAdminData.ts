@@ -14,7 +14,6 @@ export const adminQueryKeys = {
   classroomSettings: (id: number) => ['admin', 'classroom-settings', id] as const,
   templates: ['admin', 'templates'] as const,
   templateStats: ['admin', 'template-stats'] as const,
-  assignments: ['admin', 'assignments'] as const,
   submissions: ['admin', 'submissions'] as const,
   submissionStats: ['admin', 'submission-stats'] as const,
 };
@@ -157,17 +156,6 @@ export function useTemplateStats() {
   return useQuery({
     queryKey: adminQueryKeys.templateStats,
     queryFn: () => apiService.getTemplateStats(),
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
-  });
-}
-
-// Assignment Hooks
-export function useAssignments() {
-  return useQuery({
-    queryKey: adminQueryKeys.assignments,
-    queryFn: () => apiService.getAssignments(0, 50),
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,

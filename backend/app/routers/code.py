@@ -186,7 +186,13 @@ async def execute_code(
             complexity=complexity_analysis
         )
         
-        # Cache the result synchronously to prevent race conditions
+        # Cache the result synchronously to prevent race conditions.
+        # Never cache infrastructure failures (executor down/unreachable): they are
+        # transient, and a cached one would keep showing the error after recovery.
+        if result.get("infrastructure_error"):
+            print("⏭️  Not caching result - execution failed for infrastructure reasons")
+            return response
+
         try:
             await cache_service.cache_result(
                 request.code,

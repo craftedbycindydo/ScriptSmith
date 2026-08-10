@@ -43,8 +43,14 @@ class Template(Base):
     classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
     classroom = relationship("Classroom", foreign_keys=[classroom_id])
     
+    # Visibility settings
+    visible_from = Column(DateTime, nullable=True)  # UTC time the template becomes visible to students (null = immediately)
+
     # Submission settings
     submission_deadline = Column(DateTime, nullable=True)  # UTC deadline for submissions
+    # 4-digit code the instructor reads out in class; required for a student's
+    # first submission so labs can only be handed in during the session
+    submission_code = Column(String(4), nullable=True)
     exclusions = Column(JSON, nullable=True)  # List of user exclusions with custom deadlines: [{"user_id": int, "deadline": str}]
     
     # Metadata
