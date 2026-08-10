@@ -114,6 +114,8 @@ export interface Template {
   created_at: string;
   updated_at: string;
   submission_deadline?: string;
+  visible_from?: string;
+  submission_code?: string | null;  // Admin responses only
   exclusions?: Array<{ user_id: number; deadline: string }>;
   can_submit?: boolean;
   user_submission?: { id: number; submitted_at: string };
@@ -129,8 +131,11 @@ export interface TemplateListItem {
   classrooms: ClassroomInfo[];
   created_at: string;
   updated_at: string;
+  visible_from?: string;
+  submission_code?: string | null;  // Admin responses only
   can_submit?: boolean;
   deadline_info?: string;
+  has_submitted?: boolean;
 }
 
 export interface TemplateCreate {
@@ -140,6 +145,7 @@ export interface TemplateCreate {
   code_content: string;
   classroom_ids?: number[];
   submission_deadline?: string;
+  visible_from?: string;
   exclusions?: Array<{ user_id: number; deadline: string }>;
 }
 
@@ -149,7 +155,15 @@ export interface TemplateUpdate {
   code_content?: string;
   classroom_ids?: number[];
   submission_deadline?: string;
+  visible_from?: string | null;  // null clears a scheduled visible time
   exclusions?: Array<{ user_id: number; deadline: string }>;
+}
+
+export interface StudentCandidate {
+  id: number;
+  username: string;
+  email: string;
+  full_name?: string | null;
 }
 
 export interface TemplateStats {
@@ -165,6 +179,7 @@ export interface TemplateSubmissionRequest {
   execution_time?: number;
   memory_used?: number;
   error_message?: string;
+  submission_code?: string;  // Required for a student's first submission
 }
 
 export interface GradebookStudent {
@@ -214,6 +229,13 @@ export interface TemplateSubmission {
   error_message?: string;
   submitted_by_username?: string;
   template_name?: string;
+}
+
+export interface MissedTemplate {
+  template_id: number;
+  template_name: string;
+  language: string;
+  deadline: string;
 }
 
 export interface UserInfo {
@@ -754,6 +776,11 @@ export const apiService = {
     return response.data;
   },
 
+  async getMissedTemplates(): Promise<MissedTemplate[]> {
+    const response = await api.get('/my-missed');
+    return response.data;
+  },
+
   // Note: Direct file upload endpoint available but not used in current flow
   // Templates are now created through the regular create endpoint after file content is loaded in UI
   async uploadTemplateFile(file: File, name?: string, description?: string, language?: string): Promise<Template> {
@@ -769,111 +796,6 @@ export const apiService = {
       },
     });
     return response.data;
-  },
-
-  // Assignment endpoints
-  async createAssignment(formData: FormData): Promise<any> {
-    const response = await api.post('/assignments', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
-  },
-
-  async getAssignments(skip: number = 0, limit: number = 50, cacheParams: any = {}): Promise<any[]> {
-    const params = new URLSearchParams({
-      skip: skip.toString(),
-      limit: limit.toString(),
-      ...cacheParams
-    });
-    
-    // Add no-cache headers when force refreshing
-    const headers = cacheParams._t ? {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    } : {};
-    
-    const response = await api.get(`/assignments?${params.toString()}`, { headers });
-    return response.data;
-  },
-
-  async getAssignment(assignmentId: number): Promise<any> {
-    const response = await api.get(`/assignments/${assignmentId}`);
-    return response.data;
-  },
-
-  async getAssignmentReport(assignmentId: number, cacheParam: string = ''): Promise<any> {
-    // Add no-cache headers when force refreshing
-    const headers = cacheParam ? {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    } : {};
-    
-    const response = await api.get(`/assignments/${assignmentId}/report${cacheParam}`, { headers });
-    return response.data;
-  },
-
-  async getAssignmentSubmissions(assignmentId: number, cacheParam: string = ''): Promise<any[]> {
-    // Add no-cache headers when force refreshing  
-    const headers = cacheParam ? {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache', 
-      'Expires': '0'
-    } : {};
-    
-    const response = await api.get(`/assignments/${assignmentId}/submissions${cacheParam}`, { headers });
-    return response.data;
-  },
-
-  async getSubmissionDetails(assignmentId: number, submissionId: number): Promise<any> {
-    const response = await api.get(`/assignments/${assignmentId}/submissions/${submissionId}/details`);
-    return response.data;
-  },
-
-  async exportAssignmentCSV(assignmentId: number): Promise<void> {
-    const response = await api.get(`/assignments/${assignmentId}/export-csv`, {
-      responseType: 'blob'
-    });
-    
-    // Create download link
-    const blob = new Blob([response.data], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    
-    // Extract filename from Content-Disposition header if available
-    const contentDisposition = response.headers['content-disposition'];
-    let filename = 'assignment_report.csv';
-    if (contentDisposition) {
-      const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-      if (filenameMatch) {
-        filename = filenameMatch[1];
-      }
-    }
-    
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    
-    // Cleanup
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  },
-
-  async reprocessAssignment(assignmentId: number, gradingConfig?: { gradeOutOf?: number, leniency?: number }): Promise<void> {
-    const body = gradingConfig ? {
-      grade_out_of: gradingConfig.gradeOutOf,
-      leniency: gradingConfig.leniency
-    } : {};
-    
-    await api.post(`/assignments/${assignmentId}/reprocess`, body);
-  },
-
-  async deleteAssignment(assignmentId: number): Promise<void> {
-    await api.delete(`/assignments/${assignmentId}`);
   },
 
   // Template execution endpoints
@@ -1053,6 +975,14 @@ export const apiService = {
   async inviteToClassroom(classroomId: number, email: string): Promise<any> {
     const response = await api.post(`/classrooms/${classroomId}/invite`, { email });
     return response.data;
+  },
+
+  // Users who can still be added to a classroom: no active membership anywhere, no admins
+  async getStudentCandidates(classroomId: number, q: string): Promise<StudentCandidate[]> {
+    const response = await api.get(`/classrooms/${classroomId}/student-candidates`, {
+      params: { q },
+    });
+    return Array.isArray(response.data) ? response.data : [];
   },
 
   async addStudentToClassroom(classroomId: number, email: string): Promise<any> {

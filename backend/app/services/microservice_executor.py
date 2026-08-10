@@ -75,7 +75,9 @@ class MicroserviceExecutor:
                     return {
                         "output": "",
                         "error": f"Microservice error (HTTP {response.status}): {error_text}",
-                        "status": "error"
+                        "status": "error",
+                        # The executor service failed, not the user's code - don't cache this
+                        "infrastructure_error": True
                     }
                     
         except asyncio.TimeoutError:
@@ -88,13 +90,16 @@ class MicroserviceExecutor:
             return {
                 "output": "",
                 "error": f"Network error: {str(e)}",
-                "status": "error"
+                "status": "error",
+                # Executor unreachable - transient, so it must not be cached
+                "infrastructure_error": True
             }
         except Exception as e:
             return {
                 "output": "",
                 "error": f"Execution failed: {str(e)}",
-                "status": "error"
+                "status": "error",
+                "infrastructure_error": True
             }
     
     async def validate_code_syntax(self, code: str, language: str) -> Dict[str, Any]:

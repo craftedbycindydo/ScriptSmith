@@ -32,6 +32,7 @@ class TemplateCreate(BaseModel):
     code_content: str
     classroom_ids: Optional[List[int]] = None
     submission_deadline: Optional[datetime] = None  # UTC datetime
+    visible_from: Optional[datetime] = None  # UTC datetime the template becomes visible to students
     exclusions: Optional[List[Dict]] = None  # List of {"user_id": int, "deadline": str}
 
 class TemplateUpdate(BaseModel):
@@ -40,6 +41,7 @@ class TemplateUpdate(BaseModel):
     code_content: Optional[str] = None
     classroom_ids: Optional[List[int]] = None
     submission_deadline: Optional[datetime] = None  # UTC datetime
+    visible_from: Optional[datetime] = None  # UTC datetime the template becomes visible to students
     exclusions: Optional[List[Dict]] = None  # List of {"user_id": int, "deadline": str}
 
 class ClassroomInfo(BaseModel):
@@ -59,6 +61,8 @@ class TemplateResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     submission_deadline: Optional[datetime] = None
+    visible_from: Optional[datetime] = None
+    submission_code: Optional[str] = None  # Admin responses only - never sent to students
     exclusions: Optional[List[Dict]] = None
     can_submit: Optional[bool] = None  # Will be populated for user requests
     user_submission: Optional[Dict] = None  # Will be populated if user has submitted
@@ -76,8 +80,11 @@ class TemplateListResponse(BaseModel):
     classrooms: List[ClassroomInfo] = []
     created_at: datetime
     updated_at: datetime
+    visible_from: Optional[datetime] = None  # When the template becomes visible to students
+    submission_code: Optional[str] = None  # Admin responses only - never sent to students
     can_submit: Optional[bool] = None  # Whether user can submit to this template
     deadline_info: Optional[str] = None  # Deadline information if applicable
+    has_submitted: Optional[bool] = None  # Whether the user already submitted this lab
 
     class Config:
         from_attributes = True
@@ -94,6 +101,14 @@ class TemplateSubmitRequest(BaseModel):
     execution_time: Optional[float] = None
     memory_used: Optional[int] = None
     error_message: Optional[str] = None
+    submission_code: Optional[str] = None  # Required for a student's first submission
+
+class MissedTemplateResponse(BaseModel):
+    template_id: int
+    template_name: str
+    language: str
+    deadline: str
+
 
 class TemplateSubmissionResponse(BaseModel):
     id: int
@@ -139,8 +154,12 @@ class TemplateDraftResponse(BaseModel):
 
 
 # Helper functions
-def _prepare_template_response(template: Template) -> TemplateResponse:
-    """Helper to prepare template response with classroom info"""
+def _prepare_template_response(template: Template, include_submission_code: bool = False) -> TemplateResponse:
+    """Helper to prepare template response with classroom info.
+
+    The submission code is only included for admin endpoints - students must not
+    be able to read it out of an API response.
+    """
     # Build classroom info
     classroom_info = []
     for classroom in template.classrooms:
@@ -163,6 +182,8 @@ def _prepare_template_response(template: Template) -> TemplateResponse:
         "created_at": template.created_at,
         "updated_at": template.updated_at,
         "submission_deadline": template.submission_deadline,
+        "visible_from": template.visible_from,
+        "submission_code": template.submission_code if include_submission_code else None,
         "exclusions": template.exclusions,
         "can_submit": getattr(template, 'can_submit', None),
         "user_submission": getattr(template, 'user_submission', None)
@@ -170,8 +191,11 @@ def _prepare_template_response(template: Template) -> TemplateResponse:
     
     return TemplateResponse(**response_data)
 
-def _prepare_template_list_response(template: Template) -> TemplateListResponse:
-    """Helper to prepare template list response with classroom info"""
+def _prepare_template_list_response(template: Template, include_submission_code: bool = False) -> TemplateListResponse:
+    """Helper to prepare template list response with classroom info.
+
+    As above: the submission code is admin-only.
+    """
     # Build classroom info
     classroom_info = []
     for classroom in template.classrooms:
@@ -192,8 +216,11 @@ def _prepare_template_list_response(template: Template) -> TemplateListResponse:
         "classrooms": classroom_info,
         "created_at": template.created_at,
         "updated_at": template.updated_at,
+        "visible_from": template.visible_from,
+        "submission_code": template.submission_code if include_submission_code else None,
         "can_submit": getattr(template, 'can_submit', None),
-        "deadline_info": getattr(template, 'deadline_info', None)
+        "deadline_info": getattr(template, 'deadline_info', None),
+        "has_submitted": getattr(template, 'has_submitted', None)
     }
     
     return TemplateListResponse(**response_data)
@@ -222,12 +249,13 @@ async def create_template(
             created_by=admin_user.id,
             classroom_ids=template.classroom_ids,
             submission_deadline=template.submission_deadline,
-            exclusions=template.exclusions
+            exclusions=template.exclusions,
+            visible_from=template.visible_from
         )
-        
+
         # Add creator username and classroom info for response
         db_template.creator_username = admin_user.username
-        return _prepare_template_response(db_template)
+        return _prepare_template_response(db_template, include_submission_code=True)
         
     except HTTPException:
         raise
@@ -256,7 +284,7 @@ async def get_all_templates_admin(
             except AttributeError:
                 template.creator_username = "Unknown"
             
-            result.append(_prepare_template_list_response(template))
+            result.append(_prepare_template_list_response(template, include_submission_code=True))
         
         return result
     except Exception as e:
@@ -295,7 +323,7 @@ async def get_template_admin(
         )
     
     template.creator_username = template.creator.username
-    return _prepare_template_response(template)
+    return _prepare_template_response(template, include_submission_code=True)
 
 @router.put("/admin/templates/{template_id}", response_model=TemplateResponse)
 async def update_template(
@@ -315,11 +343,14 @@ async def update_template(
             classroom_ids=template.classroom_ids,
             updating_user_id=admin_user.id,
             submission_deadline=template.submission_deadline,
-            exclusions=template.exclusions
+            exclusions=template.exclusions,
+            visible_from=template.visible_from,
+            # An explicit null (not an omitted field) unschedules the template
+            clear_visible_from='visible_from' in template.model_fields_set and template.visible_from is None
         )
-        
+
         updated_template.creator_username = updated_template.creator.username
-        return _prepare_template_response(updated_template)
+        return _prepare_template_response(updated_template, include_submission_code=True)
         
     except HTTPException:
         raise
@@ -477,7 +508,7 @@ async def upload_template_file(
         
         # Add creator username for response
         db_template.creator_username = admin_user.username
-        return _prepare_template_response(db_template)
+        return _prepare_template_response(db_template, include_submission_code=True)
         
     except HTTPException:
         raise
@@ -499,9 +530,10 @@ async def get_templates_for_users(
     try:
         # Note: Returns ALL available templates (no limit), UI handles display pagination
         templates = TemplateService.get_templates_for_user(
-            db=db, 
+            db=db,
             user_id=current_user.id,
-            language=language
+            language=language,
+            include_hidden=admin_service.has_admin_access(current_user)
         )
         
         # Batch check submission status for ALL templates in ONE query (much faster!)
@@ -516,10 +548,13 @@ async def get_templates_for_users(
                 template.creator_username = "Unknown"
             
             # Use pre-fetched submission status (no extra DB queries!)
-            can_submit, deadline_info = submission_status_map.get(template.id, (True, None))
+            can_submit, deadline_info, has_submitted = submission_status_map.get(
+                template.id, (True, None, False)
+            )
             template.can_submit = can_submit
             template.deadline_info = deadline_info
-            
+            template.has_submitted = has_submitted
+
             result.append(_prepare_template_list_response(template))
         
         return result
@@ -541,6 +576,13 @@ async def get_template_for_user(
             detail="Template not found"
         )
     
+    # Templates scheduled for a later visible time are hidden from non-admins
+    if not TemplateService.is_template_visible(template) and not admin_service.has_admin_access(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This template is not available yet"
+        )
+
     # Check if user has access to this template
     if template.classrooms:  # If template has classroom restrictions
         user_classroom_ids = [
@@ -589,7 +631,8 @@ async def submit_template(
             execution_status=request.execution_status,
             execution_time=request.execution_time,
             memory_used=request.memory_used,
-            error_message=request.error_message
+            error_message=request.error_message,
+            submission_code=request.submission_code
         )
         return submission
     except HTTPException:
@@ -651,6 +694,21 @@ async def get_my_submissions(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get user submissions: {str(e)}"
+        )
+
+
+@router.get("/my-missed", response_model=List[MissedTemplateResponse])
+async def get_my_missed_templates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get in-class labs assigned to the current user that they never submitted before the deadline"""
+    try:
+        return TemplateService.get_missed_templates(db, current_user.id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get missed templates: {str(e)}"
         )
 
 

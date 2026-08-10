@@ -22,9 +22,172 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useEffect, useRef, useState } from 'react';
 import { formatDate } from '@/lib/dateUtils';
+import { apiService } from '@/services/api';
+import type { StudentCandidate } from '@/services/api';
 import { Pill } from './StatusPill';
 import type { Classroom } from './types';
+
+// ---------------------------------------------------------------------------
+// Add student by email, with live suggestions
+// ---------------------------------------------------------------------------
+interface AddStudentByEmailProps {
+  classroomId: number;
+  email: string;
+  onEmailChange: (email: string) => void;
+  onAdd: () => void;
+  adding: boolean;
+  error: string | null;
+}
+
+function AddStudentByEmail({
+  classroomId,
+  email,
+  onEmailChange,
+  onAdd,
+  adding,
+  error,
+}: AddStudentByEmailProps) {
+  const [suggestions, setSuggestions] = useState<StudentCandidate[]>([]);
+  const [isFocused, setIsFocused] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  // A pick fills the input; don't immediately re-query and reopen the list
+  const skipNextLookup = useRef(false);
+
+  // Re-query on every keystroke, debounced so typing stays responsive
+  useEffect(() => {
+    if (skipNextLookup.current) {
+      skipNextLookup.current = false;
+      return;
+    }
+    if (!isFocused) return;
+
+    let cancelled = false;
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await apiService.getStudentCandidates(classroomId, email.trim());
+        if (!cancelled) {
+          setSuggestions(results);
+          setHighlighted(0);
+        }
+      } catch {
+        if (!cancelled) setSuggestions([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [email, classroomId, isFocused]);
+
+  const pick = (candidate: StudentCandidate) => {
+    skipNextLookup.current = true;
+    onEmailChange(candidate.email);
+    setSuggestions([]);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setSuggestions([]);
+      return;
+    }
+    if (!suggestions.length) {
+      if (event.key === 'Enter' && email.trim() && !adding) onAdd();
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlighted((prev) => (prev + 1) % suggestions.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlighted((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      pick(suggestions[highlighted]);
+    }
+  };
+
+  const showList = isFocused && (loading || suggestions.length > 0 || email.trim().length > 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm font-medium">Add Student by Email</div>
+      <div className="flex space-x-2">
+        <div className="relative flex-1">
+          <Input
+            placeholder="student@example.com"
+            type="email"
+            autoComplete="off"
+            value={email}
+            onChange={(e) => onEmailChange(e.target.value)}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onKeyDown={handleKeyDown}
+            className={`w-full ${error ? 'border-destructive/40 focus-visible:ring-destructive' : ''}`}
+            disabled={adding}
+          />
+
+          {showList && (
+            // Keep mousedown from blurring the input before the click lands
+            <div
+              className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {suggestions.length > 0 ? (
+                suggestions.map((candidate, index) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => pick(candidate)}
+                    onMouseEnter={() => setHighlighted(index)}
+                    className={`flex w-full flex-col items-start px-3 py-2 text-left ${
+                      index === highlighted ? 'bg-muted' : ''
+                    }`}
+                  >
+                    <span className="text-sm font-medium">
+                      {candidate.full_name || candidate.username}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{candidate.email}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  {loading ? 'Searching...' : 'No unassigned users match'}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <Button onClick={onAdd} disabled={adding || !email.trim()} size="sm">
+          {adding ? (
+            <>
+              <div className="mr-2 h-3 w-3 animate-spin rounded-full border-b-2 border-current"></div>
+              Adding...
+            </>
+          ) : (
+            <>
+              <UserPlus className="mr-1 h-3 w-3" />
+              Add
+            </>
+          )}
+        </Button>
+      </div>
+
+      {error && <div className="text-sm text-destructive">{error}</div>}
+
+      <div className="text-xs text-muted-foreground">
+        Suggestions list users who are not in any classroom yet — students can belong to only one.
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Classroom members list (logic unchanged; moved from AdminDashboard.tsx)
@@ -98,48 +261,17 @@ function ClassroomMembersList({
 
         {/* Add student by email */}
         <div className="bg-muted/10 border-t border-border p-4">
-          <div className="space-y-3">
-            <div className="text-sm font-medium">Add Student by Email</div>
-            <div className="flex space-x-2">
-              <Input
-                placeholder="student@example.com"
-                type="email"
-                value={studentEmails[classroomId] || ''}
-                onChange={(e) => {
-                  setStudentEmails((prev: any) => ({
-                    ...prev,
-                    [classroomId]: e.target.value,
-                  }));
-                  if (userSearchError) setUserSearchError(null);
-                }}
-                className={`flex-1 ${userSearchError ? 'border-destructive/40 focus-visible:ring-destructive' : ''}`}
-                disabled={addingStudent[classroomId]}
-              />
-              <Button
-                onClick={() => handleAddStudentByEmail(classroomId)}
-                disabled={addingStudent[classroomId] || !studentEmails[classroomId]?.trim()}
-                size="sm"
-              >
-                {addingStudent[classroomId] ? (
-                  <>
-                    <div className="mr-2 h-3 w-3 animate-spin rounded-full border-b-2 border-current"></div>
-                    Adding...
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="mr-1 h-3 w-3" />
-                    Add
-                  </>
-                )}
-              </Button>
-            </div>
-
-            {userSearchError && <div className="text-sm text-destructive">{userSearchError}</div>}
-
-            <div className="text-xs text-muted-foreground">
-              Add existing users to this classroom by their registered email address.
-            </div>
-          </div>
+          <AddStudentByEmail
+            classroomId={classroomId}
+            email={studentEmails[classroomId] || ''}
+            onEmailChange={(email) => {
+              setStudentEmails((prev: any) => ({ ...prev, [classroomId]: email }));
+              if (userSearchError) setUserSearchError(null);
+            }}
+            onAdd={() => handleAddStudentByEmail(classroomId)}
+            adding={addingStudent[classroomId]}
+            error={userSearchError}
+          />
         </div>
 
         {/* Registration instructions */}

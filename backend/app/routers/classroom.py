@@ -525,6 +525,72 @@ async def invite_to_classroom(
         "instructions": "Student should register using this key at /auth/register"
     }
 
+class StudentCandidate(BaseModel):
+    id: int
+    username: str
+    email: str
+    full_name: Optional[str] = None
+
+
+@router.get("/classrooms/{classroom_id}/student-candidates", response_model=List[StudentCandidate])
+async def get_student_candidates(
+    classroom_id: int,
+    q: str = Query("", description="Partial email or username to match"),
+    limit: int = Query(8, ge=1, le=25),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Suggest users who can be added to this classroom (teachers only).
+
+    Students may belong to only one classroom, so the only addable users are
+    those with no active membership anywhere. Admins are excluded because
+    add-student rejects them.
+    """
+
+    # Same access requirement as add-student: this exposes user email addresses
+    ClassroomService.verify_classroom_access(
+        db=db,
+        user=current_user,
+        classroom_id=classroom_id,
+        required_role="TEACHER"
+    )
+
+    already_in_a_classroom = db.query(UserClassroom.user_id).filter(
+        UserClassroom.is_active == True
+    )
+
+    query = db.query(User).filter(
+        User.is_active == True,
+        User.role != UserRole.ADMIN,
+        User.is_superuser == False,
+        ~User.id.in_(already_in_a_classroom)
+    )
+
+    term = q.strip().lower()
+    if term:
+        # Treat LIKE wildcards in the typed text as literal characters
+        escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        pattern = f"%{escaped}%"
+        query = query.filter(
+            func.lower(User.email).like(pattern, escape='\\') |
+            func.lower(User.username).like(pattern, escape='\\')
+        )
+
+    candidates = query.order_by(User.email).limit(limit).all()
+
+    # ADMIN_EMAILS grants admin access without a role change - keep those out too
+    return [
+        StudentCandidate(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            full_name=user.full_name
+        )
+        for user in candidates
+        if not admin_service.is_initial_admin_email(user.email)
+    ]
+
+
 class AddStudentRequest(BaseModel):
     email: str
 
