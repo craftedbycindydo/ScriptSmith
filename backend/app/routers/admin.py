@@ -682,7 +682,33 @@ async def get_all_users(
         params[f'classroom_id_{i}'] = classroom_id
     
     results = db.execute(user_query, params).fetchall()
-    
+
+    # Classroom memberships for the returned users, scoped to the admin's own
+    # classrooms so one admin never sees membership in a classroom they don't own.
+    memberships: dict = {}
+    user_ids = [row.id for row in results]
+    if user_ids:
+        user_placeholders = ','.join([f':user_id_{i}' for i in range(len(user_ids))])
+        membership_query = text(f"""
+            SELECT uc.user_id, c.id AS classroom_id, c.name AS classroom_name, uc.role
+            FROM user_classrooms uc
+            INNER JOIN classrooms c ON c.id = uc.classroom_id
+            WHERE uc.user_id IN ({user_placeholders})
+              AND uc.classroom_id IN ({classroom_placeholders})
+              AND uc.is_active = true
+            ORDER BY c.name
+        """)
+        membership_params = {f'user_id_{i}': uid for i, uid in enumerate(user_ids)}
+        for i, classroom_id in enumerate(classroom_ids):
+            membership_params[f'classroom_id_{i}'] = classroom_id
+
+        for m in db.execute(membership_query, membership_params).fetchall():
+            memberships.setdefault(m.user_id, []).append({
+                "id": m.classroom_id,
+                "name": m.classroom_name,
+                "role": m.role
+            })
+
     return [
         {
             "id": row.id,
@@ -694,7 +720,8 @@ async def get_all_users(
             "created_at": safe_datetime_format(row.created_at) or "",
             "last_login": safe_datetime_format(row.last_login),
             "code_executions": row.code_executions,
-            "collaboration_sessions": row.collaboration_sessions
+            "collaboration_sessions": row.collaboration_sessions,
+            "classrooms": memberships.get(row.id, [])
         }
         for row in results
     ]

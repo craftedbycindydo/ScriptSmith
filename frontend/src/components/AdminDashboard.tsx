@@ -222,7 +222,8 @@ export default function AdminDashboard() {
     return adminUsers.filter((u: AdminUser) =>
       u.username?.toLowerCase().includes(searchTerm) ||
       u.email?.toLowerCase().includes(searchTerm) ||
-      u.full_name?.toLowerCase().includes(searchTerm)
+      u.full_name?.toLowerCase().includes(searchTerm) ||
+      u.classrooms?.some((c) => c.name.toLowerCase().includes(searchTerm))
     );
   }, [adminUsers, userSearch]);
   const [classroomNotifications, setClassroomNotifications] = useState<{[key: number]: {message: string, type: 'success' | 'error'} | null}>({});

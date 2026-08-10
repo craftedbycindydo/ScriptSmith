@@ -230,10 +230,14 @@ function ClassroomMembersList({
     );
   }
 
-  if (members && members.length > 0) {
-    return (
-      <div className="divide-y divide-border">
-        {members.map((member: any) => (
+  const hasMembers = Boolean(members && members.length > 0);
+
+  // The add-student form and the classroom key stay available even with an
+  // empty roster — a brand new classroom is exactly when they are needed.
+  return (
+    <div className="divide-y divide-border">
+      {hasMembers ? (
+        members.map((member: any) => (
           <div key={member.id} className="flex items-center justify-between p-4">
             <div className="flex-1">
               <div className="flex items-center space-x-3">
@@ -257,42 +261,41 @@ function ClassroomMembersList({
               </Button>
             )}
           </div>
-        ))}
-
-        {/* Add student by email */}
-        <div className="bg-muted/10 border-t border-border p-4">
-          <AddStudentByEmail
-            classroomId={classroomId}
-            email={studentEmails[classroomId] || ''}
-            onEmailChange={(email) => {
-              setStudentEmails((prev: any) => ({ ...prev, [classroomId]: email }));
-              if (userSearchError) setUserSearchError(null);
-            }}
-            onAdd={() => handleAddStudentByEmail(classroomId)}
-            adding={addingStudent[classroomId]}
-            error={userSearchError}
-          />
+        ))
+      ) : (
+        <div className="p-4 text-center text-muted-foreground">
+          <Users className="mx-auto mb-2 h-8 w-8 opacity-50" />
+          <p>No members yet</p>
+          <p className="text-xs">Add a student below or share the classroom key.</p>
         </div>
+      )}
 
-        {/* Registration instructions */}
-        <div className="border-t border-info/20 bg-info/10 p-4">
-          <div className="text-sm">
-            <div className="mb-2 font-medium">For New Students</div>
-            <div className="text-muted-foreground">
-              Share the classroom key{' '}
-              <code className="rounded bg-muted px-2 py-1 font-mono">{classroom.key}</code> so new
-              students can register for this classroom.
-            </div>
+      {/* Add student by email */}
+      <div className="bg-muted/10 border-t border-border p-4">
+        <AddStudentByEmail
+          classroomId={classroomId}
+          email={studentEmails[classroomId] || ''}
+          onEmailChange={(email) => {
+            setStudentEmails((prev: any) => ({ ...prev, [classroomId]: email }));
+            if (userSearchError) setUserSearchError(null);
+          }}
+          onAdd={() => handleAddStudentByEmail(classroomId)}
+          adding={addingStudent[classroomId]}
+          error={userSearchError}
+        />
+      </div>
+
+      {/* Registration instructions */}
+      <div className="border-t border-info/20 bg-info/10 p-4">
+        <div className="text-sm">
+          <div className="mb-2 font-medium">For New Students</div>
+          <div className="text-muted-foreground">
+            Share the classroom key{' '}
+            <code className="rounded bg-muted px-2 py-1 font-mono">{classroom.key}</code> so new
+            students can register for this classroom.
           </div>
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div className="p-4 text-center text-muted-foreground">
-      <Users className="mx-auto mb-2 h-8 w-8 opacity-50" />
-      <p>No members found</p>
     </div>
   );
 }

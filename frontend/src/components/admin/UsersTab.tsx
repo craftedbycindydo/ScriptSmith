@@ -30,6 +30,9 @@ import type {
   TempPasswordResult,
 } from './types';
 
+/** Membership roles are stored as free-form strings ("TEACHER"/"STUDENT"). */
+const isTeacherRole = (role?: string) => (role || '').toUpperCase() === 'TEACHER';
+
 interface UsersTabProps {
   filteredUsers: AdminUser[];
   totalUsers: number;
@@ -133,7 +136,7 @@ export default function UsersTab({
               <th>User</th>
               <th>Status</th>
               <th>Activity</th>
-              <th className="text-right">Actions</th>
+              <th>Classroom</th>
             </tr>
           </thead>
           <tbody>
@@ -175,50 +178,21 @@ export default function UsersTab({
                       <div>Joined {formatDate(u.created_at)}</div>
                     </td>
                     <td>
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleActivation(u.id, u.username, u.is_active);
-                          }}
-                          title={u.is_active ? 'Deactivate user' : 'Activate user'}
-                          disabled={togglePending}
-                        >
-                          {u.is_active ? (
-                            <UserX className="h-3 w-3" />
-                          ) : (
-                            <UserCheck className="h-3 w-3" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onGenerateTempPasswordRequest(u.id, u.username);
-                          }}
-                          disabled={generateTempPasswordPending}
-                          title="Generate temporary password"
-                        >
-                          <Key className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onResetUsernameRequest(u.id, u.username);
-                          }}
-                          title="Reset username"
-                        >
-                          <RefreshCcw className="h-3 w-3" />
-                        </Button>
-                      </div>
+                      {u.classrooms && u.classrooms.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {u.classrooms.map((c) => (
+                            <Pill
+                              key={c.id}
+                              tone={isTeacherRole(c.role) ? 'warning' : 'neutral'}
+                            >
+                              {c.name}
+                              {isTeacherRole(c.role) && ' · Teacher'}
+                            </Pill>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No classroom</span>
+                      )}
                     </td>
                   </tr>
 
@@ -253,6 +227,74 @@ export default function UsersTab({
                             <div>
                               <div className="pane-label">Member Since</div>
                               <div>{formatDate(u.created_at)}</div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="pane-label">Classrooms</div>
+                            {u.classrooms && u.classrooms.length > 0 ? (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {u.classrooms.map((c) => (
+                                  <Pill
+                                    key={c.id}
+                                    tone={isTeacherRole(c.role) ? 'warning' : 'neutral'}
+                                  >
+                                    {c.name} · {isTeacherRole(c.role) ? 'Teacher' : 'Student'}
+                                  </Pill>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-muted-foreground">
+                                Not enrolled in any of your classrooms
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <div className="pane-label">Actions</div>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onToggleActivation(u.id, u.username, u.is_active);
+                                }}
+                                disabled={togglePending}
+                              >
+                                {u.is_active ? (
+                                  <UserX className="mr-1 h-3 w-3" />
+                                ) : (
+                                  <UserCheck className="mr-1 h-3 w-3" />
+                                )}
+                                {u.is_active ? 'Deactivate' : 'Activate'}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onGenerateTempPasswordRequest(u.id, u.username);
+                                }}
+                                disabled={generateTempPasswordPending}
+                              >
+                                <Key className="mr-1 h-3 w-3" />
+                                Temp password
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onResetUsernameRequest(u.id, u.username);
+                                }}
+                              >
+                                <RefreshCcw className="mr-1 h-3 w-3" />
+                                Reset username
+                              </Button>
                             </div>
                           </div>
 

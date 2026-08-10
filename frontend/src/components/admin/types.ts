@@ -2,6 +2,13 @@ import type { User } from '@/store/authStore';
 
 export type Classroom = NonNullable<User['classroom_context']>['classrooms'][number];
 
+/** Classroom a user belongs to, as returned inline on the admin users list. */
+export interface AdminUserClassroom {
+  id: number;
+  name: string;
+  role: string;
+}
+
 export interface AdminUser {
   id: number;
   username: string;
@@ -13,6 +20,7 @@ export interface AdminUser {
   last_login?: string;
   code_executions: number;
   collaboration_sessions: number;
+  classrooms?: AdminUserClassroom[];
 }
 
 export interface TemplateExecution {
