@@ -2,7 +2,9 @@
 Template Service - Business logic for managing code templates
 """
 
-from typing import List, Optional, Dict
+import secrets
+import time
+from typing import List, Optional, Dict, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, desc
@@ -13,9 +15,118 @@ from app.models.user import User
 from app.models.classroom import Classroom, UserClassroom
 
 
+# Failed submission-code attempts, keyed by (user_id, template_id) -> timestamps.
+# A 4-digit code is only 10k combinations, so unlimited guessing would defeat it.
+# Process-local by design: it resets on restart and is per-worker, which is
+# enough friction for a code that is only valid during one class session.
+_CODE_ATTEMPTS: Dict[Tuple[int, int], List[float]] = {}
+MAX_CODE_ATTEMPTS = 5
+CODE_ATTEMPT_WINDOW_SECONDS = 15 * 60
+
+
 class TemplateService:
     """Service for managing code templates"""
-    
+
+    @staticmethod
+    def generate_submission_code() -> str:
+        """Random 4-digit code (leading zeros kept) for in-class submission"""
+        return f"{secrets.randbelow(10000):04d}"
+
+    @staticmethod
+    def _recent_failed_attempts(user_id: int, template_id: int) -> List[float]:
+        """Failed code attempts still inside the lockout window"""
+        cutoff = time.monotonic() - CODE_ATTEMPT_WINDOW_SECONDS
+        attempts = [t for t in _CODE_ATTEMPTS.get((user_id, template_id), []) if t > cutoff]
+        if attempts:
+            _CODE_ATTEMPTS[(user_id, template_id)] = attempts
+        else:
+            _CODE_ATTEMPTS.pop((user_id, template_id), None)
+        return attempts
+
+    @staticmethod
+    def verify_submission_code(
+        template: Template,
+        user_id: int,
+        submission_code: Optional[str]
+    ) -> None:
+        """Check the in-class code for a student's first submission.
+
+        Raises HTTPException when the code is missing, wrong, or when too many
+        wrong codes have been tried recently.
+        """
+        expected = (template.submission_code or "").strip()
+        if not expected:
+            # Pre-dates the feature and was never backfilled - nothing to check
+            return
+
+        attempts = TemplateService._recent_failed_attempts(user_id, template.id)
+        if len(attempts) >= MAX_CODE_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many incorrect submission codes. Ask your instructor and try again later."
+            )
+
+        provided = (submission_code or "").strip()
+        if not provided:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A submission code is required the first time you submit this lab."
+            )
+
+        if not secrets.compare_digest(provided, expected):
+            _CODE_ATTEMPTS.setdefault((user_id, template.id), []).append(time.monotonic())
+            remaining = MAX_CODE_ATTEMPTS - len(_CODE_ATTEMPTS[(user_id, template.id)])
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Incorrect submission code. {remaining} attempt(s) left."
+                    if remaining > 0
+                    else "Incorrect submission code. Ask your instructor and try again later."
+                )
+            )
+
+        # Correct code - clear the failure history for this student
+        _CODE_ATTEMPTS.pop((user_id, template.id), None)
+
+    @staticmethod
+    def backfill_submission_codes(db: Session) -> int:
+        """Give every template still missing a submission code one (startup migration)"""
+        templates = db.query(Template).filter(Template.submission_code.is_(None)).all()
+        for template in templates:
+            template.submission_code = TemplateService.generate_submission_code()
+        if templates:
+            db.commit()
+        return len(templates)
+
+    @staticmethod
+    def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+        """Treat naive datetimes (how they come back from the DB) as UTC"""
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _validate_visibility_window(
+        visible_from: Optional[datetime],
+        submission_deadline: Optional[datetime]
+    ) -> None:
+        """A template must become visible before its submission deadline"""
+        visible = TemplateService._as_utc(visible_from)
+        deadline = TemplateService._as_utc(submission_deadline)
+        if visible and deadline and visible >= deadline:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Visible time must be before the submission deadline"
+            )
+
+    @staticmethod
+    def is_template_visible(template: Template, current_time: Optional[datetime] = None) -> bool:
+        """Whether a template is currently visible to students (no visible_from = always)"""
+        if not template.visible_from:
+            return True
+        current_time = current_time or datetime.now(timezone.utc)
+        return current_time >= TemplateService._as_utc(template.visible_from)
+
     @staticmethod
     def create_template(
         db: Session,
@@ -26,7 +137,8 @@ class TemplateService:
         created_by: int,
         classroom_ids: Optional[List[int]] = None,
         submission_deadline: Optional[datetime] = None,
-        exclusions: Optional[List[Dict]] = None
+        exclusions: Optional[List[Dict]] = None,
+        visible_from: Optional[datetime] = None
     ) -> Template:
         """Create a new template with optional classroom associations"""
         
@@ -42,7 +154,9 @@ class TemplateService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Template '{name}' already exists for {language}"
             )
-        
+
+        TemplateService._validate_visibility_window(visible_from, submission_deadline)
+
         # Enrich exclusions with usernames if provided
         enriched_exclusions = None
         if exclusions:
@@ -77,7 +191,9 @@ class TemplateService:
             code_content=code_content,
             created_by=created_by,
             submission_deadline=submission_deadline,
-            exclusions=enriched_exclusions
+            exclusions=enriched_exclusions,
+            visible_from=visible_from,
+            submission_code=TemplateService.generate_submission_code()
         )
         
         db.add(template)
@@ -146,11 +262,13 @@ class TemplateService:
         db: Session, 
         user_id: int, 
         language: Optional[str] = None,
-        skip: int = 0, 
-        limit: int = None  # No limit - return ALL templates, UI will handle display
+        skip: int = 0,
+        limit: int = None,  # No limit - return ALL templates, UI will handle display
+        include_hidden: bool = False  # Admins may preview templates not yet visible
     ) -> List[Template]:
         """Get templates accessible to a specific user based on their classroom memberships"""
         try:
+            now = datetime.now(timezone.utc)
             # Get user's classroom IDs
             user_classroom_ids = db.query(UserClassroom.classroom_id).filter(
                 UserClassroom.user_id == user_id,
@@ -191,7 +309,14 @@ class TemplateService:
                 # 4. Apply language filter
                 if language:
                     templates = [t for t in templates if t.language == language]
-                
+
+                # 4b. Hide templates scheduled to become visible later
+                if not include_hidden:
+                    templates = [
+                        t for t in templates
+                        if TemplateService.is_template_visible(t, now)
+                    ]
+
                 # 5. Sort by updated_at desc (most recently updated first), then created_at desc as fallback
                 templates.sort(key=lambda t: (t.updated_at or t.created_at, t.created_at), reverse=True)
                 
@@ -213,7 +338,14 @@ class TemplateService:
                 
                 if language:
                     templates = [t for t in templates if t.language == language]
-                
+
+                # Hide templates scheduled to become visible later
+                if not include_hidden:
+                    templates = [
+                        t for t in templates
+                        if TemplateService.is_template_visible(t, now)
+                    ]
+
                 # Sort by updated_at desc (most recently updated first), then created_at desc as fallback
                 templates.sort(key=lambda t: (t.updated_at or t.created_at, t.created_at), reverse=True)
                 
@@ -247,7 +379,9 @@ class TemplateService:
         classroom_ids: Optional[List[int]] = None,
         updating_user_id: int = None,
         submission_deadline: Optional[datetime] = None,
-        exclusions: Optional[List[Dict]] = None
+        exclusions: Optional[List[Dict]] = None,
+        visible_from: Optional[datetime] = None,
+        clear_visible_from: bool = False  # Explicitly unschedule (visible immediately)
     ) -> Template:
         """Update an existing template"""
         
@@ -291,6 +425,13 @@ class TemplateService:
             template.code_content = code_content
         if submission_deadline is not None:
             template.submission_deadline = submission_deadline
+        if visible_from is not None:
+            template.visible_from = visible_from
+        elif clear_visible_from:
+            template.visible_from = None
+        TemplateService._validate_visibility_window(
+            template.visible_from, template.submission_deadline
+        )
         if exclusions is not None:
             # Batch fetch all user IDs that need username lookup (avoid N+1 problem)
             user_ids_needing_lookup = [
@@ -388,7 +529,7 @@ class TemplateService:
             ).group_by(Template.language).all()
             
             # Recent templates (last 7 days)
-            from datetime import datetime, timedelta
+            from datetime import timedelta  # module-level datetime must not be shadowed here
             recent_date = datetime.utcnow() - timedelta(days=7)
             recent_templates = db.query(Template).filter(
                 Template.created_at >= recent_date,
@@ -423,9 +564,14 @@ class TemplateService:
         language: str = None,
         execution_time: float = None,
         memory_used: int = None,
-        error_message: str = None
+        error_message: str = None,
+        submission_code: Optional[str] = None
     ) -> TemplateSubmission:
-        """Submit code for a template with execution results"""
+        """Submit code for a template with execution results.
+
+        The first submission must carry the lab's in-class code. After that the
+        student may resubmit without it, as long as the deadline hasn't passed.
+        """
         
         # Check if template exists and is active
         template = TemplateService.get_template_by_id(db, template_id)
@@ -435,6 +581,13 @@ class TemplateService:
                 detail="Template not found"
             )
         
+        # Template hasn't been released to students yet
+        if not TemplateService.is_template_visible(template):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This template is not available yet"
+            )
+
         # Get user details
         from app.models.user import User
         user = db.query(User).filter(User.id == user_id).first()
@@ -447,9 +600,7 @@ class TemplateService:
         # Check if user can submit (deadline and exclusions)
         can_submit, deadline_info = TemplateService.can_user_submit(db, template_id, user_id)
         if not can_submit:
-            from datetime import datetime, timezone
-            current_time = datetime.now(timezone.utc)
-            submission_time = current_time.isoformat()
+            submission_time = datetime.now(timezone.utc).isoformat()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Submission denied - submitted at: {submission_time}, deadline: {deadline_info}"
@@ -460,31 +611,13 @@ class TemplateService:
             TemplateSubmission.template_id == template_id,
             TemplateSubmission.user_id == user_id
         ).first()
-        
-        # Check if user has already submitted
+
+        # First hand-in has to prove the student is in class; later ones don't
+        if not existing_submission:
+            TemplateService.verify_submission_code(template, user_id, submission_code)
+
         if existing_submission:
-            # Check if user has an exclusion that allows one resubmission
-            user_has_exclusion = False
-            if template.exclusions:
-                for exclusion in template.exclusions:
-                    if exclusion.get("user_id") == user_id:
-                        user_has_exclusion = True
-                        break
-            
-            if not user_has_exclusion:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="You have already submitted this template"
-                )
-            
-            # User has exclusion - check if they've already resubmitted once
-            if existing_submission.resubmission_count >= 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="You have already used your one allowed resubmission for this template"
-                )
-            
-            # Allow the resubmission - update the existing submission and increment resubmission count
+            # Resubmission inside the deadline replaces the previous attempt
             existing_submission.submitted_code = submitted_code
             existing_submission.output = execution_output
             existing_submission.status = execution_status
@@ -521,128 +654,127 @@ class TemplateService:
     
     @staticmethod
     def can_user_submit(db: Session, template_id: int, user_id: int) -> tuple[bool, Optional[str]]:
-        """Check if user can submit for a template based on deadline, exclusions, and resubmission limits"""
-        
+        """Check if user can submit for a template based on visibility and deadline"""
+
         template = db.query(Template).filter(Template.id == template_id).first()
         if not template:
             return False, None
-        
-        # Check existing submission for this user
-        existing_submission = db.query(TemplateSubmission).filter(
-            TemplateSubmission.template_id == template_id,
-            TemplateSubmission.user_id == user_id
-        ).first()
-        
-        return TemplateService._check_can_submit_for_template(
-            template, user_id, existing_submission
-        )
-    
+
+        return TemplateService._check_can_submit_for_template(template, user_id)
+
     @staticmethod
-    def _check_can_submit_for_template(
-        template: Template, 
-        user_id: int, 
-        existing_submission: Optional[TemplateSubmission]
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Internal helper to check if user can submit for a template.
-        Used by both single template check and batch checks to avoid duplicate logic.
-        """
-        current_time = datetime.now(timezone.utc)
-        
-        # Check if user has an exclusion
-        user_has_exclusion = False
-        custom_deadline_str = None
+    def effective_deadline(template: Template, user_id: int) -> Optional[datetime]:
+        """The deadline that applies to this user: their exclusion wins over the general one"""
         if template.exclusions:
             for exclusion in template.exclusions:
-                if exclusion.get("user_id") == user_id:
-                    user_has_exclusion = True
-                    custom_deadline_str = exclusion.get("deadline")
-                    break
-        
-        # If user has already submitted
-        if existing_submission:
-            # If user doesn't have exclusion, they can't submit again
-            if not user_has_exclusion:
-                return False, None
-            
-            # If user has exclusion but already used their one resubmission
-            if existing_submission.resubmission_count >= 1:
-                return False, custom_deadline_str
-            
-            # User has exclusion and hasn't used resubmission yet - check deadline
-            if custom_deadline_str:
-                try:
-                    custom_deadline = datetime.fromisoformat(custom_deadline_str.replace('Z', '+00:00'))
-                    if current_time <= custom_deadline:
-                        return True, custom_deadline_str
-                    else:
-                        return False, custom_deadline_str
-                except ValueError:
-                    return False, custom_deadline_str
-        
-        # User hasn't submitted yet - check deadlines
-        # Check for user-specific exclusion with custom deadline
-        if user_has_exclusion and custom_deadline_str:
-            try:
-                custom_deadline = datetime.fromisoformat(custom_deadline_str.replace('Z', '+00:00'))
-                if current_time <= custom_deadline:
-                    return True, custom_deadline_str
-                else:
-                    return False, custom_deadline_str
-            except ValueError:
-                pass  # Invalid date format, fall through to general deadline
-        
-        # Check general submission deadline
-        if template.submission_deadline:
-            # Make template deadline timezone-aware if it's naive
-            template_deadline = template.submission_deadline
-            if template_deadline.tzinfo is None:
-                template_deadline = template_deadline.replace(tzinfo=timezone.utc)
-            
-            if current_time <= template_deadline:
-                return True, template.submission_deadline.isoformat()
-            else:
-                return False, template.submission_deadline.isoformat()
-        
-        # No deadline set, always allow submission
-        return True, None
-    
+                if exclusion.get("user_id") == user_id and exclusion.get("deadline"):
+                    try:
+                        return TemplateService._as_utc(
+                            datetime.fromisoformat(exclusion["deadline"].replace('Z', '+00:00'))
+                        )
+                    except ValueError:
+                        break  # Malformed exclusion date, fall back to the general deadline
+        return TemplateService._as_utc(template.submission_deadline)
+
+    @staticmethod
+    def _check_can_submit_for_template(
+        template: Template,
+        user_id: int
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Whether the user may submit right now, and the deadline that applies.
+
+        A lab is open from its visible time until its deadline. Inside that
+        window a student may resubmit as often as they like (the first
+        submission is the one that needs the in-class code); once the deadline
+        passes nothing more is accepted.
+        """
+        current_time = datetime.now(timezone.utc)
+
+        # Template hasn't been released yet - nothing to submit
+        if not TemplateService.is_template_visible(template, current_time):
+            return False, None
+
+        deadline = TemplateService.effective_deadline(template, user_id)
+        if deadline is None:
+            # No deadline set, submissions stay open
+            return True, None
+
+        return current_time <= deadline, deadline.isoformat()
+
     @staticmethod
     def batch_check_can_submit(
-        db: Session, 
-        templates: List[Template], 
+        db: Session,
+        templates: List[Template],
         user_id: int
-    ) -> Dict[int, tuple[bool, Optional[str]]]:
+    ) -> Dict[int, tuple[bool, Optional[str], bool]]:
         """
-        Batch check if user can submit for multiple templates.
-        Much more efficient than calling can_user_submit for each template individually.
-        Returns a dict mapping template_id -> (can_submit, deadline_info)
+        Batch version of can_user_submit for a list of templates.
+        Returns template_id -> (can_submit, deadline_info, has_submitted).
         """
         if not templates:
             return {}
-        
+
         template_ids = [t.id for t in templates]
-        
+
         # Fetch ALL user submissions for these templates in ONE query
-        user_submissions = db.query(TemplateSubmission).filter(
-            TemplateSubmission.template_id.in_(template_ids),
-            TemplateSubmission.user_id == user_id
-        ).all()
-        
-        # Create a map of template_id -> submission for quick lookup
-        submission_map = {sub.template_id: sub for sub in user_submissions}
-        
-        # Check each template using the cached submission data
+        submitted_ids = {
+            row[0] for row in db.query(TemplateSubmission.template_id).filter(
+                TemplateSubmission.template_id.in_(template_ids),
+                TemplateSubmission.user_id == user_id
+            ).all()
+        }
+
         results = {}
         for template in templates:
-            existing_submission = submission_map.get(template.id)
             can_submit, deadline_info = TemplateService._check_can_submit_for_template(
-                template, user_id, existing_submission
+                template, user_id
             )
-            results[template.id] = (can_submit, deadline_info)
-        
+            results[template.id] = (can_submit, deadline_info, template.id in submitted_ids)
+
         return results
     
+    @staticmethod
+    def get_missed_templates(db: Session, user_id: int) -> List[Dict]:
+        """
+        Templates assigned to the user whose deadline has passed with nothing submitted.
+
+        Deadline resolution matches _check_can_submit_for_template: a user-specific
+        exclusion deadline wins over the template's general deadline, and a template
+        with no deadline at all can never be missed.
+        """
+        templates = TemplateService.get_templates_for_user(db=db, user_id=user_id)
+        if not templates:
+            return []
+
+        submitted_ids = {
+            row[0] for row in db.query(TemplateSubmission.template_id).filter(
+                TemplateSubmission.template_id.in_([t.id for t in templates]),
+                TemplateSubmission.user_id == user_id,
+            ).all()
+        }
+
+        current_time = datetime.now(timezone.utc)
+        missed = []
+        for template in templates:
+            if template.id in submitted_ids:
+                continue
+
+            deadline = TemplateService.effective_deadline(template, user_id)
+            if deadline is None:
+                continue  # no deadline -> still open, not missed
+
+            if current_time > deadline:
+                missed.append({
+                    "template_id": template.id,
+                    "template_name": template.name,
+                    "language": template.language,
+                    "deadline": deadline.isoformat(),
+                })
+
+        missed.sort(key=lambda m: m["deadline"], reverse=True)
+        return missed
+
     @staticmethod
     def get_user_submission(db: Session, template_id: int, user_id: int) -> Optional[TemplateSubmission]:
         """Get user's submission for a specific template"""

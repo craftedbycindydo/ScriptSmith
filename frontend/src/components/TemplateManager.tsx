@@ -12,7 +12,7 @@ import CodeEditor from './CodeEditor';
 import { apiService } from '@/services/api';
 import type { TemplateCreate, TemplateUpdate, TemplateListItem, TemplateStats, ClassroomInfo, UserInfo } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
-import { parseDate } from '@/lib/dateUtils';
+import { parseDate, formatDate as formatDateTime } from '@/lib/dateUtils';
 import { 
   Plus, 
   Save, 
@@ -25,6 +25,9 @@ import {
   Copy,
   Check,
   Code2,
+  Clock,
+  KeyRound,
+  Search,
   UserPlus,
   UserMinus,
   Users
@@ -42,6 +45,7 @@ type EditingTemplate = {
   language: string;
   code_content: string;
   classroom_ids: number[];
+  visible_from: Date | undefined;
   submission_deadline: Date | undefined;
   exclusions: Array<{ user_id: number; deadline: string; username?: string }>;
 };
@@ -53,6 +57,7 @@ const defaultTemplate: EditingTemplate = {
   language: 'python',
   code_content: '',
   classroom_ids: [],
+  visible_from: undefined,
   submission_deadline: undefined,
   exclusions: []
 };
@@ -94,7 +99,14 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
   const [uploadLanguage, setUploadLanguage] = useState('python');
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
+  const [copiedCode, setCopiedCode] = useState<number | null>(null);
   
+  // Templates list filters
+  const [filterQuery, setFilterQuery] = useState('');
+  const [filterClassroom, setFilterClassroom] = useState('all');
+  const [filterLanguage, setFilterLanguage] = useState('all');
+  const [filterVisibility, setFilterVisibility] = useState('all');
+
   // Delete confirmation state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<TemplateListItem | null>(null);
@@ -166,7 +178,9 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         language: fullTemplate.language,
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
-        submission_deadline: fullTemplate.submission_deadline ? 
+        visible_from: fullTemplate.visible_from ?
+          parseDate(fullTemplate.visible_from) || undefined : undefined,
+        submission_deadline: fullTemplate.submission_deadline ?
           parseDate(fullTemplate.submission_deadline) || undefined : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
@@ -196,6 +210,15 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
       return;
     }
 
+    if (
+      editingTemplate.visible_from &&
+      editingTemplate.submission_deadline &&
+      editingTemplate.visible_from >= editingTemplate.submission_deadline
+    ) {
+      setError('Visible time must be before the submission deadline');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -208,6 +231,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           language: editingTemplate.language,
           code_content: editingTemplate.code_content,
           classroom_ids: editingTemplate.classroom_ids.length > 0 ? editingTemplate.classroom_ids : undefined,
+          visible_from: editingTemplate.visible_from ? editingTemplate.visible_from.toISOString() : undefined,
           submission_deadline: editingTemplate.submission_deadline ? editingTemplate.submission_deadline.toISOString() : undefined,
           exclusions: editingTemplate.exclusions.length > 0 ? editingTemplate.exclusions.map(e => ({
             user_id: e.user_id,
@@ -222,6 +246,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           description: editingTemplate.description.trim() || undefined,
           code_content: editingTemplate.code_content,
           classroom_ids: editingTemplate.classroom_ids.length > 0 ? editingTemplate.classroom_ids : undefined,
+          // null (not undefined) so clearing the picker unschedules the template
+          visible_from: editingTemplate.visible_from ? editingTemplate.visible_from.toISOString() : null,
           submission_deadline: editingTemplate.submission_deadline ? editingTemplate.submission_deadline.toISOString() : undefined,
           exclusions: editingTemplate.exclusions.length > 0 ? editingTemplate.exclusions.map(e => ({
             user_id: e.user_id,
@@ -304,6 +330,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         language: uploadLanguage,
         code_content: fileContent,
         classroom_ids: [],
+        visible_from: undefined,
         submission_deadline: undefined,
         exclusions: []
       });
@@ -330,7 +357,9 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         language: fullTemplate.language,
         code_content: fullTemplate.code_content,
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
-        submission_deadline: fullTemplate.submission_deadline ? 
+        visible_from: fullTemplate.visible_from ?
+          parseDate(fullTemplate.visible_from) || undefined : undefined,
+        submission_deadline: fullTemplate.submission_deadline ?
           parseDate(fullTemplate.submission_deadline) || undefined : undefined,
         exclusions: (fullTemplate.exclusions || [])
           .filter(exclusion => exclusion.user_id !== currentUser?.id) // Filter out admin user
@@ -367,6 +396,109 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
+  };
+
+  // Newest first, by creation date
+  const createdAt = (template: TemplateListItem) =>
+    parseDate(template.created_at)?.getTime() ?? 0;
+
+  // Classrooms that currently have templates, for the classroom filter
+  const classroomFilterOptions = (): Array<{ id: number; name: string }> => {
+    const options = new Map<number, string>();
+    templates.forEach(template => {
+      (template.classrooms || []).forEach(classroom => {
+        if (classroom?.id) options.set(classroom.id, classroom.name);
+      });
+    });
+    return [...options.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const filtersActive =
+    filterQuery.trim() !== '' ||
+    filterClassroom !== 'all' ||
+    filterLanguage !== 'all' ||
+    filterVisibility !== 'all';
+
+  const clearFilters = () => {
+    setFilterQuery('');
+    setFilterClassroom('all');
+    setFilterLanguage('all');
+    setFilterVisibility('all');
+  };
+
+  const filteredTemplates = (): TemplateListItem[] => {
+    const query = filterQuery.trim().toLowerCase();
+
+    return templates.filter(template => {
+      if (query) {
+        const haystack = `${template.name} ${template.description || ''} ${template.creator_username || ''}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+
+      if (filterLanguage !== 'all' && template.language !== filterLanguage) return false;
+
+      if (filterClassroom !== 'all') {
+        const classroomIds = (template.classrooms || []).map(classroom => classroom.id);
+        if (filterClassroom === 'global') {
+          if (classroomIds.length > 0) return false;
+        } else if (!classroomIds.includes(Number(filterClassroom))) {
+          return false;
+        }
+      }
+
+      if (filterVisibility === 'scheduled' && !isScheduled(template)) return false;
+      if (filterVisibility === 'visible' && isScheduled(template)) return false;
+
+      return true;
+    });
+  };
+
+  // Split templates into sections by the classroom(s) they are assigned to.
+  // A template shared by several classrooms gets one section naming all of them,
+  // so each template is rendered exactly once (one edit form, one delete button).
+  // Sections and the templates inside them are ordered newest-created first.
+  const templatesByClassroom = (): Array<{ label: string; items: TemplateListItem[] }> => {
+    const groups = new Map<string, { label: string; items: TemplateListItem[] }>();
+
+    filteredTemplates().forEach((template) => {
+      const names = (template.classrooms || [])
+        .map(classroom => classroom?.name)
+        .filter(Boolean)
+        .sort();
+      const key = names.join('|');
+      if (!groups.has(key)) {
+        groups.set(key, { label: names.length ? names.join(' · ') : 'Global access', items: [] });
+      }
+      groups.get(key)!.items.push(template);
+    });
+
+    // Newest template first inside each section, and the section holding the
+    // newest template first overall
+    return [...groups.values()]
+      .map(group => ({
+        ...group,
+        items: [...group.items].sort((a, b) => createdAt(b) - createdAt(a)),
+      }))
+      .sort((a, b) => createdAt(b.items[0]) - createdAt(a.items[0]));
+  };
+
+  // Copy a lab's submission code so it can be read out or pasted into slides
+  const handleCopyCode = async (code: string, templateId: number) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(templateId);
+      setTimeout(() => setCopiedCode(null), 2000);
+    } catch {
+      setError('Failed to copy submission code');
+    }
+  };
+
+  // Template is scheduled if its visible time is still in the future
+  const isScheduled = (template: TemplateListItem) => {
+    const visibleFrom = template.visible_from ? parseDate(template.visible_from) : null;
+    return !!visibleFrom && visibleFrom > new Date();
   };
 
   const getLanguageLabel = (language: string) => {
@@ -659,6 +791,26 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
               </div>
             </div>
 
+            {/* Visible time */}
+            <div>
+              <Label htmlFor="visible-from">Visible Time (Optional)</Label>
+              <div className="mt-1">
+                <DateTimePicker
+                  value={editingTemplate.visible_from}
+                  onChange={(date) => setEditingTemplate(prev => ({...prev, visible_from: date}))}
+                  placeholder="Pick when students can see this template"
+                />
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Students see this template only from the selected date and time. Leave empty to make it visible immediately.
+              </p>
+              {editingTemplate.visible_from && editingTemplate.visible_from > new Date() && (
+                <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mt-1">
+                  Scheduled — students will not see this lab until {editingTemplate.visible_from.toLocaleString()}. It stays listed here for you.
+                </p>
+              )}
+            </div>
+
             {/* Submission deadline */}
             <div>
               <Label htmlFor="submission-deadline">Submission Deadline (Optional)</Label>
@@ -853,7 +1005,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
             </div>
 
             {/* Save/Cancel buttons */}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
+              {error && <p className="text-sm text-destructive sm:mr-auto">{error}</p>}
               <Button variant="outline" onClick={handleCancelEditing}>
                 Cancel
               </Button>
@@ -868,8 +1021,75 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
 
       {/* Templates list */}
       <Card>
-        <CardHeader>
-          <CardTitle>Templates</CardTitle>
+        <CardHeader className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Templates</CardTitle>
+            {filtersActive && (
+              <span className="text-sm text-muted-foreground">
+                {filteredTemplates().length} of {templates.length} shown
+              </span>
+            )}
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                placeholder="Search name, description or author"
+                className="pl-8"
+              />
+            </div>
+
+            <Select value={filterClassroom} onValueChange={setFilterClassroom}>
+              <SelectTrigger className="w-full sm:w-[220px]">
+                <SelectValue placeholder="All classrooms" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All classrooms</SelectItem>
+                {classroomFilterOptions().map(classroom => (
+                  <SelectItem key={classroom.id} value={classroom.id.toString()}>
+                    {classroom.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value="global">Global access</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={filterLanguage} onValueChange={setFilterLanguage}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="All languages" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All languages</SelectItem>
+                {supportedLanguages.map(lang => (
+                  <SelectItem key={lang.value} value={lang.value}>
+                    {lang.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={filterVisibility} onValueChange={setFilterVisibility}>
+              <SelectTrigger className="w-full sm:w-[170px]">
+                <SelectValue placeholder="Any visibility" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any visibility</SelectItem>
+                <SelectItem value="visible">Visible now</SelectItem>
+                <SelectItem value="scheduled">Scheduled</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {filtersActive && (
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                <X className="w-4 h-4 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -881,9 +1101,24 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
             <div className="text-center py-8 text-muted-foreground">
               No templates found. Create your first template to get started.
             </div>
+          ) : filteredTemplates().length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No templates match these filters.
+            </div>
           ) : (
-            <div className="space-y-4">
-              {templates.map((template) => (
+            <div className="space-y-8">
+              {templatesByClassroom().map((group) => (
+                <div key={group.label} className="space-y-3">
+                  {/* Classroom section heading */}
+                  <div className="flex items-center gap-2 border-b pb-2">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    <h3 className="text-sm font-semibold">{group.label}</h3>
+                    <Badge variant="secondary" className="text-xs">
+                      {group.items.length}
+                    </Badge>
+                  </div>
+                  <div className="space-y-4">
+              {group.items.map((template) => (
                 <div key={template.id} className="border rounded-lg">
                   {/* Template Header - Always visible */}
                   <div className="p-4">
@@ -897,28 +1132,30 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                           <Badge variant="secondary" className="shrink-0">{getLanguageLabel(template.language)}</Badge>
                           <span className="truncate">By: {template.creator_username}</span>
                           <span className="shrink-0">Created: {formatDate(template.created_at)}</span>
-                        </div>
-                        {template.classrooms && template.classrooms.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 mt-2">
-                            <span className="text-xs text-muted-foreground">Classrooms:</span>
-                            {template.classrooms.map((classroom) => (
-                              <Badge 
-                                key={classroom.id} 
-                                variant="outline" 
-                                className="text-xs"
-                              >
-                                {classroom.name}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                        {(!template.classrooms || template.classrooms.length === 0) && (
-                          <div className="mt-2">
-                            <Badge variant="outline" className="text-xs">
-                              Global Access
+                          {template.submission_code && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyCode(template.submission_code!, template.id)}
+                              className="shrink-0 inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-xs hover:bg-muted"
+                              title="Submission code students need for their first hand-in — click to copy"
+                            >
+                              <KeyRound className="w-3 h-3" />
+                              {template.submission_code}
+                              {copiedCode === template.id ? (
+                                <Check className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3 h-3 opacity-60" />
+                              )}
+                            </button>
+                          )}
+                          {isScheduled(template) && (
+                            <Badge variant="outline" className="shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
+                              <Clock className="w-3 h-3 mr-1" />
+                              Visible {formatDateTime(template.visible_from)}
                             </Badge>
-                          </div>
-                        )}
+                          )}
+                        </div>
+                        {/* Classroom assignment is shown by the section heading above */}
                       </div>
                       
                       {/* Actions */}
@@ -1020,6 +1257,26 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                               ))}
                             </SelectContent>
                           </Select>
+                        </div>
+
+                        {/* Visible time */}
+                        <div>
+                          <Label htmlFor={`edit-visible-from-${template.id}`}>Visible Time (Optional)</Label>
+                          <div className="mt-1">
+                            <DateTimePicker
+                              value={editingTemplate.visible_from}
+                              onChange={(date) => setEditingTemplate(prev => ({...prev, visible_from: date}))}
+                              placeholder="Pick when students can see this template"
+                            />
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Students see this template only from the selected date and time. Leave empty to make it visible immediately.
+                          </p>
+                          {editingTemplate.visible_from && editingTemplate.visible_from > new Date() && (
+                            <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mt-1">
+                              Scheduled — students will not see this lab until {editingTemplate.visible_from.toLocaleString()}. It stays listed here for you.
+                            </p>
+                          )}
                         </div>
 
                         {/* Submission deadline */}
@@ -1208,7 +1465,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                         </div>
 
                         {/* Save/Cancel buttons */}
-                        <div className="flex justify-end gap-2 pt-4 border-t">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 pt-4 border-t">
+                          {error && <p className="text-sm text-destructive sm:mr-auto">{error}</p>}
                           <Button variant="outline" onClick={handleCancelEditing}>
                             Cancel
                           </Button>
@@ -1220,6 +1478,9 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                       </div>
                     </div>
                   )}
+                </div>
+              ))}
+                  </div>
                 </div>
               ))}
             </div>

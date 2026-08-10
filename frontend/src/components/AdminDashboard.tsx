@@ -24,8 +24,6 @@ import {
   useAdminForceLogoutUser,
 } from '@/hooks/useAdminData';
 import { useNavigate } from 'react-router-dom';
-import AssignmentUpload from './AssignmentUpload';
-import AssignmentReports from './AssignmentReports';
 import TemplateManager from './TemplateManager';
 import TemplateSubmissions from './TemplateSubmissions';
 import AdminAnalytics from './AdminAnalytics';
@@ -473,11 +471,6 @@ export default function AdminDashboard() {
           setHeavyDataLoadTrigger(false);
           setTimeout(() => setHeavyDataLoadTrigger(true), 50);
           break;
-        case 'assignments':
-          // Assignments component manages its own data via AssignmentUpload and AssignmentReports
-          // Refresh user context to get latest assignment data
-          await refreshUser();
-          break;
       }
 
       await Promise.all(refetchPromises);
@@ -910,25 +903,6 @@ export default function AdminDashboard() {
             {activeTab === 'templates' && (
               <div className="anim-enter space-y-6">
                 <TemplateManager />
-              </div>
-            )}
-
-            {activeTab === 'assignments' && (
-              <div className="anim-enter space-y-6">
-                <div className="panel p-5">
-                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                    <div className="min-w-0 flex-1">
-                      <h2 className="section-title">Assignments</h2>
-                      <p className="page-sub">
-                        Upload student submissions for automated grading and plagiarism detection
-                      </p>
-                    </div>
-                    <div className="w-full shrink-0 sm:w-auto sm:max-w-[200px]">
-                      <AssignmentUpload onAssignmentCreated={loadAllData} />
-                    </div>
-                  </div>
-                </div>
-                <AssignmentReports />
               </div>
             )}
 

@@ -30,7 +30,9 @@ class CodeExecutionService:
                 "output": "",
                 "error": f"Microservice execution failed: {str(e)}",
                 "execution_time": 0.0,
-                "success": False
+                "success": False,
+                # Our side failed, not the user's code - don't cache this
+                "infrastructure_error": True
             }
 
 # Create service instance

@@ -4,8 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useMotionPreset } from '@/lib/designMotion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import CodeEditor from './CodeEditor';
 import { parseDate } from '../lib/dateUtils';
@@ -18,12 +18,15 @@ import { useCodeStore } from '@/store/codeStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
-import { Play, Save, Download, Share2, Users, Send, CheckCircle, ChevronDown, FileText } from 'lucide-react';
+import type { MissedTemplate, TemplateSubmission } from '@/services/api';
+import { Play, Save, Download, Share2, Users, Send, CheckCircle, XCircle, Clock, ChevronDown, FileText } from 'lucide-react';
 
 export default function IDE() {
   const navigate = useNavigate();
   const { enter: enterMotion } = useMotionPreset();
   const { user, isAuthenticated } = useAuthStore();
+  // Server-validated admin status from the user object (no API call needed)
+  const userIsAdmin = user?.is_admin || false;
   const {
     settings: adminSettings,
     loadSettings: loadAdminSettings,
@@ -62,6 +65,12 @@ export default function IDE() {
   // User template state
   const [userTemplates, setUserTemplates] = useState<any[]>([]);
   const [loadingUserTemplates, setLoadingUserTemplates] = useState(false);
+
+  // Submissions state (the student's own submitted + missed work)
+  const [mySubmissions, setMySubmissions] = useState<TemplateSubmission[]>([]);
+  const [missedTemplates, setMissedTemplates] = useState<MissedTemplate[]>([]);
+  const [loadingMyWork, setLoadingMyWork] = useState(false);
+  const [reviewSubmission, setReviewSubmission] = useState<TemplateSubmission | null>(null);
   
   // Selected template tracking state
   const [selectedAdminTemplate, setSelectedAdminTemplate] = useState<string>('');
@@ -79,6 +88,12 @@ export default function IDE() {
   // Submission error state
   const [showSubmissionErrorModal, setShowSubmissionErrorModal] = useState<boolean>(false);
   const [submissionErrorMessage, setSubmissionErrorMessage] = useState<string>('');
+  // In-class code, only asked for on a student's first submission of a lab
+  const [submissionCode, setSubmissionCode] = useState<string>('');
+  const [submitCodeError, setSubmitCodeError] = useState<string>('');
+  // Set when the server insists on a code even though we thought one wasn't needed
+  const [codeRequired, setCodeRequired] = useState<boolean>(false);
+  const needsSubmissionCode = !hasSubmitted || codeRequired;
   const [hasExecutedCode, setHasExecutedCode] = useState<boolean>(false);
   const [lastExecutionResult, setLastExecutionResult] = useState<any>(null);
   const [lastExecutedCodeHash, setLastExecutedCodeHash] = useState<string>("");  // Track hash of last executed code
@@ -127,6 +142,32 @@ export default function IDE() {
     return name;
   };
 
+  // A submission counts as clean only when it ran without errors.
+  const passedSubmissions = mySubmissions.filter(
+    (s) => s.status === 'success' && !s.error_message
+  );
+  const erroredSubmissions = mySubmissions.filter(
+    (s) => s.status !== 'success' || !!s.error_message
+  );
+
+  // Absolute date + time - students compare these against deadlines
+  const formatSubmittedAt = (dateString?: string): string => {
+    const date = parseDate(dateString || '');
+    if (!date) return 'unknown';
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const handleSubmissionSelect = (value: string) => {
+    if (!value.startsWith('sub-')) return;  // missed rows are disabled, nothing to review
+    const submission = mySubmissions.find((s) => s.id === parseInt(value.slice(4), 10));
+    if (submission) setReviewSubmission(submission);
+  };
+
   // Format date consistently for row 2 display
   const formatDate = (template: any): string => {
     const date = template.updated_at ? new Date(template.updated_at) : 
@@ -139,6 +180,37 @@ export default function IDE() {
     const year = date.getFullYear();
     
     return `${month}/${day}/${year}`;
+  };
+
+  // Split labs into sections by the classroom(s) they are assigned to.
+  // A lab shared by several classrooms gets one section naming all of them, so
+  // every lab is listed exactly once.
+  const templatesByClassroom = (): Array<{ label: string; items: any[] }> => {
+    const groups = new Map<string, { label: string; items: any[] }>();
+
+    (templates || []).forEach((template) => {
+      if (!template || !template.id) return;
+      const names = (template.classrooms || [])
+        .map((classroom: any) => classroom?.name)
+        .filter(Boolean)
+        .sort();
+      const key = names.join('|');
+      if (!groups.has(key)) {
+        groups.set(key, { label: names.length ? names.join(' · ') : 'All classrooms', items: [] });
+      }
+      groups.get(key)!.items.push(template);
+    });
+
+    // Classroom sections first (alphabetical), unrestricted labs last
+    return [...groups.entries()]
+      .sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+      .map(([, group]) => group);
+  };
+
+  // Labs scheduled for a later visible time only reach admins - flag them clearly
+  const scheduledVisibleAt = (template: any): Date | null => {
+    const visibleFrom = template?.visible_from ? parseDate(template.visible_from) : null;
+    return visibleFrom && visibleFrom > new Date() ? visibleFrom : null;
   };
 
   // Format draft save time for display using existing date utilities
@@ -192,6 +264,11 @@ export default function IDE() {
       disconnectWebSocket();
     };
   }, [loadLanguages, isAuthenticated, user]);
+
+  // Submissions are not language-scoped, so load them once per auth change
+  useEffect(() => {
+    loadMyWork();
+  }, [isAuthenticated, userIsAdmin]);
 
   // Load templates when language changes (for authenticated users only)
   useEffect(() => {
@@ -255,6 +332,32 @@ export default function IDE() {
       setUserTemplates([]);
     } finally {
       setLoadingUserTemplates(false);
+    }
+  };
+
+  // Load the student's own submitted + missed work for the Submissions dropdown.
+  // Not language-filtered: students expect to see everything they've handed in.
+  const loadMyWork = async () => {
+    // Admins never submit, so the Submissions dropdown is hidden for them
+    if (!isAuthenticated || userIsAdmin) {
+      setMySubmissions([]);
+      setMissedTemplates([]);
+      return;
+    }
+    setLoadingMyWork(true);
+    try {
+      const [submissions, missed] = await Promise.all([
+        apiService.getUserSubmissions(),
+        apiService.getMissedTemplates(),
+      ]);
+      setMySubmissions(Array.isArray(submissions) ? submissions : []);
+      setMissedTemplates(Array.isArray(missed) ? missed : []);
+    } catch (error) {
+      console.error('Failed to load submissions:', error);
+      setMySubmissions([]);
+      setMissedTemplates([]);
+    } finally {
+      setLoadingMyWork(false);
     }
   };
 
@@ -433,8 +536,14 @@ export default function IDE() {
 
   const handleConfirmSubmit = async () => {
     if (!selectedAdminTemplate || !hasExecutedCode || !lastExecutionResult) return;
-    
+    // First submission of a lab needs the 4-digit code handed out in class
+    if (needsSubmissionCode && submissionCode.trim().length !== 4) {
+      setSubmitCodeError('Enter the 4-digit code from your instructor.');
+      return;
+    }
+
     setSubmitting(true);
+    setSubmitCodeError('');
     try {
       // Execute code fresh with is_submission=true to avoid cache issues and get latest results
       const freshResult = await apiService.executeCode({
@@ -451,7 +560,8 @@ export default function IDE() {
         execution_output: freshResult.output || "", // Fresh output only
         execution_status: freshResult.status || "error", // Fresh status only
         execution_time: freshResult.execution_time || 0, // Fresh execution time only
-        error_message: freshResult.error || "" // Fresh error only
+        error_message: freshResult.error || "", // Fresh error only
+        submission_code: needsSubmissionCode ? submissionCode.trim() : undefined
       });
       
       // Refresh template data to get updated submission status
@@ -460,19 +570,33 @@ export default function IDE() {
         setCanSubmit(refreshedTemplate.can_submit || false);
         setHasSubmitted(!!refreshedTemplate.user_submission);
       }
+      loadMyWork();  // keep the Submissions dropdown current
       setShowSubmitModal(false);
+      setSubmissionCode('');
+      setCodeRequired(false);
     } catch (error: any) {
       console.error('Failed to submit template:', error);
-      
-      // Handle 403 deadline errors specifically
-      if (error.response?.status === 403 && error.response?.data?.detail?.includes('Submission denied')) {
-        const errorMessage = error.response.data.detail;
-        setSubmissionErrorMessage(errorMessage);
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail;
+
+      // Wrong / missing / exhausted code: stay in the dialog so they can retry
+      const isCodeProblem =
+        (status === 403 && typeof detail === 'string' && detail.includes('submission code')) ||
+        (status === 400 && typeof detail === 'string' && detail.includes('submission code')) ||
+        status === 429;
+      if (isCodeProblem) {
+        setSubmitCodeError(detail || 'Incorrect submission code.');
+        setCodeRequired(true);  // keep the input on screen so they can retry
+      } else if (status === 403 && typeof detail === 'string' && detail.includes('Submission denied')) {
+        // Deadline passed
+        setSubmissionErrorMessage(detail);
         setShowSubmissionErrorModal(true);
+        setShowSubmitModal(false);
       } else {
         // Generic error message for other failures
         setSubmissionErrorMessage('Failed to submit template. Please try again.');
         setShowSubmissionErrorModal(true);
+        setShowSubmitModal(false);
       }
     } finally {
       setSubmitting(false);
@@ -481,6 +605,9 @@ export default function IDE() {
 
   const handleCancelSubmit = () => {
     setShowSubmitModal(false);
+    setSubmissionCode('');
+    setSubmitCodeError('');
+    setCodeRequired(false);
   };
 
   const handleCloseRunFirstModal = () => {
@@ -763,10 +890,6 @@ export default function IDE() {
     return extensions[lang] || 'txt';
   };
 
-  // Check if copy-paste should be disabled for this user
-  // Use server-validated admin status from user object (no API call needed)
-  const userIsAdmin = user?.is_admin || false;
-
   // Determine if copy-paste should be disabled
   // Logic:
   // 1. Not authenticated → copy-paste ENABLED (no restrictions for guests)
@@ -795,8 +918,8 @@ export default function IDE() {
           <>
             <Select onValueChange={handleTemplateSelect} value={selectedAdminTemplate}>
               <SelectTrigger size="sm" disabled={loadingTemplates} className="w-[150px] lg:w-[200px]">
-                <SelectValue placeholder={loadingTemplates ? "Loading..." : "Professor Templates"}>
-                  {selectedAdminTemplateName || "Professor Templates"}
+                <SelectValue placeholder={loadingTemplates ? "Loading..." : "In-class labs"}>
+                  {selectedAdminTemplateName || "In-class labs"}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent className="max-h-[480px] overflow-y-auto">
@@ -807,67 +930,131 @@ export default function IDE() {
                 )}
                 {!templates || templates.length === 0 ? (
                   <SelectItem value="no-templates" disabled>
-                    No professor templates available
+                    No in-class labs available
                   </SelectItem>
                 ) : (
-                  templates.map((template) => template && template.id ? (
-                    <SelectItem
-                      key={template.id}
-                      value={template.id.toString()}
-                      textValue={formatTemplateName(template.name || 'Untitled Template')}
-                    >
-                      <div className="flex flex-col gap-1.5 w-80 min-w-80">
-                        {/* Row 1: Template name */}
-                        <div className="font-medium text-sm truncate w-full">
-                          {formatTemplateName(template.name || 'Untitled Template')}
-                        </div>
-                        {/* Row 2: Date and status */}
-                        <div className="flex items-center justify-between text-xs w-80">
-                          <span className="text-muted-foreground font-mono text-xs">
-                            {formatDate(template)}
-                          </span>
-                          <span
-                            className="status-pill"
-                            data-tone={template.can_submit === false ? "error" : "success"}
-                          >
-                            {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
-                          </span>
-                        </div>
-                      </div>
-                    </SelectItem>
-                  ) : null)
+                  templatesByClassroom().map((group) => (
+                    <SelectGroup key={group.label}>
+                      <SelectLabel>{group.label}</SelectLabel>
+                      {group.items.map((template) => (
+                        <SelectItem
+                          key={template.id}
+                          value={template.id.toString()}
+                          textValue={formatTemplateName(template.name || 'Untitled Template')}
+                        >
+                          <div className="flex flex-col gap-1.5 w-80 min-w-80">
+                            {/* Row 1: Template name */}
+                            <div className="font-medium text-sm truncate w-full">
+                              {formatTemplateName(template.name || 'Untitled Template')}
+                            </div>
+                            {/* Row 2: Date and status */}
+                            <div className="flex items-center justify-between text-xs w-80">
+                              <span className="text-muted-foreground font-mono text-xs">
+                                {formatDate(template)}
+                              </span>
+                              {scheduledVisibleAt(template) ? (
+                                <span className="status-pill" data-tone="warning">
+                                  Visible {scheduledVisibleAt(template)!.toLocaleString()}
+                                </span>
+                              ) : (
+                                <span
+                                  className="status-pill"
+                                  data-tone={template.can_submit === false ? "error" : "success"}
+                                >
+                                  {template.can_submit === false ? "Submissions Closed" : "Submissions Open"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))
                 )}
               </SelectContent>
             </Select>
 
-            <Select onValueChange={handleUserTemplateSelect} value={selectedUserTemplate}>
-              <SelectTrigger size="sm" disabled={loadingUserTemplates} className="w-[130px] lg:w-[170px]">
-                <SelectValue placeholder={loadingUserTemplates ? "Loading..." : selectedUserTemplateName || "My Templates"} />
+            {/* Admins do not submit work, so they get no Submissions dropdown */}
+            {!userIsAdmin && (
+            <Select onValueChange={handleSubmissionSelect} value="">
+              <SelectTrigger size="sm" disabled={loadingMyWork} className="w-[130px] lg:w-[170px]">
+                <SelectValue placeholder={loadingMyWork ? "Loading..." : "Submissions"} />
               </SelectTrigger>
-              <SelectContent>
-                {selectedUserTemplateName && (
-                  <SelectItem value="clear-user">
-                    <span className="text-muted-foreground">Clear selection</span>
-                  </SelectItem>
-                )}
-                {!userTemplates || userTemplates.length === 0 ? (
-                  <SelectItem value="no-user-templates" disabled>
-                    No personal templates saved
+              <SelectContent className="max-h-[480px] overflow-y-auto">
+                {passedSubmissions.length === 0 && erroredSubmissions.length === 0 && missedTemplates.length === 0 ? (
+                  <SelectItem value="no-work" disabled>
+                    Nothing submitted yet
                   </SelectItem>
                 ) : (
-                  userTemplates.map((template) => template && template.id ? (
-                    <SelectItem key={template.id} value={template.id.toString()}>
-                      {template.name || 'Untitled Template'}
-                      {template.description && (
-                        <span className="text-muted-foreground text-xs ml-1">
-                          - {template.description}
-                        </span>
-                      )}
-                    </SelectItem>
-                  ) : null)
+                  <>
+                    {passedSubmissions.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>Submitted &middot; no errors</SelectLabel>
+                        {passedSubmissions.map((s) => (
+                          <SelectItem
+                            key={s.id}
+                            value={`sub-${s.id}`}
+                            textValue={s.template_name || 'Untitled'}
+                          >
+                            <CheckCircle className="w-3.5 h-3.5 mr-2 shrink-0 text-emerald-600" aria-hidden="true" />
+                            <div className="flex flex-col">
+                              <span>{s.template_name || 'Untitled'}</span>
+                              <span className="text-muted-foreground text-xs">
+                                {formatSubmittedAt(s.submitted_at)}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+
+                    {erroredSubmissions.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>Submitted &middot; with errors</SelectLabel>
+                        {erroredSubmissions.map((s) => (
+                          <SelectItem
+                            key={s.id}
+                            value={`sub-${s.id}`}
+                            textValue={s.template_name || 'Untitled'}
+                          >
+                            <XCircle className="w-3.5 h-3.5 mr-2 shrink-0 text-red-600" aria-hidden="true" />
+                            <div className="flex flex-col">
+                              <span>{s.template_name || 'Untitled'}</span>
+                              <span className="text-muted-foreground text-xs">
+                                {formatSubmittedAt(s.submitted_at)}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+
+                    {missedTemplates.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>Missed</SelectLabel>
+                        {missedTemplates.map((m) => (
+                          <SelectItem
+                            key={m.template_id}
+                            value={`missed-${m.template_id}`}
+                            disabled
+                            textValue={m.template_name}
+                          >
+                            <Clock className="w-3.5 h-3.5 mr-2 shrink-0 text-amber-600" aria-hidden="true" />
+                            <div className="flex flex-col">
+                              <span>{m.template_name}</span>
+                              <span className="text-muted-foreground text-xs">
+                                Due {formatSubmittedAt(m.deadline)} &middot; not submitted
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                  </>
                 )}
               </SelectContent>
             </Select>
+            )}
           </>
         )}
 
@@ -920,6 +1107,38 @@ export default function IDE() {
                     <span className="text-xs text-muted-foreground">Create personal template</span>
                   </div>
                 </DropdownMenuItem>
+
+                {/* Loading personal templates lives here now that the toolbar slot shows Submissions */}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  My Templates
+                </DropdownMenuLabel>
+                {loadingUserTemplates ? (
+                  <DropdownMenuItem disabled>Loading...</DropdownMenuItem>
+                ) : !userTemplates || userTemplates.length === 0 ? (
+                  <DropdownMenuItem disabled>No personal templates saved</DropdownMenuItem>
+                ) : (
+                  <>
+                    {selectedUserTemplateName && (
+                      <DropdownMenuItem
+                        onClick={() => handleUserTemplateSelect('clear-user')}
+                        className="cursor-pointer text-muted-foreground"
+                      >
+                        Clear selection
+                      </DropdownMenuItem>
+                    )}
+                    {userTemplates.map((template) => template && template.id ? (
+                      <DropdownMenuItem
+                        key={template.id}
+                        onClick={() => handleUserTemplateSelect(template.id.toString())}
+                        className="cursor-pointer"
+                      >
+                        <FileText className="w-4 h-4 mr-2 shrink-0" />
+                        <span className="truncate">{template.name || 'Untitled Template'}</span>
+                      </DropdownMenuItem>
+                    ) : null)}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -943,8 +1162,9 @@ export default function IDE() {
               title={
                 !hasExecutedCode ? 'Run your code first before submitting' :
                 codeHasChanged ? 'You changed your code after running it. Run again to submit current code.' :
-                (hasSubmitted && canSubmit) ? 'You can submit once more (you have an exclusion)' :
-                'Ready to submit'
+                (hasSubmitted && canSubmit) ? 'You can resubmit until the deadline' :
+                !canSubmit ? 'Submissions are closed for this lab' :
+                'Ready to submit — you will need the code from your instructor'
               }
             >
               {hasSubmitted && !canSubmit ? (
@@ -1207,48 +1427,55 @@ export default function IDE() {
             <div className="p-6">
               <div className="flex items-center mb-4">
                 <Send className="w-6 h-6 mr-3 text-blue-500" />
-                <h2 className="text-lg font-semibold">Submit Template</h2>
-              </div>
-              
-              <div className="mb-6">
-                <p className="text-gray-600 dark:text-gray-300 mb-4">
-                  Are you sure you want to submit your code for "<strong>{selectedAdminTemplateName}</strong>"?
-                </p>
-                
-                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3 mb-3">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    <strong>Execution Results:</strong> Your code execution results 
-                    ({lastExecutionResult?.status || (error ? 'error' : 'success')}) 
-                    will be saved with this submission.
-                  </p>
-                </div>
-                
-                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-3">
-                  <p className="text-sm text-amber-800 dark:text-amber-200">
-                    {hasSubmitted ? (
-                      <>
-                        <strong>Note:</strong> You have an exclusion that allows you to submit once more. This will replace your previous submission.
-                      </>
-                    ) : (
-                      <>
-                        <strong>Note:</strong> Once submitted, you cannot submit again for this template unless your instructor provides an exclusion.
-                      </>
-                    )}
-                  </p>
-                </div>
+                <h2 className="text-lg font-semibold">Submit lab</h2>
               </div>
 
-              <div className="flex justify-end gap-3">
+              <p className="text-gray-600 dark:text-gray-300">
+                Do you want to submit "<strong>{selectedAdminTemplateName}</strong>"?
+              </p>
+
+              {/* Only the first submission needs the in-class code */}
+              {needsSubmissionCode && (
+                <div className="mt-4">
+                  <label htmlFor="submission-code" className="text-sm font-medium">
+                    Submission code
+                  </label>
+                  <Input
+                    id="submission-code"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    autoFocus
+                    maxLength={4}
+                    placeholder="0000"
+                    value={submissionCode}
+                    onChange={(e) => {
+                      setSubmissionCode(e.target.value.replace(/\D/g, '').slice(0, 4));
+                      if (submitCodeError) setSubmitCodeError('');
+                    }}
+                    className="mt-1 w-32 text-center tracking-[0.4em] font-mono"
+                    disabled={submitting}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Enter the 4-digit code your instructor gave out in class.
+                  </p>
+                </div>
+              )}
+
+              {submitCodeError && (
+                <p className="mt-3 text-sm text-red-600 dark:text-red-400">{submitCodeError}</p>
+              )}
+
+              <div className="flex justify-end gap-3 mt-6">
                 <Button
                   variant="outline"
                   onClick={handleCancelSubmit}
                   disabled={submitting}
                 >
-                  Cancel
+                  No
                 </Button>
                 <Button
                   onClick={handleConfirmSubmit}
-                  disabled={submitting}
+                  disabled={submitting || (needsSubmissionCode && submissionCode.length !== 4)}
                   className="bg-blue-500 hover:bg-blue-600 text-white"
                 >
                   {submitting ? (
@@ -1259,7 +1486,7 @@ export default function IDE() {
                   ) : (
                     <>
                       <Send className="w-4 h-4 mr-2" />
-                      Submit Code
+                      Yes
                     </>
                   )}
                 </Button>
@@ -1458,6 +1685,63 @@ export default function IDE() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Read-only review of a past submission - never touches the live editor */}
+      <Dialog open={!!reviewSubmission} onOpenChange={(open) => !open && setReviewSubmission(null)}>
+        <DialogContent className="!max-w-none w-[95vw] lg:w-[80vw] h-[85vh] max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              {reviewSubmission && (reviewSubmission.status === 'success' && !reviewSubmission.error_message ? (
+                <CheckCircle className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+              ) : (
+                <XCircle className="w-4 h-4 text-red-600" aria-hidden="true" />
+              ))}
+              <span>{reviewSubmission?.template_name || 'Submission'}</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Submitted {formatSubmittedAt(reviewSubmission?.submitted_at)}</span>
+            {reviewSubmission?.language && <span>&middot; {reviewSubmission.language}</span>}
+            {typeof reviewSubmission?.execution_time === 'number' && (
+              <span>&middot; {reviewSubmission.execution_time.toFixed(3)}s</span>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 grid gap-4 md:grid-cols-2 mt-3">
+            <div className="flex flex-col min-h-0">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
+                Submitted code
+              </div>
+              <pre className="flex-1 min-h-0 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
+                {reviewSubmission?.submitted_code || 'No code recorded'}
+              </pre>
+            </div>
+
+            <div className="flex flex-col min-h-0 gap-4">
+              <div className="flex flex-col min-h-0 flex-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
+                  Output
+                </div>
+                <pre className="flex-1 min-h-0 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
+                  {reviewSubmission?.output || 'No output'}
+                </pre>
+              </div>
+
+              {reviewSubmission?.error_message && (
+                <div className="flex flex-col min-h-0 flex-1">
+                  <div className="text-xs font-medium uppercase tracking-wide text-red-600 mb-1">
+                    Error
+                  </div>
+                  <pre className="flex-1 min-h-0 overflow-auto rounded-md border border-red-300 p-3 text-xs whitespace-pre-wrap text-red-700">
+                    {reviewSubmission.error_message}
+                  </pre>
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
