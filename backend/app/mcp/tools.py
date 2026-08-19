@@ -30,11 +30,15 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.database.base import SessionLocal
 from app.mcp import extraction
 from app.models.code_submission import CodeSubmission
 from app.models.template import Template, TemplateSubmission
 from app.models.template_draft import TemplateDraft
+from app.models.classroom import Classroom, UserClassroom
+from app.models.user import User
+from app.services.admin_service import AdminService
 from app.services.analytics_service import AnalyticsService
 from app.services.microservice_executor import microservice_executor
 from app.services.template_service import TemplateService
@@ -42,6 +46,8 @@ from app.services.template_service import TemplateService
 logger = logging.getLogger(__name__)
 
 MAX_CODE_CHARS = 20_000
+
+_admin_service = AdminService(settings)
 
 
 # ── lab resolution ──────────────────────────────────────────────
@@ -471,6 +477,246 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
     }
 
 
+
+# ── professor tools ─────────────────────────────────────────────
+#
+# Everything below reads other people's work, so each function is gated twice:
+# the caller must hold admin rights, and the classroom or student must fall
+# inside the set this professor actually teaches. The second check is the one
+# that matters - "is an admin" is not "is this class's teacher".
+#
+# The gate is re-evaluated from the database on every call. It is never read
+# from a token claim and never inferred from the tool having been listed:
+# tools/list is filtered by role for the model's benefit, not as a control.
+
+
+def require_admin(db: Session, user_id: int) -> Optional[User]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        return None
+    if not _admin_service.has_admin_access(user):
+        logger.warning("mcp: non-admin user %s attempted an admin tool", user_id)
+        return None
+    return user
+
+
+def _taught_classroom_ids(db: Session, admin_user: User) -> list:
+    """Classrooms this professor teaches or created.
+
+    Same rule as AnalyticsService.get_student_analytics_for_admin, restated
+    here because the gradebook and roster tools need it before they call
+    anything that enforces it internally.
+    """
+    taught = db.query(Classroom.id).join(UserClassroom).filter(
+        Classroom.is_active.is_(True),
+        UserClassroom.user_id == admin_user.id,
+        UserClassroom.is_active.is_(True),
+        UserClassroom.role == "TEACHER",
+    ).all()
+    created = db.query(Classroom.id).filter(
+        Classroom.is_active.is_(True),
+        Classroom.created_by_id == admin_user.id,
+    ).all()
+    return sorted({row[0] for row in taught + created})
+
+
+_NOT_ADMIN = {"error": "This tool is available to teaching staff only."}
+_NOT_YOURS = {"error": "That classroom is not one you teach."}
+
+
+def list_my_classrooms(db: Session, user_id: int):
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+
+    ids = _taught_classroom_ids(db, admin)
+    if not ids:
+        return {"classrooms": [], "note": "You are not the teacher of any classroom."}
+
+    rows = db.query(Classroom).filter(Classroom.id.in_(ids)).all()
+    counts = {}
+    for (classroom_id,) in db.query(UserClassroom.classroom_id).filter(
+        UserClassroom.classroom_id.in_(ids),
+        UserClassroom.role == "STUDENT",
+        UserClassroom.is_active.is_(True),
+    ).all():
+        counts[classroom_id] = counts.get(classroom_id, 0) + 1
+
+    return {"classrooms": [
+        {"classroom_id": c.id, "name": c.name, "students": counts.get(c.id, 0)}
+        for c in rows
+    ]}
+
+
+def list_classroom_students(db: Session, user_id: int, classroom_id: int = None):
+    """The roster, with the student ids the per-student tools need."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if classroom_id is None or classroom_id not in _taught_classroom_ids(db, admin):
+        return _NOT_YOURS
+
+    rows = db.query(User.id, User.username, User.full_name, User.email).join(
+        UserClassroom, UserClassroom.user_id == User.id
+    ).filter(
+        UserClassroom.classroom_id == classroom_id,
+        UserClassroom.role == "STUDENT",
+        UserClassroom.is_active.is_(True),
+    ).all()
+
+    return {"students": [
+        {"student_id": r[0], "username": r[1], "full_name": r[2], "email": r[3]}
+        for r in rows
+    ]}
+
+
+def get_classroom_report(db: Session, user_id: int, classroom_id: int = None):
+    """Cohort analytics: pass rates, common errors, teaching signals."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if classroom_id is None:
+        return {"error": "classroom_id is required. Call list_my_classrooms first."}
+    # get_classroom_analytics enforces the same ownership rule internally
+    # (analytics_service.py:659) and returns an error dict when it fails.
+    return AnalyticsService.get_classroom_analytics(db, admin, classroom_id)
+
+
+def get_student_report(db: Session, user_id: int, student_id: int = None):
+    """One student's full record, for feedback or a grade justification."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if student_id is None:
+        return {"error": "student_id is required. Call list_classroom_students first."}
+    # Refuses any student outside the professor's classrooms
+    # (analytics_service.py:573).
+    return AnalyticsService.get_student_analytics_for_admin(db, admin, student_id)
+
+
+def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: int = None):
+    """One student's submitted code and run outcome for one lab.
+
+    This is what grading needs: the artefact, not a summary. Scoped to the
+    professor's own classrooms, so it cannot be used to read across the school.
+    """
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if student_id is None or lab_id is None:
+        return {"error": "student_id and lab_id are both required."}
+
+    ids = _taught_classroom_ids(db, admin)
+    enrolled = db.query(UserClassroom).filter(
+        UserClassroom.user_id == student_id,
+        UserClassroom.classroom_id.in_(ids),
+        UserClassroom.role == "STUDENT",
+        UserClassroom.is_active.is_(True),
+    ).first() if ids else None
+    if not enrolled:
+        return {"error": "That student is not in a classroom you teach."}
+
+    submission = db.query(TemplateSubmission).filter(
+        TemplateSubmission.user_id == student_id,
+        TemplateSubmission.template_id == lab_id,
+    ).order_by(TemplateSubmission.submitted_at.desc()).first()
+
+    run = db.query(CodeSubmission).filter(
+        CodeSubmission.user_id == student_id,
+        CodeSubmission.template_id == lab_id,
+    ).order_by(CodeSubmission.created_at.desc()).first()
+
+    if not submission and not run:
+        return {"error": "That student has no work recorded for this lab."}
+
+    source = submission or run
+    output = getattr(source, "output", None)
+    return {
+        "student_id": student_id,
+        "lab_id": lab_id,
+        "submitted": bool(submission),
+        "status": getattr(source, "status", None),
+        "code": (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")[:MAX_CODE_CHARS],
+        "at": str(getattr(source, "submitted_at", None) or getattr(source, "created_at", None)),
+        "resubmissions": getattr(submission, "resubmission_count", None),
+        "test_tally": extraction.extract_pass_count(output),
+        "failing_tests": extraction.extract_failing_tests(output)[:8],
+        "error_message": (getattr(source, "error_message", None) or "")[:1200],
+    }
+
+
+async def get_classroom_gradebook(db: Session, user_id: int, classroom_id: int = None):
+    """The student x lab status matrix the gradebook screen is built from.
+
+    Reuses the API's own builder, but re-checks classroom ownership first: the
+    REST route behind it gates on admin role alone (admin.py:1994), which is a
+    wider door than this connector should open.
+
+    Status is the recorded execution outcome - it means the code ran, not that
+    it is correct. A grade needs get_student_work on top of it.
+    """
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if classroom_id is None or classroom_id not in _taught_classroom_ids(db, admin):
+        return _NOT_YOURS
+
+    from app.routers.admin import get_classroom_gradebook as build_gradebook
+
+    book = await build_gradebook(
+        classroom_id=classroom_id,
+        template_id=None,
+        include_output=False,
+        db=db,
+        admin_user=admin,
+    )
+    return book.model_dump() if hasattr(book, "model_dump") else dict(book)
+
+
+# ── admin-only execution ────────────────────────────────────────
+
+
+async def run_code(db: Session, user_id: int, code: str = None, language: str = None,
+                   input_data: str = ""):
+    """Execute arbitrary code in the sandbox. Teaching staff only.
+
+    Students get `check_my_lab`, which runs only what they themselves saved.
+    This one takes code from the caller, so it is the one tool that could be
+    used to hand a student a verified answer - which is why it is gated on
+    admin rights, checked against the database on every call, and left out of
+    tools/list entirely for anyone else.
+    """
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+
+    if not code or not code.strip():
+        return {"error": "code is required."}
+    if not language:
+        return {"error": "language is required."}
+    language = language.lower().strip()
+    if language not in (settings.supported_languages or []):
+        return {"error": f"Unsupported language: {language}"}
+    if len(code.encode("utf-8")) > settings.max_code_size_kb * 1024:
+        return {"error": f"Code exceeds the {settings.max_code_size_kb}KB limit."}
+
+    logger.info("mcp run_code: admin %s executing %s (%d bytes)", admin.id, language, len(code))
+    try:
+        result = await microservice_executor.execute_code(
+            code=code, language=language, input_data=input_data or ""
+        )
+    except Exception as exc:
+        logger.warning("mcp run_code: execution failed: %s", exc)
+        return {"error": "The code runner is unavailable right now."}
+
+    return {
+        "status": result.get("status"),
+        "output": (result.get("output") or "")[:20_000],
+        "error": (result.get("error") or "")[:4_000],
+        "execution_time": result.get("execution_time"),
+    }
+
+
 # ── registry ────────────────────────────────────────────────────
 
 _LAB_ARG = {
@@ -484,8 +730,35 @@ _LAB_ARG = {
     "required": [],
 }
 _NO_ARGS = {"type": "object", "properties": {}, "required": []}
+_CLASSROOM_ARG = {
+    "type": "object",
+    "properties": {"classroom_id": {"type": "integer", "description": "Classroom id from list_my_classrooms."}},
+    "required": ["classroom_id"],
+}
+_STUDENT_ARG = {
+    "type": "object",
+    "properties": {"student_id": {"type": "integer", "description": "Student id from list_classroom_students."}},
+    "required": ["student_id"],
+}
+_STUDENT_LAB_ARG = {
+    "type": "object",
+    "properties": {
+        "student_id": {"type": "integer", "description": "Student id from list_classroom_students."},
+        "lab_id": {"type": "integer", "description": "Lab id."},
+    },
+    "required": ["student_id", "lab_id"],
+}
+_RUN_ARG = {
+    "type": "object",
+    "properties": {
+        "code": {"type": "string", "description": "Source to execute."},
+        "language": {"type": "string", "description": "One of the platform's supported languages, e.g. python."},
+        "input_data": {"type": "string", "description": "Optional stdin."},
+    },
+    "required": ["code", "language"],
+}
 
-TOOLS = [
+STUDENT_TOOLS = [
     (list_my_labs, _NO_ARGS,
      "List every lab this student can open, with how many times they have run each and whether they submitted it. Call this first when you do not know which lab they mean."),
     (get_lab_brief, _LAB_ARG,
@@ -514,34 +787,89 @@ TOOLS = [
      "Read which labs this student has already passed, so you can point them at a technique they have used before."),
 ]
 
-DEFINITIONS = [
-    {"name": fn.__name__, "description": description, "inputSchema": schema}
-    for fn, schema, description in TOOLS
+# Listed only for teaching staff. The filtering is a convenience for the model;
+# the actual control is require_admin() inside each function.
+ADMIN_TOOLS = [
+    (list_my_classrooms, _NO_ARGS,
+     "TEACHING STAFF. List the classrooms you teach, with student counts. Start here for anything about a class."),
+    (list_classroom_students, _CLASSROOM_ARG,
+     "TEACHING STAFF. The roster for one of your classrooms, with the student ids the per-student tools need."),
+    (get_classroom_report, _CLASSROOM_ARG,
+     "TEACHING STAFF. Cohort analytics for one of your classrooms: pass rates, the errors this group hits most, and where the class is stalling."),
+    (get_student_report, _STUDENT_ARG,
+     "TEACHING STAFF. One student's full record — progress, error patterns, lab history — for writing feedback or justifying a grade."),
+    (get_student_work, _STUDENT_LAB_ARG,
+     "TEACHING STAFF. One student's submitted code and run outcome for one lab. This is the artefact to grade; the gradebook only records whether it ran."),
+    (get_classroom_gradebook, _CLASSROOM_ARG,
+     "TEACHING STAFF. The student-by-lab status matrix for one of your classrooms. Status means the code ran, not that it is correct — pair it with get_student_work before awarding a grade."),
+    (run_code, _RUN_ARG,
+     "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
 ]
 
-# name -> (handler, whether it is lab-scoped). Read off the declared schema
-# rather than sniffed off the signature, so adding a tool cannot silently make
-# its lab_id argument disappear.
-_DISPATCH = {fn.__name__: (fn, schema is _LAB_ARG) for fn, schema, _ in TOOLS}
+TOOLS = STUDENT_TOOLS + ADMIN_TOOLS
+
+_ADMIN_TOOL_NAMES = {fn.__name__ for fn, _, _ in ADMIN_TOOLS}
+
+
+def _definition(fn, schema, description):
+    return {"name": fn.__name__, "description": description, "inputSchema": schema}
+
+
+STUDENT_DEFINITIONS = [_definition(*t) for t in STUDENT_TOOLS]
+ADMIN_DEFINITIONS = [_definition(*t) for t in ADMIN_TOOLS]
+
+
+def definitions_for(user_id: int) -> list:
+    """tools/list, filtered by role.
+
+    A student never sees the professor tools, so the model cannot be talked
+    into calling one. That is presentation, not protection — every admin
+    function re-checks rights against the database when it runs.
+    """
+    db = SessionLocal()
+    try:
+        listing = list(STUDENT_DEFINITIONS)
+        if require_admin(db, user_id):
+            listing += ADMIN_DEFINITIONS
+        return listing
+    finally:
+        db.close()
+
+
+_DISPATCH = {fn.__name__: (fn, schema) for fn, schema, _ in TOOLS}
+
+_INT_ARGS = {"lab_id", "classroom_id", "student_id"}
 
 
 async def call(name: str, arguments: dict, user_id: int) -> str:
-    """Run one tool for one student and return its JSON payload."""
+    """Run one tool for one caller and return its JSON payload."""
     entry = _DISPATCH.get(name)
     if not entry:
         return json.dumps({"error": f"Unknown tool: {name}"})
-    handler, takes_lab = entry
+    handler, schema = entry
 
-    lab_id = arguments.get("lab_id") if isinstance(arguments, dict) else None
-    if lab_id is not None:
-        try:
-            lab_id = int(lab_id)
-        except (TypeError, ValueError):
-            return json.dumps({"error": "lab_id must be an integer"})
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    # Only the arguments the tool declares are forwarded, so a client cannot
+    # reach a keyword the schema does not advertise.
+    kwargs = {}
+    for key in schema["properties"]:
+        if key not in arguments or arguments[key] is None:
+            continue
+        value = arguments[key]
+        if key in _INT_ARGS:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return json.dumps({"error": f"{key} must be an integer"})
+        kwargs[key] = value
 
     db = SessionLocal()
     try:
-        result = handler(db, user_id, lab_id) if takes_lab else handler(db, user_id)
+        if name in _ADMIN_TOOL_NAMES and not require_admin(db, user_id):
+            return json.dumps(_NOT_ADMIN)
+        result = handler(db, user_id, **kwargs)
         if inspect.isawaitable(result):
             result = await result
         return json.dumps(result, default=str)

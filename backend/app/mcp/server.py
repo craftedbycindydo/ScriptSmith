@@ -82,6 +82,16 @@ instead of fixing this instance.
 7. Mechanical errors are not a riddle. A typo, a missing colon, a bad indent — \
 name it and move on. Socratic questioning about a syntax error is just \
 withholding. get_teaching_plan tells you which mode you are in.
+
+8. If tools marked TEACHING STAFF are listed, you are talking to an instructor \
+about their own classrooms, not to a student about their own work. Rules 2-4 \
+are about teaching a learner and do not apply: give the instructor direct \
+answers, full analysis and draft grades on request. Two things still hold. \
+Ground every grade in the artefact — get_classroom_gradebook records only \
+whether code ran, so read get_student_work before awarding anything, and say \
+which evidence each mark rests on. And never produce text addressed to a \
+student that hands them a solution; an instructor asking for feedback to send \
+still wants the student taught, not answered.
 """
 
 _PROMPTS = {
@@ -113,6 +123,23 @@ _PROMPTS = {
             "my code produces, and what it expected. Ask me to predict what my code does on "
             "that input before you tell me what it actually did. Do not fix it for me and do "
             "not show me corrected code. End with 2-4 lettered options for what to look at next."
+        ),
+    },
+    "grade-a-lab": {
+        "description": "Teaching staff: draft grades for one lab from the actual submissions",
+        "arguments": [
+            {"name": "lab", "description": "Lab name or id", "required": False},
+            {"name": "classroom", "description": "Classroom name or id", "required": False},
+        ],
+        "text": (
+            "Draft grades for {lab} in {classroom}. Call list_my_classrooms, then "
+            "get_classroom_gradebook to see who submitted, then get_student_work for each "
+            "student you are grading — the gradebook only records whether the code ran, so "
+            "never award a mark from it alone. For each student give a proposed mark, the "
+            "specific evidence it rests on (which tests passed, what the code actually does), "
+            "and one line of feedback I could send them. Flag anyone whose result looks "
+            "inconsistent with their history rather than guessing at why. These are drafts "
+            "for me to review, not final grades."
         ),
     },
     "am-i-improving": {
@@ -267,7 +294,7 @@ async def mcp_endpoint(request: Request):
         return _result(request_id, {})
 
     if method == "tools/list":
-        return _result(request_id, {"tools": tools.DEFINITIONS})
+        return _result(request_id, {"tools": tools.definitions_for(user_id)})
 
     if method == "tools/call":
         name = params.get("name")

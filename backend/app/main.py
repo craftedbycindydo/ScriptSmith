@@ -183,7 +183,7 @@ async def startup_event():
     try:
         from sqlalchemy import text
         from app.database.base import engine, Base
-        from app.models import User, Template, TemplateDraft, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom, Resume
+        from app.models import User, Template, TemplateDraft, UserTemplate, CodeSubmission, Assignment, CollaborationSession, CollaborationParticipant, AdminSettings, Classroom, UserClassroom, Resume, OAuthClient
         
         # Create all tables at once using the Base metadata
         print("🔄 Creating database tables...")
@@ -334,14 +334,15 @@ async def load_routers():
     # clients are given, and RFC 9728 requires the metadata at
     # /.well-known/oauth-protected-resource, neither of which lives under /api.
     try:
-        from app.mcp import auth as mcp_auth, server as mcp_server
+        from app.mcp import auth as mcp_auth, oauth as mcp_oauth, server as mcp_server
         if mcp_auth.enabled():
             app.include_router(mcp_auth.router)
+            app.include_router(mcp_oauth.router)
             app.include_router(mcp_server.router)
             loaded_routers.append("mcp")
             print("  ✅ mcp connector loaded")
         else:
-            print("  ⏭️  mcp connector disabled (set zitadel_issuer + zitadel_mcp_project_id)")
+            print("  ⏭️  mcp connector disabled (set zitadel_issuer + zitadel_mcp_client_id)")
     except Exception as e:
         failed_routers.append(("mcp", str(e)))
         print(f"  ❌ mcp connector failed: {e}")
