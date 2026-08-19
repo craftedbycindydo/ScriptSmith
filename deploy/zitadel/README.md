@@ -12,7 +12,7 @@ It owns credentials only; `users.id` and all app data stay in the app database.
 
 The separate Login-V2 container is **not** used. Fresh v4 installs default
 `loginV2.required = true`; we set it to `false` after first boot so the built-in
-login serves at `/ui/login`. Verified working on v4.16.2.
+login serves at `/ui/login`. Verified working on v4.16.2 and v4.17.1.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ login serves at `/ui/login`. Verified working on v4.16.2.
 
 ## Service settings
 
-- **Image**: `ghcr.io/zitadel/zitadel:v4.16.2` — pin it; do not use `latest`
+- **Image**: `ghcr.io/zitadel/zitadel:v4.17.1` — pin it; do not use `latest`
 - **Start command**:
   `start-from-init --masterkeyFromEnv --tlsMode external`
   `tlsMode external` because Railway terminates TLS at the edge.
@@ -62,69 +62,90 @@ own auth until the JWKS swap is deployed. To abort: delete the Zitadel service.
 
 # MCP connector — Zitadel as the authorization server
 
-Students add `https://api.scriptingsmith.com/mcp` as a custom connector in
+Students add `https://backend-production-964a.up.railway.app/mcp` as a custom connector in
 Claude or ChatGPT and get a tutor with read access to their own labs, code and
 run history. The backend (`backend/app/mcp/`) is an OAuth 2.1 **resource
 server** only: it issues no tokens and stores no credentials. Zitadel runs the
 login, the consent and the client registration.
 
-## Why this needs a Zitadel upgrade
+## Why this needed a Zitadel upgrade
 
 MCP clients register themselves before any user exists, so the authorization
 server must support RFC 7591 dynamic client registration. Zitadel added it in
 [#12313](https://github.com/zitadel/zitadel/pull/12313), first released in
-**v4.17.0** (2026-08-12). Probed against the live instance on 2026-08-19, the
-pinned v4.16.2 has none of it:
+**v4.17.0** (2026-08-12). The instance ran v4.16.2, which had none of it:
 
-| Endpoint | v4.16.2 |
-|---|---|
-| `/.well-known/openid-configuration` | 200, but no `registration_endpoint` |
-| `/.well-known/oauth-authorization-server` | 404 |
-| `/oauth/v2/register` | 404 |
+| Endpoint | v4.16.2 | v4.17.1 + DCR enabled |
+|---|---|---|
+| `/.well-known/openid-configuration` → `registration_endpoint` | absent | `https://auth.scriptingsmith.com/oauth/v2/register` |
+| `/oauth/v2/register` (GET) | 404 | 405 (route exists, POST only) |
+| `POST /oauth/v2/register`, no auth | 404 | 201 |
 
-Until the upgrade lands, leave `ZITADEL_MCP_PROJECT_ID` empty; the backend then
-never registers the `/mcp` routes at all and nothing else changes.
+`/.well-known/oauth-authorization-server` is still 404 on v4.17.1 — Zitadel
+serves OIDC discovery only. See the trade-offs below.
 
-## Steps
+## What is already done
 
-1. **Upgrade Zitadel** to `ghcr.io/zitadel/zitadel:v4.17.1` or later. Same
-   caveats as any Zitadel bump: pin the tag, keep the master key, watch the
-   first boot log for a migration.
+Applied to production on 2026-08-19, in this order:
 
-2. **Enable dynamic client registration.** Off by default, and it must run in
-   open mode — Claude and ChatGPT register with no bearer token of their own:
+1. **Zitadel upgraded** to `ghcr.io/zitadel/zitadel:v4.17.1`. Boot log showed
+   `setup completed` then `server is listening`, no errors. The start command
+   is unchanged.
+
+2. **Dynamic client registration enabled**, instance-wide and unauthenticated:
 
    ```
-   PUT ${CUSTOM_DOMAIN}/v2/settings/security
-   Authorization: Bearer <IAM_OWNER token>
+   PUT https://auth.scriptingsmith.com/v2/settings/security
+   Authorization: Bearer <token with instance permission>
    Content-Type: application/json
 
-   {"dynamicClientRegistration": {"enabled": true, "allowUnauthenticated": true}}
+   {"embeddedIframe": {}, "dynamicClientRegistration": {"enabled": true, "allowUnauthenticated": true}}
    ```
 
-   Confirm with `curl -s -o /dev/null -w '%{http_code}' https://auth.scriptingsmith.com/oauth/v2/register`
-   — it should stop returning 404.
+   `embeddedIframe` is passed explicitly because the PUT writes the whole
+   settings object — omitting a field resets it. Read the current value with a
+   GET on the same path before changing anything here.
 
-3. **Find the DCR project id.** Zitadel auto-provisions a project named
-   `ZITADEL DCR` in the default organisation and puts every dynamically
-   registered client in it. Copy its id from the console.
+   The `MIGRATION_PAT` variable on the Zitadel service has enough permission
+   for this; it does not need a fresh IAM_OWNER token.
 
-4. **Set the backend variables** on the Railway `Backend` service:
+3. **DCR project provisioned.** Zitadel creates the `ZITADEL DCR` project
+   lazily, on the first registration — before that it does not appear in a
+   project search. It was forced into existence with a throwaway client
+   registration, which was then deleted through its RFC 7592
+   `registration_client_uri` (204, then 404 on re-read).
 
    ```
-   ZITADEL_MCP_PROJECT_ID=<the ZITADEL DCR project id>
-   API_BASE_URL=https://api.scriptingsmith.com
+   ZITADEL DCR project id: 387026207939496474
+   ```
+
+## Remaining steps
+
+4. **Deploy the backend** with `backend/app/mcp/` on it. Until then the code
+   simply is not there; setting the variables below changes nothing.
+
+5. **Set the backend variables** on the Railway `Backend` service:
+
+   ```
+   ZITADEL_MCP_PROJECT_ID=387026207939496474
+   API_BASE_URL=https://backend-production-964a.up.railway.app
    ```
 
    `ZITADEL_MCP_PROJECT_ID` is the audience the connector demands: a token
-   without it in `aud` is rejected. `API_BASE_URL` only builds the absolute
-   URLs in the discovery document, and falls back to the request host if unset.
+   without it in `aud` is rejected, and leaving it empty keeps `/mcp` and the
+   discovery routes unregistered. `API_BASE_URL` only builds the absolute URLs
+   in the discovery document, and falls back to the request host if unset.
 
-5. **Verify**, in order:
+   There is no `api.scriptingsmith.com`; the backend is served on its
+   Railway-generated domain, which is also what the frontend targets
+   (`VITE_API_BASE_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}`). A custom
+   API domain would make a friendlier connector URL, but nothing depends on it.
+
+6. **Verify**, in order:
 
    ```
-   curl -s https://api.scriptingsmith.com/.well-known/oauth-protected-resource/mcp
-   curl -si -X POST https://api.scriptingsmith.com/mcp \
+   curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-protected-resource/mcp
+   curl -si -X POST https://backend-production-964a.up.railway.app/mcp \
         -H 'content-type: application/json' \
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -20
    ```
@@ -134,20 +155,23 @@ never registers the `/mcp` routes at all and nothing else changes.
    `WWW-Authenticate: Bearer resource_metadata="..."`. Those two responses are
    the whole discovery chain a client walks.
 
-6. **Add the connector** in Claude (Settings → Connectors → Add custom
-   connector) or ChatGPT, with the URL `https://api.scriptingsmith.com/mcp`.
-   The student signs in through the normal Zitadel login. A Zitadel account
-   with no matching `users.zitadel_user_id` is refused — the connector reads
-   accounts, it never creates them.
+7. **Add the connector** in Claude (Settings → Connectors → Add custom
+   connector) or ChatGPT, with the URL
+   `https://backend-production-964a.up.railway.app/mcp`. The student signs in
+   through the normal Zitadel login. A Zitadel account with no matching
+   `users.zitadel_user_id` is refused — the connector reads accounts, it never
+   creates them.
 
 ## What this trades away
 
 Known and accepted, not oversights:
 
-- **Open registration is instance-wide.** Anyone who can reach
-  `auth.scriptingsmith.com` can register an OAuth client. They still cannot get
-  a token without a real user completing a real Zitadel login, but the client
-  name on the consent screen is attacker-controlled.
+- **Open registration is instance-wide, and it is now on.** Anyone who can
+  reach `auth.scriptingsmith.com` can register an OAuth client — verified, an
+  unauthenticated POST returns 201. They still cannot get a token without a
+  real user completing a real Zitadel login, but the client name on the consent
+  screen is attacker-controlled. Turn it off by PUTting the same settings
+  endpoint with `"enabled": false`.
 - **The audience is shared.** Zitadel puts every client id in the DCR project,
   plus the project id, into `aud`, and it
   [accepts but ignores](https://zitadel.com/docs/guides/integrate/dynamic-client-registration)
