@@ -23,7 +23,6 @@ What we owe the MCP spec (2025-06-18 §Authorization):
 """
 
 import logging
-from contextvars import ContextVar
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -36,10 +35,6 @@ from app.services.security import SecurityService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["MCP"])
-
-# Set per request by the MCP endpoint, read by the tool dispatcher. A tool can
-# therefore never be asked to act for a user the caller merely named.
-mcp_user_id: ContextVar[Optional[int]] = ContextVar("mcp_user_id", default=None)
 
 SCOPE = "mcp"
 

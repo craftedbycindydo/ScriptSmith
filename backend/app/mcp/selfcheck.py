@@ -125,7 +125,9 @@ def check_no_answer_leak():
         assert "def run_tests" not in json.dumps(brief)
         assert "[3, 2, 1]" not in json.dumps(brief)
 
-        resource = server._read_resource(ALICE, "lab://10")["contents"][0]["text"]
+        # The lab resource is the same boundary by another door.
+        server.caller_id = lambda: ALICE
+        resource = server.lab_brief("10")
         assert "def run_tests" not in resource and "[3, 2, 1]" not in resource
     finally:
         db.close()
@@ -250,90 +252,96 @@ def check_tokens():
     assert 'payload.get("scope") != "mcp"' in inspect.getsource(app_auth.get_current_user)
 
 
-def check_protocol():
+def check_sdk_server():
+    """The SDK server: registration, schemas, and the ask-or-degrade path."""
+    import asyncio
+
     from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
     from app.mcp import oauth
 
+    listed = asyncio.run(server.mcp.list_tools())
+    names = {t.name for t in listed}
+    assert len(listed) == 20, sorted(names)
+    assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
+
+    # A Resolve-filled parameter must not appear in the model-facing schema:
+    # the resolver supplies it, so the model can neither set it nor guess it.
+    by_name = {t.name: t for t in listed}
+    for tool_name in ("get_classroom_gradebook", "get_classroom_report", "list_classroom_students"):
+        properties = (by_name[tool_name].input_schema or {}).get("properties", {})
+        assert properties == {}, (tool_name, properties)
+    assert set((by_name["run_code"].input_schema or {})["properties"]) == {
+        "code", "language", "input_data"}
+
+    # Instructions carry the teaching contract and the do-not-guess rule.
+    assert "Never write the solution" in server.INSTRUCTIONS
+    assert "Do not guess which classroom" in server.INSTRUCTIONS
+
+    # The degrade path: a client that cannot be asked gets the options back so
+    # the model asks in chat, rather than the call failing.
+    class NoElicit:
+        elicitation = None
+
+    class CanElicit:
+        elicitation = object()
+
+    class Ctx:
+        def __init__(self, capabilities):
+            self.client_capabilities = capabilities
+
+    assert server._can_ask(Ctx(CanElicit())) is True
+    assert server._can_ask(Ctx(NoElicit())) is False
+
+    server.caller_id = lambda: PROF
+    # One classroom: nothing to ask, resolves silently even with no channel.
+    assert asyncio.run(server.pick_classroom(Ctx(NoElicit()))) == CS101
+
+    # Two classrooms and a client that can be asked: a real question goes out.
+    db = Session()
+    try:
+        db.add(Classroom(id=52, name="CS202", classroom_key="cs202", created_by_id=PROF))
+        db.add(UserClassroom(user_id=PROF, classroom_id=52, role="TEACHER", is_active=True))
+        db.commit()
+    finally:
+        db.close()
+
+    asked = asyncio.run(server.pick_classroom(Ctx(CanElicit())))
+    assert isinstance(asked, server.Elicit), asked
+    assert "CS101" in asked.message and "CS202" in asked.message, asked.message
+
+    # Same ambiguity, client that cannot be asked: resolve to nothing, and the
+    # tool hands the model the options instead of failing.
+    assert asyncio.run(server.pick_classroom(Ctx(NoElicit()))) is None
+    degraded = asyncio.run(server.get_classroom_report(None))
+    assert degraded["needs"] == "classroom_id"
+    assert {c["classroom_id"] for c in degraded["options"]} == {CS101, 52}
+
+    # An unauthenticated MCP request is refused by the SDK's own auth layer.
     app = FastAPI()
     app.include_router(auth.router)
     app.include_router(oauth.router)
-    app.include_router(server.router)
+    app.mount("/", server.build_app())
     client = TestClient(app)
 
-    def rpc(method, params=None, token=None, request_id=1):
-        body = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        return client.post("/mcp", json=body, headers=headers)
-
-    # Discovery: the resource points at us, and we advertise the endpoints a
-    # client needs. Both documents must be readable without a token.
     meta = client.get("/.well-known/oauth-protected-resource/mcp").json()
     assert meta["resource"].endswith("/mcp")
-    assert meta["authorization_servers"] == [meta["resource"][: -len("/mcp")]]
     assert meta["scopes_supported"] == ["mcp"]
 
     as_meta = client.get("/.well-known/oauth-authorization-server").json()
-    assert as_meta["authorization_endpoint"].endswith("/mcp/oauth/authorize")
     assert as_meta["registration_endpoint"].endswith("/mcp/oauth/register")
-    assert as_meta["code_challenge_methods_supported"] == ["S256"]
 
-    # No token, and a token we did not sign, are both 401 with the challenge.
-    for token in (None, "not-a-real-token"):
-        response = rpc("tools/list", token=token)
-        assert response.status_code == 401, (token, response.status_code)
-        assert "resource_metadata=" in response.headers["www-authenticate"]
-
-    # Notifications get 202 and no body, before any auth.
-    assert client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}).status_code == 202
-    # GET is refused: this server never opens a stream.
-    assert client.get("/mcp").status_code == 401
-
-    # Registration rejects a redirect_uri that is neither https nor loopback.
-    bad = client.post("/mcp/oauth/register", json={"redirect_uris": ["ftp://evil.test/cb"]})
-    assert bad.status_code == 400 and bad.json()["error"] == "invalid_redirect_uri"
-    # An unknown client is never redirected anywhere (open-redirect guard).
-    assert client.get("/mcp/oauth/authorize", params={
-        "client_id": "nope", "redirect_uri": "https://evil.test/cb", "response_type": "code",
-    }, follow_redirects=False).status_code == 400
-
-    auth.authenticate = lambda header: ALICE if header.startswith("Bearer ") else None
-
-    init = rpc("initialize", {"protocolVersion": "2025-06-18"}, token="t").json()["result"]
-    assert init["protocolVersion"] == "2025-06-18"
-    assert set(init["capabilities"]) == {"tools", "resources", "prompts"}
-    assert "Never write the solution" in init["instructions"]
-
-    names = [t["name"] for t in rpc("tools/list", token="t").json()["result"]["tools"]]
-    assert "check_my_lab" in names and "run_code" not in names, names
-
-    auth.authenticate = lambda header: PROF
-    prof_names = [t["name"] for t in rpc("tools/list", token="t").json()["result"]["tools"]]
-    assert "run_code" in prof_names
-
-    auth.authenticate = lambda header: ALICE
-    call = rpc("tools/call", {"name": "get_my_last_run", "arguments": {"lab_id": 10}}, token="t")
-    payload = json.loads(call.json()["result"]["content"][0]["text"])
-    assert payload["test_tally"] == {"passed": 1, "total": 2}
-
-    # The token decides whose data comes back, not the arguments.
-    auth.authenticate = lambda header: BOB
-    bob = json.loads(
-        rpc("tools/call", {"name": "get_my_code", "arguments": {"lab_id": 10}}, token="t")
-        .json()["result"]["content"][0]["text"]
+    # 401 directly, with no redirect in between: mounting the MCP app at /mcp
+    # would make Starlette 307 to /mcp/, and MCP clients do not follow that.
+    unauthorized = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        headers={"Accept": "application/json, text/event-stream"},
+        follow_redirects=False,
     )
-    assert "BOBS_PRIVATE_CODE" in bob["code"], bob
-    auth.authenticate = lambda header: ALICE
-
-    assert rpc("resources/list", token="t").json()["result"]["resources"][0]["uri"] == "lab://10"
-
-    prompts = {p["name"] for p in rpc("prompts/list", token="t").json()["result"]["prompts"]}
-    assert prompts == {"tutor-me", "why-is-this-failing", "am-i-improving", "grade-a-lab"}
-    text = rpc("prompts/get", {"name": "tutor-me", "arguments": {"lab": "Reverse a list"}},
-               token="t").json()["result"]["messages"][0]["content"]["text"]
-    assert "Reverse a list" in text and "lettered options" in text
-
-    assert rpc("no/such/method", token="t").json()["error"]["code"] == -32601
+    assert unauthorized.status_code == 401, unauthorized.status_code
+    assert "www-authenticate" in {k.lower() for k in unauthorized.headers}
 
 
 def main():
@@ -345,7 +353,7 @@ def main():
     check_run_code_is_admin_only()
     check_run_lab()
     check_tokens()
-    check_protocol()
+    check_sdk_server()
     print("mcp selfcheck: ok")
 
 

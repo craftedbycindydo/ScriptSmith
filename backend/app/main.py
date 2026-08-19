@@ -43,12 +43,46 @@ from app.routers import health
 # Lazy import heavy dependencies
 engine = None
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown.
+
+    This used to be @app.on_event("startup"). It had to become a lifespan
+    because the MCP SDK requires the host application to run its session
+    manager, and FastAPI silently ignores on_event handlers as soon as a
+    lifespan is supplied - so leaving the old hook in place would have stopped
+    table creation, migrations and router loading from ever running.
+    """
+    await _startup()
+
+    manager = _mcp_session_manager()
+    if manager is None:
+        yield
+    else:
+        async with manager.run():
+            yield
+
+
+def _mcp_session_manager():
+    """The MCP session manager, or None when the connector is switched off."""
+    try:
+        from app.mcp import auth as mcp_auth, server as mcp_server
+        return mcp_server.mcp.session_manager if mcp_auth.enabled() else None
+    except Exception as e:
+        print(f"⚠️  MCP session manager unavailable: {e}")
+        return None
+
+
 # Create FastAPI instance
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description="A secure online IDE platform with multi-language support and 2025 security standards",
-    debug=settings.debug
+    debug=settings.debug,
+    lifespan=lifespan
 )
 
 # WebSocket service is now separate - no more Socket.IO integration needed
@@ -173,9 +207,8 @@ app.add_middleware(
     compresslevel=6     # Balance between compression ratio and speed
 )
 
-# Create database tables and load routers - Combined startup event
-@app.on_event("startup")
-async def startup_event():
+# Create database tables and load routers - run from the lifespan above.
+async def _startup():
     print("🚀 Starting application...")
     
     # Try to initialize database connection and tables
@@ -338,7 +371,11 @@ async def load_routers():
         if mcp_auth.enabled():
             app.include_router(mcp_auth.router)
             app.include_router(mcp_oauth.router)
-            app.include_router(mcp_server.router)
+            # Mounted at the root, last: the MCP app carries its own /mcp
+            # route (mounting at /mcp would 307-redirect to /mcp/, which
+            # clients do not follow), and registering last means every route
+            # above still matches first - including /mcp/oauth/*.
+            app.mount("/", mcp_server.build_app())
             loaded_routers.append("mcp")
             print("  ✅ mcp connector loaded")
         else:

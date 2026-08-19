@@ -4,7 +4,7 @@ sqlalchemy==2.0.43
 psycopg2-binary==2.9.10
 redis==6.4.0
 python-multipart==0.0.20
-pydantic==2.10.5
+pydantic==2.12.5  # floor set by mcp 2.0
 pydantic-settings==2.7.0
 alembic==1.16.4
 python-dotenv==1.1.1
@@ -28,3 +28,7 @@ certifi
 
 # Spreadsheet export (gradebook .xlsx)
 openpyxl==3.1.2
+
+# MCP connector (app/mcp). Pulls anyio>=4.9, httpx2 and pyjwt; httpx and
+# uvicorn are unaffected and stay where they are.
+mcp==2.0.0

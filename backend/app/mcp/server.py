@@ -1,44 +1,55 @@
-"""The MCP endpoint: streamable HTTP, stateless, JSON responses.
+"""The MCP endpoint, on the official SDK (mcp 2.0).
 
-Hand-written rather than built on the `mcp` SDK. The SDK requires
-pydantic>=2.11 and httpx>=0.27.1, and this backend pins 2.10.5 / 0.27.0 across
-every router and model — bumping pydantic for one endpoint puts the whole API's
-validation in the blast radius of a feature nobody can reach yet. A stateless
-JSON-RPC server with no server-initiated streams is a short file, so it is one.
+Replaces a hand-rolled JSON-RPC handler. The reason for the swap is
+elicitation: a stateless POST-only server has no channel back to the client, so
+it can never ask a question mid-call — and asking is the point when a professor
+says "grade lab 2" and the model does not know which classroom they mean.
 
-ponytail: hand-rolled protocol handling, covering the six methods Claude and
-ChatGPT actually call. If a client starts needing SSE streams, sessions,
-sampling or elicitation, swap this file for `mcp.server.lowlevel.Server` and
-bump pydantic at the same time.
+How the asking works here. A tool parameter annotated with `Resolve(fn)` is
+filled by a function we write rather than by the model, and that function may
+return `Elicit(...)` to put a real question in front of the user. The SDK
+carries it over whatever the connection supports — a live `elicitation/create`
+on a legacy session, a multi-round-trip on 2026 clients — so one tool body
+serves both. The resolvers below pull the professor's actual classrooms first
+and only ask when there is genuine ambiguity; with one classroom they answer
+silently.
 
-Every request is authenticated on its own (MCP requires the bearer token on
-every HTTP request, even within one logical session), so there is no session
-state to fork-share under gunicorn.
+Multi-worker safety: `RequestStateSecurity` seals the round-trip state with a
+shared key, so a resumed call can land on any worker. Without it the connector
+would need sticky routing, which Railway does not give us. The transport stays
+`stateless_http=True` for the same reason.
+
+The teaching contract lives in INSTRUCTIONS below and, more durably, in the
+data boundary in tools.py: no tool returns a worked solution, and the only
+tool that runs student-supplied code is gated on teaching staff.
 """
 
-import json
 import logging
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
+from mcp.server import MCPServer
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.mcpserver import (
+    AcceptedElicitation,
+    CancelledElicitation,
+    Context,
+    DeclinedElicitation,
+    Elicit,
+    ElicitationResult,
+    RequestStateSecurity,
+    Resolve,
+)
+
+from app.core.config import settings
 from app.database.base import SessionLocal
 from app.mcp import auth, extraction, tools
-from app.services.template_service import TemplateService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["MCP"])
-
-SUPPORTED_PROTOCOLS = ["2025-06-18", "2025-03-26"]
-SERVER_INFO = {"name": "Scripting Smith", "version": "1.0.0"}
-MAX_BODY_BYTES = 256 * 1024
-
-# Delivered in the initialize response. This is the whole teaching contract:
-# the model driving the conversation belongs to Claude or ChatGPT, so the
-# behaviour we want is asked for here and made hard to violate in tools.py.
-# Neither half is a guarantee, and the honest version of that is: the tools
-# will not hand over an answer, and the instructions ask the model not to.
 INSTRUCTIONS = """\
 Scripting Smith is this student's programming course. You are their tutor, and \
 you are talking to one student about their own labs, their own code and their \
@@ -92,244 +103,413 @@ whether code ran, so read get_student_work before awarding anything, and say \
 which evidence each mark rests on. And never produce text addressed to a \
 student that hands them a solution; an instructor asking for feedback to send \
 still wants the student taught, not answered.
+
+9. Do not guess which classroom or which lab an instructor means. The \
+classroom-scoped tools ask them directly when it is ambiguous — call the tool \
+without the id and let the question reach the user rather than picking one and \
+grading the wrong cohort.
 """
 
-_PROMPTS = {
-    "tutor-me": {
-        "description": "Work through the lab you are stuck on, without being given the answer",
-        "arguments": [
-            {
-                "name": "lab",
-                "description": "Lab name or id. Leave blank to use the one you last ran.",
-                "required": False,
-            }
-        ],
-        "text": (
-            "Help me with {lab}. Start by calling get_teaching_plan, get_lab_brief, "
-            "get_my_code and get_my_last_run so you know where I actually am. Then tell me "
-            "what you can see about where I am stuck — without fixing it — and ask me one "
-            "question that gets at the misunderstanding rather than the symptom. "
-            "Finish with 2-4 lettered options I can pick from. Do not write the solution or "
-            "any part of it, even if I ask you to; when I have changed my code and saved it, "
-            "call check_my_lab and react to what actually happened."
-        ),
-    },
-    "why-is-this-failing": {
-        "description": "Understand why a test is failing, in terms of your own code",
-        "arguments": [],
-        "text": (
-            "Call get_my_last_run and get_test_progress, then get_my_code. Pick the single "
-            "most informative failing test and walk me through it: what input it uses, what "
-            "my code produces, and what it expected. Ask me to predict what my code does on "
-            "that input before you tell me what it actually did. Do not fix it for me and do "
-            "not show me corrected code. End with 2-4 lettered options for what to look at next."
-        ),
-    },
-    "grade-a-lab": {
-        "description": "Teaching staff: draft grades for one lab from the actual submissions",
-        "arguments": [
-            {"name": "lab", "description": "Lab name or id", "required": False},
-            {"name": "classroom", "description": "Classroom name or id", "required": False},
-        ],
-        "text": (
-            "Draft grades for {lab} in {classroom}. Call list_my_classrooms, then "
-            "get_classroom_gradebook to see who submitted, then get_student_work for each "
-            "student you are grading — the gradebook only records whether the code ran, so "
-            "never award a mark from it alone. For each student give a proposed mark, the "
-            "specific evidence it rests on (which tests passed, what the code actually does), "
-            "and one line of feedback I could send them. Flag anyone whose result looks "
-            "inconsistent with their history rather than guessing at why. These are drafts "
-            "for me to review, not final grades."
-        ),
-    },
-    "am-i-improving": {
-        "description": "See the pattern in your own mistakes across labs",
-        "arguments": [],
-        "text": (
-            "Call get_my_progress, get_my_error_patterns and get_my_completed_labs. Show me "
-            "what my mistakes have in common rather than listing them, name the one habit "
-            "that would help me most to break, and connect it to a lab I already passed. "
-            "End with 2-4 lettered options for how I could practise that."
-        ),
-    },
+
+# ── authentication ──────────────────────────────────────────────
+
+
+class ConnectorTokenVerifier(TokenVerifier):
+    """Bridges the SDK's auth to ours: `auth.authenticate` is still the gate."""
+
+    async def verify_token(self, token: str) -> Optional[AccessToken]:
+        user_id = auth.authenticate(f"Bearer {token}")
+        if user_id is None:
+            return None
+        return AccessToken(
+            token=token,
+            client_id=str(user_id),
+            subject=str(user_id),
+            scopes=[auth.SCOPE],
+        )
+
+
+def caller_id() -> Optional[int]:
+    """The authenticated user, from the token and never from an argument."""
+    token = get_access_token()
+    if token is None or token.subject is None:
+        return None
+    try:
+        return int(token.subject)
+    except ValueError:
+        return None
+
+
+# The connector's authorization server is this backend (app/mcp/oauth.py),
+# which fronts Zitadel for the login. api_base_url has to be concrete here —
+# AuthSettings needs absolute URLs, unlike the request-host fallback elsewhere.
+_BASE = (settings.api_base_url or "http://localhost:8000").rstrip("/")
+
+mcp = MCPServer(
+    "Scripting Smith",
+    version="2.0.0",
+    instructions=INSTRUCTIONS,
+    token_verifier=ConnectorTokenVerifier(),
+    auth=AuthSettings(
+        issuer_url=_BASE,
+        resource_server_url=f"{_BASE}/mcp",
+        required_scopes=[auth.SCOPE],
+    ),
+    # Seals multi-round-trip state with the app secret so a resumed call can be
+    # picked up by any worker. Same key everywhere, same server name.
+    request_state_security=RequestStateSecurity(keys=[settings.secret_key]),
+)
+
+
+# ── elicitation: ask rather than guess ──────────────────────────
+
+
+class ClassroomChoice(BaseModel):
+    classroom_id: int = Field(description="Which classroom this is about")
+
+
+class LabChoice(BaseModel):
+    lab_id: int = Field(description="Which lab this is about")
+
+
+def _can_ask(ctx: Context) -> bool:
+    """Whether this client can be shown a question at all.
+
+    Not every client can. A 2025-era client is asked over a live channel that
+    a stateless deployment does not have, and the SDK treats a client that
+    cannot be asked as a *failed call*, not a decline. So we check first and,
+    when the answer is no, return nothing — the tool then hands the model the
+    list of options and the model asks in chat instead. Either way the person
+    gets asked; only the widget changes.
+    """
+    try:
+        capabilities = ctx.client_capabilities
+        return bool(capabilities and capabilities.elicitation is not None)
+    except Exception:
+        return False
+
+
+def _my_classrooms(user_id: int) -> list:
+    db = SessionLocal()
+    try:
+        return (tools.list_my_classrooms(db, user_id) or {}).get("classrooms") or []
+    finally:
+        db.close()
+
+
+def _my_labs(user_id: int) -> list:
+    db = SessionLocal()
+    try:
+        return (tools.list_my_labs(db, user_id) or {}).get("labs") or []
+    finally:
+        db.close()
+
+
+async def pick_classroom(ctx: Context) -> Any:
+    """Resolve the classroom, asking only when it is genuinely ambiguous.
+
+    Pulls the instructor's real classrooms first, so the question is answerable
+    rather than a bare "which one?". One classroom means there is nothing to
+    ask and it resolves silently; several means the model must not guess, and
+    picking wrong would grade the wrong cohort.
+    """
+    user_id = caller_id()
+    if user_id is None:
+        return None
+
+    classrooms = _my_classrooms(user_id)
+    if not classrooms:
+        return None
+    if len(classrooms) == 1:
+        return classrooms[0]["classroom_id"]
+    if not _can_ask(ctx):
+        return None
+
+    options = ", ".join(f"{c['name']} (id {c['classroom_id']}, {c['students']} students)"
+                        for c in classrooms)
+    return Elicit(f"Which classroom? You teach: {options}.", ClassroomChoice)
+
+
+async def pick_lab(ctx: Context) -> Any:
+    """Resolve the lab the same way: silent when there is only one candidate."""
+    user_id = caller_id()
+    if user_id is None:
+        return None
+
+    labs = _my_labs(user_id)
+    if not labs:
+        return None
+    if len(labs) == 1:
+        return labs[0]["lab_id"]
+    if not _can_ask(ctx):
+        return None
+
+    options = ", ".join(f"{lab['name']} (id {lab['lab_id']})" for lab in labs[:25])
+    return Elicit(f"Which lab? Available: {options}.", LabChoice)
+
+
+def _resolved(value: Any, field: str) -> Optional[int]:
+    """Unwrap whatever a resolver produced into an id, or None.
+
+    A resolver returns either a plain id (no question was needed) or an
+    elicitation result (the user was asked). Declining or cancelling is a real
+    answer — it means stop, not fall back to a guess.
+    """
+    if isinstance(value, AcceptedElicitation):
+        return getattr(value.data, field, None)
+    if isinstance(value, (DeclinedElicitation, CancelledElicitation)):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _ask_in_chat(kind: str, options: list) -> dict:
+    """The degrade path: hand the model the options so it asks in chat."""
+    return {
+        "needs": kind,
+        "options": options,
+        "message": f"Ask which {kind.replace('_', ' ')} this is about, then call again with it.",
+    }
+
+
+_NO_CALLER = {"error": "Unauthorized"}
+
+
+# ── tool registration ───────────────────────────────────────────
+#
+# The bodies stay in tools.py, where they take (db, user_id, ...) and are
+# covered by the self-check. Registered here through thin wrappers whose own
+# signatures are what the model sees, so `db` is never a tool argument.
+
+
+def _session(fn, *args):
+    db = SessionLocal()
+    try:
+        return fn(db, *args)
+    finally:
+        db.close()
+
+
+def _register_plain(core, description: str, shape: str) -> None:
+    """Wrap one (db, user_id, ...) function as a model-facing tool."""
+    if shape == "none":
+        async def tool():
+            user_id = caller_id()
+            return _session(core, user_id) if user_id else _NO_CALLER
+    elif shape == "lab":
+        async def tool(lab_id: int | None = None):
+            user_id = caller_id()
+            return _session(core, user_id, lab_id) if user_id else _NO_CALLER
+    elif shape == "student":
+        async def tool(student_id: int):
+            user_id = caller_id()
+            return _session(core, user_id, student_id) if user_id else _NO_CALLER
+    elif shape == "student_lab":
+        async def tool(student_id: int, lab_id: int):
+            user_id = caller_id()
+            return _session(core, user_id, student_id, lab_id) if user_id else _NO_CALLER
+    else:
+        raise ValueError(f"unknown shape {shape}")
+
+    tool.__name__ = core.__name__
+    tool.__doc__ = description
+    mcp.add_tool(tool, name=core.__name__, description=description)
+
+
+_SHAPES = {
+    "list_my_labs": "none",
+    "get_my_error_patterns": "none",
+    "get_my_progress": "none",
+    "get_my_completed_labs": "none",
+    "list_my_classrooms": "none",
+    "get_student_report": "student",
+    "get_student_work": "student_lab",
 }
 
 
-# ── JSON-RPC plumbing ───────────────────────────────────────────
+def _install_tools() -> None:
+    elicited = {"list_classroom_students", "get_classroom_report",
+                "get_classroom_gradebook", "check_my_lab", "run_code"}
+    for core, _schema, description in tools.STUDENT_TOOLS + tools.ADMIN_TOOLS:
+        if core.__name__ in elicited:
+            continue
+        _register_plain(core, description, _SHAPES.get(core.__name__, "lab"))
 
 
-def _result(request_id, payload):
-    return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": payload})
+_install_tools()
 
 
-def _error(request_id, code, message, status=200):
-    return JSONResponse(
-        {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}},
-        status_code=status,
-    )
+# ── tools that ask ──────────────────────────────────────────────
 
 
-def _unauthorized(request: Request):
-    """RFC 9728 §5.1: point the client at the metadata that names Zitadel."""
-    return JSONResponse(
-        {"error": "unauthorized", "error_description": "A Zitadel access token is required"},
-        status_code=401,
-        headers={"WWW-Authenticate": f'Bearer resource_metadata="{auth.metadata_url(request)}"'},
-    )
-
-
-# ── method handlers ─────────────────────────────────────────────
-
-
-def _initialize(params: dict) -> dict:
-    requested = (params or {}).get("protocolVersion")
-    return {
-        "protocolVersion": requested if requested in SUPPORTED_PROTOCOLS else SUPPORTED_PROTOCOLS[0],
-        "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
-        "serverInfo": SERVER_INFO,
-        "instructions": INSTRUCTIONS,
-    }
-
-
-def _list_resources(user_id: int) -> dict:
-    """The student's labs, so a client can attach a brief natively."""
-    db = SessionLocal()
-    try:
-        return {
-            "resources": [
-                {
-                    "uri": f"lab://{lab.id}",
-                    "name": lab.name,
-                    "description": f"{lab.language} lab brief",
-                    "mimeType": "text/markdown",
-                }
-                for lab in TemplateService.get_templates_for_user(db, user_id)
-            ]
-        }
-    finally:
-        db.close()
-
-
-def _read_resource(user_id: int, uri: str) -> dict:
-    def contents(text: str) -> dict:
-        return {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": text}]}
-
-    if not uri.startswith("lab://"):
-        return contents("Unknown resource.")
-
-    try:
-        lab_id = int(uri[len("lab://"):])
-    except ValueError:
-        return contents("Unknown resource.")
-
-    db = SessionLocal()
-    try:
-        lab = tools._accessible_lab(db, user_id, lab_id)
-        if not lab:
-            return contents("Lab not found or not available to this student.")
-
-        # Brief and test names only — never the harness. Same boundary as
-        # get_lab_brief, for the same reason.
-        names = extraction.extract_test_names(lab.code_content)
-        body = [f"# {lab.name}", "", f"Language: {lab.language}", "", extraction.extract_brief(lab.code_content)]
-        if names:
-            body += ["", "## Tests", ""] + [f"- {name}" for name in names]
-        return contents("\n".join(body))
-    finally:
-        db.close()
-
-
-def _get_prompt(name: str, arguments: dict) -> dict:
-    prompt = _PROMPTS[name]
-    lab = (arguments or {}).get("lab") or "the lab I last ran"
-    return {
-        "description": prompt["description"],
-        "messages": [
-            {
-                "role": "user",
-                "content": {"type": "text", "text": prompt["text"].format(lab=lab)},
-            }
-        ],
-    }
-
-
-# ── endpoint ────────────────────────────────────────────────────
-
-
-@router.post("/mcp")
-async def mcp_endpoint(request: Request):
-    if not auth.enabled():
-        return JSONResponse({"error": "not_found"}, status_code=404)
-
-    raw = await request.body()
-    if len(raw) > MAX_BODY_BYTES:
-        return JSONResponse({"error": "payload_too_large"}, status_code=413)
-
-    try:
-        message = json.loads(raw)
-    except ValueError:
-        return _error(None, -32700, "Parse error", status=400)
-    if not isinstance(message, dict):
-        return _error(None, -32600, "Invalid Request", status=400)
-
-    request_id = message.get("id")
-    method = message.get("method")
-    params = message.get("params") or {}
-
-    # A notification carries no id and expects no body. Answered before the
-    # token check on purpose: it does no work and returns no data, so there is
-    # nothing to protect, and notifications/initialized arriving a moment
-    # before a client refreshes its token should not restart the OAuth dance.
-    if request_id is None:
-        return Response(status_code=202)
-
-    user_id = auth.authenticate(request.headers.get("authorization", ""))
+@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "list_classroom_students"))
+async def list_classroom_students(
+    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
+) -> Any:
+    user_id = caller_id()
     if user_id is None:
-        return _unauthorized(request)
-
-    if method == "initialize":
-        return _result(request_id, _initialize(params))
-
-    if method == "ping":
-        return _result(request_id, {})
-
-    if method == "tools/list":
-        return _result(request_id, {"tools": tools.definitions_for(user_id)})
-
-    if method == "tools/call":
-        name = params.get("name")
-        payload = await tools.call(name, params.get("arguments") or {}, user_id)
-        return _result(request_id, {"content": [{"type": "text", "text": payload}], "isError": False})
-
-    if method == "resources/list":
-        return _result(request_id, _list_resources(user_id))
-
-    if method == "resources/read":
-        return _result(request_id, _read_resource(user_id, params.get("uri") or ""))
-
-    if method == "prompts/list":
-        return _result(request_id, {
-            "prompts": [
-                {"name": name, "description": p["description"], "arguments": p["arguments"]}
-                for name, p in _PROMPTS.items()
-            ]
-        })
-
-    if method == "prompts/get":
-        name = params.get("name")
-        if name not in _PROMPTS:
-            return _error(request_id, -32602, f"Unknown prompt: {name}")
-        return _result(request_id, _get_prompt(name, params.get("arguments") or {}))
-
-    return _error(request_id, -32601, f"Method not found: {method}")
+        return _NO_CALLER
+    classroom_id = _resolved(classroom, "classroom_id")
+    if classroom_id is None:
+        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
+    return _session(tools.list_classroom_students, user_id, classroom_id)
 
 
-@router.get("/mcp")
-@router.delete("/mcp")
-async def mcp_no_stream(request: Request):
-    """Stateless server: no server-initiated SSE stream and no session to end."""
-    if not auth.enabled():
-        return JSONResponse({"error": "not_found"}, status_code=404)
-    if auth.authenticate(request.headers.get("authorization", "")) is None:
-        return _unauthorized(request)
-    return Response(status_code=405, headers={"Allow": "POST"})
+@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_report"))
+async def get_classroom_report(
+    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
+) -> Any:
+    user_id = caller_id()
+    if user_id is None:
+        return _NO_CALLER
+    classroom_id = _resolved(classroom, "classroom_id")
+    if classroom_id is None:
+        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
+    return _session(tools.get_classroom_report, user_id, classroom_id)
+
+
+@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_gradebook"))
+async def get_classroom_gradebook(
+    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
+) -> Any:
+    """Asks which classroom rather than grading the wrong cohort."""
+    user_id = caller_id()
+    if user_id is None:
+        return _NO_CALLER
+    classroom_id = _resolved(classroom, "classroom_id")
+    if classroom_id is None:
+        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
+
+    db = SessionLocal()
+    try:
+        return await tools.get_classroom_gradebook(db, user_id, classroom_id)
+    finally:
+        db.close()
+
+
+@mcp.tool(description=next(d for f, _, d in tools.STUDENT_TOOLS if f.__name__ == "check_my_lab"))
+async def check_my_lab(
+    lab: Annotated[ElicitationResult[LabChoice] | int | None, Resolve(pick_lab)] = None,
+) -> Any:
+    user_id = caller_id()
+    if user_id is None:
+        return _NO_CALLER
+    lab_id = _resolved(lab, "lab_id")
+
+    db = SessionLocal()
+    try:
+        return await tools.check_my_lab(db, user_id, lab_id)
+    finally:
+        db.close()
+
+
+@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "run_code"))
+async def run_code(code: str, language: str, input_data: str = "") -> Any:
+    user_id = caller_id()
+    if user_id is None:
+        return tools._NOT_ADMIN
+
+    db = SessionLocal()
+    try:
+        return await tools.run_code(db, user_id, code, language, input_data)
+    finally:
+        db.close()
+
+
+# ── resources and prompts ───────────────────────────────────────
+
+
+@mcp.resource("lab://{lab_id}", name="Lab brief", mime_type="text/markdown")
+def lab_brief(lab_id: str) -> str:
+    """A lab's brief and test names — never the harness."""
+    user_id = caller_id()
+    if user_id is None:
+        return "Unauthorized"
+    try:
+        wanted = int(lab_id)
+    except ValueError:
+        return "Unknown resource."
+
+    db = SessionLocal()
+    try:
+        lab = tools._accessible_lab(db, user_id, wanted)
+        if not lab:
+            return "Lab not found or not available to this student."
+        names = extraction.extract_test_names(lab.code_content)
+        body = [f"# {lab.name}", "", f"Language: {lab.language}", "",
+                extraction.extract_brief(lab.code_content)]
+        if names:
+            body += ["", "## Tests", ""] + [f"- {n}" for n in names]
+        return "\n".join(body)
+    finally:
+        db.close()
+
+
+@mcp.prompt(description="Work through the lab you are stuck on, without being given the answer")
+def tutor_me(lab: str = "the lab I last ran") -> str:
+    return (
+        f"Help me with {lab}. Start by calling get_teaching_plan, get_lab_brief, "
+        "get_my_code and get_my_last_run so you know where I actually am. Then tell me "
+        "what you can see about where I am stuck — without fixing it — and ask me one "
+        "question that gets at the misunderstanding rather than the symptom. "
+        "Finish with 2-4 lettered options I can pick from. Do not write the solution or "
+        "any part of it, even if I ask you to; when I have changed my code and saved it, "
+        "call check_my_lab and react to what actually happened."
+    )
+
+
+@mcp.prompt(description="Understand why a test is failing, in terms of your own code")
+def why_is_this_failing() -> str:
+    return (
+        "Call get_my_last_run and get_test_progress, then get_my_code. Pick the single "
+        "most informative failing test and walk me through it: what input it uses, what "
+        "my code produces, and what it expected. Ask me to predict what my code does on "
+        "that input before you tell me what it actually did. Do not fix it for me and do "
+        "not show me corrected code. End with 2-4 lettered options for what to look at next."
+    )
+
+
+@mcp.prompt(description="See the pattern in your own mistakes across labs")
+def am_i_improving() -> str:
+    return (
+        "Call get_my_progress, get_my_error_patterns and get_my_completed_labs. Show me "
+        "what my mistakes have in common rather than listing them, name the one habit "
+        "that would help me most to break, and connect it to a lab I already passed. "
+        "End with 2-4 lettered options for how I could practise that."
+    )
+
+
+@mcp.prompt(description="Teaching staff: draft grades for one lab from the actual submissions")
+def grade_a_lab(lab: str = "the lab I name") -> str:
+    return (
+        f"Draft grades for {lab}. Call get_classroom_gradebook — if you are not certain "
+        "which classroom or lab I mean, call it without an id and let it ask me rather "
+        "than picking one. Then call get_student_work for each student you are grading: "
+        "the gradebook only records whether the code ran, so never award a mark from it "
+        "alone. For each student give a proposed mark, the specific evidence it rests on "
+        "(which tests passed, what the code actually does), and one line of feedback I "
+        "could send them. Flag anyone whose result looks inconsistent with their history "
+        "rather than guessing at why. These are drafts for me to review, not final grades."
+    )
+
+
+def build_app():
+    """The ASGI app mounted by main.py.
+
+    Stateless so any worker can serve any request; the round-trip state that
+    elicitation needs rides in a sealed token instead of a session.
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    host = (settings.api_base_url or "").replace("https://", "").replace("http://", "").strip("/")
+    security = TransportSecuritySettings(
+        allowed_hosts=[host, f"{host}:*"] if host else ["*"],
+        allowed_origins=["*"],
+    )
+    # The endpoint keeps its full path and the app is mounted at the root, so
+    # POST /mcp is served directly. Mounting at "/mcp" instead would make
+    # Starlette 307-redirect /mcp to /mcp/, and MCP clients do not follow it.
+    return mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        transport_security=security,
+    )
