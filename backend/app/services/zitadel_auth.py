@@ -50,7 +50,13 @@ class ZitadelAuth:
             return None
 
     @classmethod
-    def verify(cls, token: str) -> Optional[Dict[str, Any]]:
+    def verify(cls, token: str, audience: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Verify a Zitadel access token, optionally against a different audience.
+
+        The MCP connector passes its own project id here: its tokens are minted
+        for dynamically registered clients, so they never carry the web app's
+        client id in `aud`.
+        """
         if not cls.enabled():
             return None
 
@@ -58,7 +64,7 @@ class ZitadelAuth:
         if not jwks:
             return None
 
-        audience = getattr(settings, "zitadel_client_id", None) or None
+        audience = audience or getattr(settings, "zitadel_client_id", None) or None
         try:
             return jwt.decode(
                 token,

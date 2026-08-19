@@ -330,6 +330,22 @@ async def load_routers():
             import traceback
             traceback.print_exc()
     
+    # MCP connector. Root-level paths on purpose: /mcp is the connector URL
+    # clients are given, and RFC 9728 requires the metadata at
+    # /.well-known/oauth-protected-resource, neither of which lives under /api.
+    try:
+        from app.mcp import auth as mcp_auth, server as mcp_server
+        if mcp_auth.enabled():
+            app.include_router(mcp_auth.router)
+            app.include_router(mcp_server.router)
+            loaded_routers.append("mcp")
+            print("  ✅ mcp connector loaded")
+        else:
+            print("  ⏭️  mcp connector disabled (set zitadel_issuer + zitadel_mcp_project_id)")
+    except Exception as e:
+        failed_routers.append(("mcp", str(e)))
+        print(f"  ❌ mcp connector failed: {e}")
+
     print(f"\n🎯 Router Loading Summary:")
     print(f"  ✅ Loaded: {len(loaded_routers)} routers - {', '.join(loaded_routers)}")
     if failed_routers:

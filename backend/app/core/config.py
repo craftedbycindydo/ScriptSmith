@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     zitadel_issuer: str = ""
     zitadel_client_id: str = ""
 
+    # MCP connector. Empty project id disables the /mcp endpoint entirely.
+    # Set it to the Zitadel project whose id must appear in an access token's
+    # `aud` for the connector to accept it - see deploy/zitadel/README.md.
+    zitadel_mcp_project_id: str = ""
+
+    # Absolute public URL of this API, used to build the RFC 9728 metadata that
+    # MCP clients fetch. Falls back to the request host when unset.
+    api_base_url: str = ""
+
     # Base URL used to build links in outgoing emails.
     frontend_url: str = "https://www.scriptingsmith.com"
 
