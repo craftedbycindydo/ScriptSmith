@@ -38,6 +38,8 @@ auth.SessionLocal = Session
 tools.SessionLocal = Session
 server.SessionLocal = Session
 
+from datetime import datetime, timezone  # noqa: E402
+
 from app.models.classroom import Classroom, UserClassroom  # noqa: E402
 from app.models.code_submission import CodeSubmission  # noqa: E402
 from app.models.template import Template  # noqa: E402
@@ -79,6 +81,10 @@ def seed():
         UserClassroom(user_id=BOB, classroom_id=CS101, role="STUDENT", is_active=True),
         Template(id=10, name="Reverse a list", language="python",
                  code_content=LAB_CODE, created_by=PROF, is_active=True),
+        # Not released yet: staff may open it, students must not see it.
+        Template(id=11, name="Next week's lab", language="python",
+                 code_content=LAB_CODE, created_by=PROF, is_active=True,
+                 visible_from=datetime(2099, 1, 1, tzinfo=timezone.utc)),
         CodeSubmission(id=100, user_id=ALICE, template_id=10, language="python",
                        code="def reverse(items):\n    return items\n",
                        output="PASS handles the empty list\nFAIL reverses three items\n"
@@ -111,6 +117,25 @@ def check_scoping():
         assert plan["teaching_mode"] == "conceptual"
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
+    finally:
+        db.close()
+
+
+def check_unreleased_labs():
+    """A lab that has not been released is staff-only."""
+    db = Session()
+    try:
+        student_labs = {lab["lab_id"] for lab in tools.list_my_labs(db, ALICE)["labs"]}
+        staff_labs = {lab["lab_id"] for lab in tools.list_my_labs(db, PROF)["labs"]}
+
+        assert 10 in student_labs and 10 in staff_labs, (student_labs, staff_labs)
+        assert 11 not in student_labs, "a student was shown an unreleased lab"
+        assert 11 in staff_labs, "staff cannot see a lab they have not released yet"
+
+        # ...and the same rule holds when the id is named directly, so a
+        # student cannot reach it by guessing.
+        assert tools.get_lab_brief(db, ALICE, 11) == tools._NO_LAB
+        assert tools.get_lab_brief(db, PROF, 11)["name"] == "Next week's lab"
     finally:
         db.close()
 
@@ -436,6 +461,7 @@ def main():
     seed()
     check_extraction()
     check_scoping()
+    check_unreleased_labs()
     check_no_answer_leak()
     check_role_boundary()
     check_run_code_is_admin_only()
