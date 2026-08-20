@@ -1,26 +1,26 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import axios from 'axios';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { config } from '../config/env';
+import { api } from '../services/api';
+import { useAuthStore } from '../store/authStore';
 import { Loader2, Plug, XCircle } from 'lucide-react';
 
 /**
  * Consent screen for the MCP connector (Claude, ChatGPT).
  *
- * The backend sends the person here after Zitadel has signed them in, with an
- * opaque ?request=<id>. That id is the whole capability - identity was already
- * established on the Zitadel leg - so this page does not need an app session,
- * which is why it works even in the fresh browser profile an AI client opens.
- *
- * On Approve the backend turns the request into an authorization code and
- * hands back the URL to bounce to, which always goes to the client's
- * pre-registered redirect_uri.
+ * The backend sends the person here with an opaque ?request=<id>. That id says
+ * *which* connection is being approved; it is not identity. Who is approving
+ * comes from their Scripting Smith session, so a signed-out visitor is sent to
+ * the app's own login first and comes straight back here. Whether they log in
+ * with a password or with Google is the login page's business — the connector
+ * never routes anyone to an identity provider itself.
  */
 
 // The API base is '/api'-suffixed in dev and bare in production; these OAuth
-// routes sit at the root either way.
+// routes sit at the root either way. An absolute URL overrides axios' baseURL
+// while still running its auth and refresh interceptors.
 const API_ORIGIN = config.apiBaseUrl.replace(/\/api\/?$/, '');
 
 interface ConnectRequest {
@@ -34,6 +34,7 @@ type Status = 'loading' | 'ready' | 'approving' | 'expired' | 'error';
 export default function MCPConnectPage() {
   const [searchParams] = useSearchParams();
   const requestId = searchParams.get('request');
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const [status, setStatus] = useState<Status>('loading');
   const [details, setDetails] = useState<ConnectRequest | null>(null);
@@ -42,25 +43,28 @@ export default function MCPConnectPage() {
   const framed = typeof window !== 'undefined' && window.top !== window.self;
 
   useEffect(() => {
-    if (!requestId || framed) {
-      setStatus('error');
-      return;
-    }
-    axios
+    if (!isAuthenticated || !requestId || framed) return;
+    api
       .get<ConnectRequest>(`${API_ORIGIN}/mcp/oauth/request/${encodeURIComponent(requestId)}`)
       .then((res) => {
         setDetails(res.data);
         setStatus('ready');
       })
       .catch((err) => setStatus(err?.response?.status === 404 ? 'expired' : 'error'));
-  }, [requestId, framed]);
+  }, [isAuthenticated, requestId, framed]);
 
   if (framed) return null;
+  if (!requestId) return <Navigate to="/" replace />;
+
+  if (!isAuthenticated) {
+    const returnTo = `/mcp/connect?request=${encodeURIComponent(requestId)}`;
+    return <Navigate to={`/login?redirect=${encodeURIComponent(returnTo)}`} replace />;
+  }
 
   const approve = async () => {
     setStatus('approving');
     try {
-      const res = await axios.post<{ redirect_url: string }>(`${API_ORIGIN}/mcp/oauth/approve`, {
+      const res = await api.post<{ redirect_url: string }>(`${API_ORIGIN}/mcp/oauth/approve`, {
         request_id: requestId,
       });
       window.location.href = res.data.redirect_url;
@@ -129,7 +133,7 @@ export default function MCPConnectPage() {
                   <li>which tests pass and the errors you hit most</li>
                 </ul>
                 <p className="pt-1">
-                  It cannot see anyone else's work, and it cannot change or submit anything for you.
+                  It cannot see anyone else&apos;s work, and it cannot change or submit anything for you.
                 </p>
               </div>
 
@@ -143,11 +147,7 @@ export default function MCPConnectPage() {
                   Cancel
                 </Button>
                 <Button className="flex-1" disabled={status === 'approving'} onClick={approve}>
-                  {status === 'approving' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    'Allow access'
-                  )}
+                  {status === 'approving' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Allow access'}
                 </Button>
               </div>
             </CardContent>

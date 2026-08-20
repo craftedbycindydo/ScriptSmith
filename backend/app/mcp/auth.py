@@ -40,8 +40,14 @@ SCOPE = "mcp"
 
 
 def enabled() -> bool:
-    """MCP is off until Zitadel is configured and the connector app exists."""
-    return bool(settings.zitadel_issuer and settings.zitadel_mcp_client_id)
+    """MCP is off until the API's public URL is configured.
+
+    Identity is the app's own session, so there is nothing else to wire up —
+    but the discovery documents MCP clients fetch have to carry absolute URLs,
+    and guessing them from the request host is not good enough for a value
+    clients pin against.
+    """
+    return bool(settings.api_base_url)
 
 
 def base_url(request: Request) -> str:

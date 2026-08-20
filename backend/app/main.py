@@ -396,7 +396,7 @@ async def load_routers():
             loaded_routers.append("mcp")
             print("  ✅ mcp connector loaded")
         else:
-            print("  ⏭️  mcp connector disabled (set zitadel_issuer + zitadel_mcp_client_id)")
+            print("  ⏭️  mcp connector disabled (set api_base_url)")
     except Exception as e:
         failed_routers.append(("mcp", str(e)))
         print(f"  ❌ mcp connector failed: {e}")

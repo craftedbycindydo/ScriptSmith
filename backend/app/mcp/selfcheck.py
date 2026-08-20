@@ -14,8 +14,7 @@ import asyncio
 import json
 import os
 
-os.environ.setdefault("ZITADEL_MCP_CLIENT_ID", "selfcheck-client")
-os.environ.setdefault("ZITADEL_ISSUER", "https://auth.example.invalid")
+os.environ.setdefault("API_BASE_URL", "https://api.example.invalid")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -358,6 +357,25 @@ def check_sdk_server():
     assert degraded["needs"] == "classroom_id"
     assert {c["classroom_id"] for c in degraded["options"]} == {CS101, 52}
 
+    # The OAuth flow keeps pending requests in Redis. There is none here, and
+    # an async client would bind to a loop TestClient closes between requests,
+    # so stand in a dict with the three operations the flow actually uses.
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        async def setex(self, key, _ttl, value):
+            self.store[key] = value
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def getdel(self, key):
+            return self.store.pop(key, None)
+
+    fake_redis = FakeRedis()
+    oauth.get_redis = lambda: fake_redis
+
     # An unauthenticated MCP request is refused by the SDK's own auth layer.
     app = FastAPI()
     app.include_router(auth.router)
@@ -382,6 +400,36 @@ def check_sdk_server():
     )
     assert unauthorized.status_code == 401, unauthorized.status_code
     assert "www-authenticate" in {k.lower() for k in unauthorized.headers}
+
+    # /authorize must land on our own consent page and never on an identity
+    # provider: this app has password accounts an IdP bounce would lock out,
+    # and someone already signed in should not be asked to log in twice.
+    registered = client.post("/mcp/oauth/register", json={
+        "client_name": "probe", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+    }).json()
+    landing = client.get("/mcp/oauth/authorize", params={
+        "client_id": registered["client_id"],
+        "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+        "response_type": "code",
+        "code_challenge": "8Ie1Bg6dyGP8ZbFhVXbNi4pOxK5aFcwLB0Ro-3g4Xn0",
+        "code_challenge_method": "S256",
+    }, follow_redirects=False)
+    assert landing.status_code == 302, landing.status_code
+    destination = landing.headers["location"]
+    assert "/mcp/connect?request=" in destination, destination
+    for forbidden in ("oauth/v2/authorize", "accounts.google.com", "auth.scriptingsmith.com"):
+        assert forbidden not in destination, destination
+
+    # Consent is authenticated by the app session, so an anonymous caller is
+    # refused rather than the request id being trusted as identity.
+    request_id = destination.split("request=")[1]
+    assert client.get(f"/mcp/oauth/request/{request_id}").status_code == 401
+    assert client.post("/mcp/oauth/approve", json={"request_id": request_id}).status_code == 401
+
+    # An unknown client is never redirected anywhere (open-redirect guard).
+    assert client.get("/mcp/oauth/authorize", params={
+        "client_id": "nope", "redirect_uri": "https://evil.test/cb", "response_type": "code",
+    }, follow_redirects=False).status_code == 400
 
 
 def main():

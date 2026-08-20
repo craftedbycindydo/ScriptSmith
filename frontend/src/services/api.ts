@@ -1128,4 +1128,9 @@ api.interceptors.response.use(
   }
 );
 
+// Exported for callers that must hit a root-level endpoint with an absolute
+// URL (the MCP consent page): an absolute URL bypasses baseURL but still runs
+// the auth and token-refresh interceptors above.
+export { api };
+
 export default apiService;
