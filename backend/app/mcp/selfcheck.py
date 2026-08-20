@@ -282,6 +282,20 @@ def check_bulk_runner():
         tallies = {r["name"]: r["tally"] for r in result["results"]}
         assert {"passed": 2, "total": 2} in tallies.values()
         assert result["lab_name"] == "Reverse a list"
+        # Our seeded lab does have a harness.
+        assert result["lab_has_tests"] is True and result["note"] is None
+
+        # A lab with no harness must say so rather than return null tallies.
+        db = Session()
+        try:
+            db.add(Template(id=12, name="Essay lab", language="python",
+                            code_content="# no tests here\n", created_by=PROF, is_active=True))
+            db.commit()
+        finally:
+            db.close()
+        bare = asyncio.run(tools.run_lab_submissions(Session(), PROF, CS101, 12))
+        assert bare["lab_has_tests"] is False
+        assert "nothing checked it" in bare["note"]
 
         # A classroom this professor does not teach is refused before running.
         before = fake.calls
