@@ -408,6 +408,7 @@ def _register_plain(core, description: str, shape: str) -> None:
 
 _SHAPES = {
     "get_lab_submissions": "classroom_lab",
+    "run_lab_submissions": "classroom_lab",
     "list_my_labs": "none",
     "get_my_error_patterns": "none",
     "get_my_progress": "none",
@@ -421,6 +422,9 @@ _SHAPES = {
 def _install_tools() -> None:
     elicited = {"list_classroom_students", "get_classroom_report",
                 "get_classroom_gradebook", "check_my_lab", "run_code"}
+    # run_lab_submissions is async but takes plain ids, so the generic wrapper
+    # serves it; _session awaits nothing, so it is registered by hand below.
+    elicited.add("run_lab_submissions")
     for core, _schema, description in tools.STUDENT_TOOLS + tools.ADMIN_TOOLS:
         if core.__name__ in elicited:
             continue
@@ -497,6 +501,18 @@ async def check_my_lab(
     db = SessionLocal()
     try:
         return with_contract(await tools.check_my_lab(db, user_id, lab_id), user_id)
+    finally:
+        db.close()
+
+
+@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "run_lab_submissions"))
+async def run_lab_submissions(classroom_id: int, lab_id: int) -> Any:
+    user_id = caller_id()
+    if user_id is None:
+        return _NO_CALLER
+    db = SessionLocal()
+    try:
+        return await tools.run_lab_submissions(db, user_id, classroom_id, lab_id)
     finally:
         db.close()
 

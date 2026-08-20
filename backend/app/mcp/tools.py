@@ -22,6 +22,7 @@ running the conversation is Claude's or ChatGPT's, not ours, so what it says is
 steered by the server instructions in `server.py` and nothing stronger.
 """
 
+import asyncio
 import difflib
 import inspect
 import json
@@ -764,8 +765,23 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
             "error_message": (getattr(source, "error_message", None) or "")[:600],
         })
 
-    return {"lab_id": lab_id, "classroom_id": classroom_id,
-            "students": sorted(students, key=lambda row: row["name"] or "")}
+    classroom = db.query(Classroom).filter(Classroom.id == classroom_id).first()
+    lab = db.query(Template).filter(Template.id == lab_id).first()
+    return {
+        "lab_id": lab_id,
+        "lab_name": lab.name if lab else None,
+        "classroom_id": classroom_id,
+        "classroom_name": classroom.name if classroom else None,
+        # Named so the grader states what it is about to mark. Getting the pair
+        # wrong means grading the wrong cohort, which is not recoverable by
+        # apologising afterwards.
+        "confirm_before_grading": (
+            f"You are about to grade '{lab.name if lab else lab_id}' for "
+            f"'{classroom.name if classroom else classroom_id}'. Say this back to the "
+            "instructor before awarding any marks, and stop if they did not name both."
+        ),
+        "students": sorted(students, key=lambda row: row["name"] or ""),
+    }
 
 
 async def get_classroom_gradebook(db: Session, user_id: int, classroom_id: int = None):
@@ -794,6 +810,76 @@ async def get_classroom_gradebook(db: Session, user_id: int, classroom_id: int =
         admin_user=admin,
     )
     return book.model_dump() if hasattr(book, "model_dump") else dict(book)
+
+
+MAX_BULK_RUNS = 60
+
+
+async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = None,
+                              lab_id: int = None):
+    """Run every student's saved code for one lab, concurrently, in one call.
+
+    The alternative is the model calling run_code once per student: a round
+    trip each, with its own latency, for work the server can do in parallel.
+    Here the executions overlap behind a small semaphore - bounded so a class
+    of thirty does not arrive at the language services all at once.
+
+    Reports the tally per student, not a mark. Deciding what a passing tally is
+    worth is the instructor's job.
+    """
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+
+    listing = get_lab_submissions(db, user_id, classroom_id, lab_id)
+    if "students" not in listing:
+        return listing
+
+    lab = db.query(Template).filter(Template.id == lab_id).first()
+    language = (lab.language if lab else None) or "python"
+
+    runnable = [row for row in listing["students"] if row.get("code")]
+    skipped = [row["name"] for row in listing["students"] if not row.get("code")]
+    capped = len(runnable) > MAX_BULK_RUNS
+    if capped:
+        runnable = runnable[:MAX_BULK_RUNS]
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def run_one(row):
+        async with semaphore:
+            try:
+                result = await microservice_executor.execute_code(
+                    code=row["code"], language=language
+                )
+            except Exception as exc:
+                logger.warning("mcp run_lab_submissions: %s failed: %s", row["student_id"], exc)
+                return {"student_id": row["student_id"], "name": row["name"],
+                        "error": "run failed"}
+            output = result.get("output") or ""
+            outcomes = extraction.extract_test_outcomes(output)
+            return {
+                "student_id": row["student_id"],
+                "name": row["name"],
+                "tally": extraction.extract_pass_count(output),
+                "passing": outcomes["passed"],
+                "failing": outcomes["failed"],
+                "crashed": bool(result.get("error")),
+                "error_message": (result.get("error") or "")[:400],
+            }
+
+    results = await asyncio.gather(*(run_one(row) for row in runnable))
+
+    return {
+        "lab_id": lab_id,
+        "lab_name": listing.get("lab_name"),
+        "classroom_id": classroom_id,
+        "classroom_name": listing.get("classroom_name"),
+        "ran": len(results),
+        "no_code_to_run": skipped,
+        "capped_at": MAX_BULK_RUNS if capped else None,
+        "results": results,
+    }
 
 
 # ── admin-only execution ────────────────────────────────────────
@@ -935,6 +1021,8 @@ ADMIN_TOOLS = [
      "TEACHING STAFF. Every student's work on one lab for a whole classroom, in a single call. This is the tool for grading a class: it returns the same per-student detail as get_student_work without one call per student. Code is capped, and any row whose code was cut says so."),
     (get_classroom_gradebook, _CLASSROOM_ARG,
      "TEACHING STAFF. The student-by-lab status matrix for one of your classrooms. Status means the code ran, not that it is correct — pair it with get_student_work before awarding a grade."),
+    (run_lab_submissions, _CLASSROOM_LAB_ARG,
+     "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Reports tallies, not marks."),
     (run_code, _RUN_ARG,
      "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
 ]

@@ -236,6 +236,12 @@ def check_bulk_submissions():
         assert rows[ALICE]["failing_tests"][0]["test"] == "reverses three items"
         assert rows[ALICE]["code_truncated"] is False
 
+        # Names ride with the ids so grading the wrong pair is visible, not silent.
+        assert result["lab_name"] == "Reverse a list"
+        assert result["classroom_name"] == "CS101"
+        assert "Reverse a list" in result["confirm_before_grading"]
+        assert "CS101" in result["confirm_before_grading"]
+
         # It agrees with get_student_work, so grading either way is consistent.
         single = tools.get_student_work(db, PROF, BOB, 10)
         assert single["code"].startswith(rows[BOB]["code"][:50])
@@ -246,6 +252,40 @@ def check_bulk_submissions():
         assert tools.get_lab_submissions(db, PROF, OTHER_CLASS, 10) == tools._NOT_YOURS
     finally:
         db.close()
+
+
+def check_bulk_runner():
+    """One call runs the whole class, concurrently, and stays admin-only."""
+    class FakeExecutor:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute_code(self, code, language, input_data=""):
+            self.calls += 1
+            passed = "2/2" if "BOBS_PRIVATE_CODE" in code else "1/2"
+            return {"output": f"PASS a\n{passed} tests passed\n"}
+
+    fake = FakeExecutor()
+    real, tools.microservice_executor = tools.microservice_executor, fake
+    try:
+        blocked = asyncio.run(tools.run_lab_submissions(Session(), ALICE, CS101, 10))
+        assert blocked == tools._NOT_ADMIN
+        assert fake.calls == 0, "a student triggered executions"
+
+        result = asyncio.run(tools.run_lab_submissions(Session(), PROF, CS101, 10))
+        assert result["ran"] == 2, result
+        # Two students, two executions — not one call per student from the model.
+        assert fake.calls == 2, fake.calls
+        tallies = {r["name"]: r["tally"] for r in result["results"]}
+        assert {"passed": 2, "total": 2} in tallies.values()
+        assert result["lab_name"] == "Reverse a list"
+
+        # A classroom this professor does not teach is refused before running.
+        before = fake.calls
+        assert asyncio.run(tools.run_lab_submissions(Session(), PROF, OTHER_CLASS, 10)) == tools._NOT_YOURS
+        assert fake.calls == before, "ran code for a classroom it should have refused"
+    finally:
+        tools.microservice_executor = real
 
 
 def check_run_code_is_admin_only():
@@ -403,7 +443,7 @@ def check_sdk_server():
 
     listed = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in listed}
-    assert len(listed) == 21, sorted(names)
+    assert len(listed) == 22, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
     # Every elicited tool must expose the id the model can pass. Hiding it
@@ -556,6 +596,7 @@ def main():
     check_no_answer_leak()
     check_role_boundary()
     check_bulk_submissions()
+    check_bulk_runner()
     check_run_code_is_admin_only()
     check_run_lab()
     check_tokens()
