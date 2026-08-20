@@ -675,6 +675,15 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
     return {
         "student_id": student_id,
         "lab_id": lab_id,
+        # Named at the point of use, because a description alone did not stop
+        # the model iterating this tool over a whole class. One call per
+        # student is a round trip per student; the bulk tool is three queries
+        # for any class size.
+        "for_the_whole_class": (
+            f"If you are grading more than this one student, stop and call "
+            f"get_lab_submissions(classroom_id={enrolled.classroom_id}, lab_id={lab_id}) "
+            "once instead of calling this per student."
+        ),
         "submitted": bool(submission),
         "status": getattr(source, "status", None),
         "code": (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")[:MAX_CODE_CHARS],
@@ -870,8 +879,23 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
 
     results = await asyncio.gather(*(run_one(row) for row in runnable))
 
+    # A lab with no harness runs fine and measures nothing. Saying so beats
+    # returning a column of null tallies and leaving the grader to work out
+    # whether the code failed or the lab simply has nothing to check.
+    has_tests = bool(extraction.extract_test_names(lab.code_content if lab else ""))
+    note = None
+    if not has_tests:
+        note = (
+            "This lab ships no test harness, so every tally is null: the code ran, "
+            "nothing checked it. Do not read that as failure, and do not derive a "
+            "score out of 100 from it — grade the submitted code against a rubric, "
+            "or ask the instructor what the basis should be."
+        )
+
     return {
         "lab_id": lab_id,
+        "lab_has_tests": has_tests,
+        "note": note,
         "lab_name": listing.get("lab_name"),
         "classroom_id": classroom_id,
         "classroom_name": listing.get("classroom_name"),
@@ -1016,7 +1040,7 @@ ADMIN_TOOLS = [
     (get_student_report, _STUDENT_ARG,
      "TEACHING STAFF. One student's full record — progress, error patterns, lab history — for writing feedback or justifying a grade."),
     (get_student_work, _STUDENT_LAB_ARG,
-     "TEACHING STAFF. One student's submitted code and run outcome for one lab. Use it to look closely at a single student; for grading a whole class use get_lab_submissions instead."),
+     "TEACHING STAFF. One student's work on one lab. Use this ONLY when the instructor named a single student. For grading, comparing, or anything covering more than one student, call get_lab_submissions once — calling this in a loop is a round trip per student and is the wrong tool."),
     (get_lab_submissions, _CLASSROOM_LAB_ARG,
      "TEACHING STAFF. Every student's work on one lab for a whole classroom, in a single call. This is the tool for grading a class: it returns the same per-student detail as get_student_work without one call per student. Code is capped, and any row whose code was cut says so."),
     (get_classroom_gradebook, _CLASSROOM_ARG,
