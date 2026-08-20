@@ -346,10 +346,29 @@ _NO_CALLER = {"error": "Unauthorized"}
 # signatures are what the model sees, so `db` is never a tool argument.
 
 
+def with_contract(result, user_id):
+    """Attach the teaching contract to a student-facing tool result.
+
+    It rides on *every* tool, not just get_teaching_plan. A live session showed
+    why: asked to hand over a solution, the model called get_lab_brief,
+    get_my_code and get_my_last_run, never the teaching plan, and so never saw
+    the rule — then wrote the lab in another domain and named the rename. A
+    rule the model can skip by not calling one tool is not a rule.
+
+    Teaching staff are exempt: instruction 8 gives them direct answers, and the
+    do-not-demonstrate rule is about teaching a learner.
+    """
+    if not isinstance(result, dict) or "reply_contract" in result:
+        return result
+    if user_id is None or _is_staff(user_id):
+        return result
+    return {**result, "reply_contract": tools.REPLY_CONTRACT}
+
+
 def _session(fn, *args):
     db = SessionLocal()
     try:
-        return fn(db, *args)
+        return with_contract(fn(db, *args), args[0] if args else None)
     finally:
         db.close()
 
@@ -462,7 +481,7 @@ async def check_my_lab(
 
     db = SessionLocal()
     try:
-        return await tools.check_my_lab(db, user_id, lab_id)
+        return with_contract(await tools.check_my_lab(db, user_id, lab_id), user_id)
     finally:
         db.close()
 

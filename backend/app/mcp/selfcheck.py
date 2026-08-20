@@ -306,6 +306,26 @@ def check_tokens():
     assert 'payload.get("scope") != "mcp"' in inspect.getsource(app_auth.get_current_user)
 
 
+def check_contract_rides_every_tool():
+    """The teaching contract must not depend on one tool being called.
+
+    The live failure this pins: the model read the brief, the code and the last
+    run, skipped get_teaching_plan, and so never saw the rule it then broke.
+    """
+    server.caller_id = lambda: ALICE
+    for name in ("get_lab_brief", "get_my_code", "get_my_last_run", "list_my_labs"):
+        result = server._session(getattr(tools, name), ALICE, *( (10,) if name != "list_my_labs" else () ))
+        assert "reply_contract" in result, f"{name} shipped no contract"
+        assert "renaming" in " ".join(result["reply_contract"]).lower()
+
+    # Staff are exempt: instruction 8 gives instructors direct answers.
+    staff = server._session(tools.get_lab_brief, PROF, 10)
+    assert "reply_contract" not in staff, staff
+
+    # A non-dict result must pass through untouched rather than crash.
+    assert server.with_contract("plain string", ALICE) == "plain string"
+
+
 def check_tools_list_filtering():
     """A student is not shown the teaching-staff tools."""
     import asyncio
@@ -509,6 +529,7 @@ def main():
     check_run_code_is_admin_only()
     check_run_lab()
     check_tokens()
+    check_contract_rides_every_tool()
     check_tools_list_filtering()
     check_sdk_server()
     print("mcp selfcheck: ok")
