@@ -33,6 +33,7 @@ from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
+from mcp.types import Icon
 from mcp.server.mcpserver import (
     AcceptedElicitation,
     CancelledElicitation,
@@ -190,10 +191,28 @@ async def hide_staff_tools(ctx, call_next):
 # AuthSettings needs absolute URLs, unlike the request-host fallback elsewhere.
 _BASE = (settings.api_base_url or "http://localhost:8000").rstrip("/")
 
+# Claude shows a connector's icon next to every tool call. With none declared
+# it falls back to the favicon of the connector URL's domain — which for a
+# Railway-generated host is Railway's own logo, not ours. Declaring it here
+# fixes the branding without depending on a custom domain.
+#
+# (GakkoDeck leaves this unset because mcp 1.15.0 serialised Icon.sizes as a
+# string where the spec wants string[], and ChatGPT's strict client rejected
+# the initialize response. In mcp 2.0 sizes is list[str], so it is safe again.)
+ICONS = [
+    Icon(
+        src="https://scriptingsmith.com/scriptingsmith-logo.svg",
+        mime_type="image/svg+xml",
+        sizes=["any"],
+    )
+]
+
 mcp = MCPServer(
     "Scripting Smith",
     version="2.0.0",
     instructions=INSTRUCTIONS,
+    website_url="https://scriptingsmith.com",
+    icons=ICONS,
     token_verifier=ConnectorTokenVerifier(),
     auth=AuthSettings(
         issuer_url=_BASE,

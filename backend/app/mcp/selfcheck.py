@@ -369,6 +369,17 @@ def check_sdk_server():
     assert set((by_name["run_code"].input_schema or {})["properties"]) == {
         "code", "language", "input_data"}
 
+    # A declared icon is what stops Claude falling back to the connector
+    # domain's favicon — Railway's logo, on a Railway-generated host. `sizes`
+    # must serialise as an array; mcp 1.15 emitted a bare string and strict
+    # clients rejected the whole initialize response.
+    import json as _json
+
+    icon = _json.loads(server.ICONS[0].model_dump_json(by_alias=True, exclude_none=True))
+    assert icon["src"].startswith("https://"), icon
+    assert isinstance(icon["sizes"], list), icon
+    assert icon["mimeType"] == "image/svg+xml", icon
+
     # Instructions carry the teaching contract and the do-not-guess rule.
     assert "Never write the solution" in server.INSTRUCTIONS
     assert "Do not guess which classroom" in server.INSTRUCTIONS
