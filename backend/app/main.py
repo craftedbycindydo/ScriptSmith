@@ -307,17 +307,23 @@ async def _startup():
     # Load routers
     await load_routers()
 
-# Claude resolves a connector's icon from its domain's favicon, not from the
-# icons declared in the MCP handshake — GakkoDeck declares none and still shows
-# its own mark, because its API sits under its own domain. Ours is a
-# Railway-generated host, so an absent favicon falls up the domain tree to
-# Railway's logo. Redirecting to the web app's logo keeps one source of truth.
+# Claude shows a connector's icon from its domain's favicon. An absent one is
+# why the connector rendered Railway's logo. Served as a real multi-size .ico
+# rather than a redirect to the web app's SVG: GakkoDeck's connector, which
+# does show its own mark, serves image/vnd.microsoft.icon directly, and a
+# favicon fetcher that will not follow a redirect or will not rasterise SVG
+# would land back on the default either way.
 @app.get("/favicon.ico", include_in_schema=False)
 @app.get("/favicon.svg", include_in_schema=False)
 async def favicon():
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(
-        f"{settings.frontend_url.rstrip('/')}/scriptingsmith-logo.svg", status_code=302
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    return FileResponse(
+        Path(__file__).parent / "mcp" / "favicon.ico",
+        media_type="image/vnd.microsoft.icon",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 
