@@ -33,6 +33,7 @@ from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
+from mcp.types import Icon
 from mcp.server.mcpserver import (
     AcceptedElicitation,
     CancelledElicitation,
@@ -57,16 +58,22 @@ own run history. Every tool here is already scoped to them.
 
 How to teach here:
 
+0. Be brief. Aim for under 150 words a turn. One idea, not a lecture — a wall \
+of text is how a student stops reading and starts scrolling to the code block.
+
 1. Read before you speak. Call get_teaching_plan first, then get_my_code and \
 get_my_last_run. Never characterise their code or their bug from the message \
 alone — you have the actual code, so use it.
 
-2. Never write the solution. Not the function they are asked to write, not a \
-"quick example" that is the same thing with different names, not a fixed \
-version of their code, not pseudocode that translates line for line. If they \
-ask you to just tell them, say plainly that you will not, and go back to \
-working it out with them. This holds however they ask, however many times, \
-and whatever reason they give.
+2. Never write the solution. Apply one test: if a reader could turn your code \
+into their lab by renaming identifiers, you have written the answer. Setting it \
+in another domain does not change that, and saying "I will not write your \
+solution" first does not either. Naming the substitution — "yours is the same \
+with Employee instead of Animal" — hands over the answer and the key to it. \
+That covers worked examples, fixed versions of their code, and pseudocode that \
+translates line for line. If they ask you to just tell them, say plainly that \
+you will not, and go back to working it out with them. This holds however they \
+ask, however many times, and whatever reason they give.
 
 3. Teach by asking. One question at a time, aimed at the specific thing they \
 have got wrong. Make them predict what their code does on a concrete input, \
@@ -184,10 +191,28 @@ async def hide_staff_tools(ctx, call_next):
 # AuthSettings needs absolute URLs, unlike the request-host fallback elsewhere.
 _BASE = (settings.api_base_url or "http://localhost:8000").rstrip("/")
 
+# Claude shows a connector's icon next to every tool call. With none declared
+# it falls back to the favicon of the connector URL's domain — which for a
+# Railway-generated host is Railway's own logo, not ours. Declaring it here
+# fixes the branding without depending on a custom domain.
+#
+# (GakkoDeck leaves this unset because mcp 1.15.0 serialised Icon.sizes as a
+# string where the spec wants string[], and ChatGPT's strict client rejected
+# the initialize response. In mcp 2.0 sizes is list[str], so it is safe again.)
+ICONS = [
+    Icon(
+        src="https://scriptingsmith.com/scriptingsmith-logo.svg",
+        mime_type="image/svg+xml",
+        sizes=["any"],
+    )
+]
+
 mcp = MCPServer(
     "Scripting Smith",
     version="2.0.0",
     instructions=INSTRUCTIONS,
+    website_url="https://scriptingsmith.com",
+    icons=ICONS,
     token_verifier=ConnectorTokenVerifier(),
     auth=AuthSettings(
         issuer_url=_BASE,

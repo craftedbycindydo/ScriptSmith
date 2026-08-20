@@ -95,6 +95,10 @@ def seed():
                        code="BOBS_PRIVATE_CODE = 1\n",
                        output="PASS reverses three items\nPASS handles the empty list\n"
                               "2/2 tests passed\n"),
+        # A scratch run in the editor, attached to no lab. Counting these as
+        # lab attempts is what made the two tools disagree.
+        CodeSubmission(id=102, user_id=ALICE, template_id=None, language="python",
+                       code="print('scratch')\n", output="scratch\n", status="success"),
     ])
     db.commit()
     db.close()
@@ -117,6 +121,15 @@ def check_scoping():
         assert plan["teaching_mode"] == "conceptual"
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
+
+        # The contract has to ride along with every plan, not just live in the
+        # server instructions: a real session showed those being rationalised
+        # past. It must name the rename test, brevity and the options.
+        contract = " ".join(plan["reply_contract"]).lower()
+        assert "renaming" in contract, contract
+        assert "substitution" in contract, contract
+        assert "150 words" in contract, contract
+        assert "lettered options" in contract, contract
     finally:
         db.close()
 
@@ -136,6 +149,23 @@ def check_unreleased_labs():
         # student cannot reach it by guessing.
         assert tools.get_lab_brief(db, ALICE, 11) == tools._NO_LAB
         assert tools.get_lab_brief(db, PROF, 11)["name"] == "Next week's lab"
+    finally:
+        db.close()
+
+
+def check_run_counts_agree():
+    """get_my_progress must count the same runs list_my_labs does."""
+    db = Session()
+    try:
+        progress = tools.get_my_progress(db, ALICE)
+        per_lab = sum(lab["runs"] for lab in tools.list_my_labs(db, ALICE)["labs"])
+
+        assert progress["lab_runs"] == per_lab, (progress["lab_runs"], per_lab)
+        assert progress["scratch_runs"] == 1, progress
+        # The scratch run is real work, just not a lab attempt: it must be
+        # reported, not silently folded into the lab count or dropped.
+        assert progress["lab_runs"] + progress["scratch_runs"] == 2
+        assert "total_runs" not in progress, "the ambiguous field is back"
     finally:
         db.close()
 
@@ -339,6 +369,17 @@ def check_sdk_server():
     assert set((by_name["run_code"].input_schema or {})["properties"]) == {
         "code", "language", "input_data"}
 
+    # A declared icon is what stops Claude falling back to the connector
+    # domain's favicon — Railway's logo, on a Railway-generated host. `sizes`
+    # must serialise as an array; mcp 1.15 emitted a bare string and strict
+    # clients rejected the whole initialize response.
+    import json as _json
+
+    icon = _json.loads(server.ICONS[0].model_dump_json(by_alias=True, exclude_none=True))
+    assert icon["src"].startswith("https://"), icon
+    assert isinstance(icon["sizes"], list), icon
+    assert icon["mimeType"] == "image/svg+xml", icon
+
     # Instructions carry the teaching contract and the do-not-guess rule.
     assert "Never write the solution" in server.INSTRUCTIONS
     assert "Do not guess which classroom" in server.INSTRUCTIONS
@@ -462,6 +503,7 @@ def main():
     check_extraction()
     check_scoping()
     check_unreleased_labs()
+    check_run_counts_agree()
     check_no_answer_leak()
     check_role_boundary()
     check_run_code_is_admin_only()
