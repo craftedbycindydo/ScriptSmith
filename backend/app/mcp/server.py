@@ -140,6 +140,45 @@ def caller_id() -> Optional[int]:
         return None
 
 
+STAFF_TOOLS = {fn.__name__ for fn, _, _ in tools.ADMIN_TOOLS}
+
+
+def _is_staff(user_id: int) -> bool:
+    db = SessionLocal()
+    try:
+        return tools.require_admin(db, user_id) is not None
+    finally:
+        db.close()
+
+
+async def hide_staff_tools(ctx, call_next):
+    """Keep the teaching-staff tools out of a student's tools/list.
+
+    Cosmetic, deliberately. The tools refuse a student on their own — twice,
+    at dispatch and inside each function — and that is what makes them safe.
+    This only stops a student being shown a `run_code` they cannot use and
+    being invited to ask for it.
+
+    Written against `Server.middleware`, which the SDK marks provisional. If
+    its signature changes the listing goes back to showing everything; nothing
+    about who may *call* what depends on this function.
+    """
+    result = await call_next(ctx)
+    if ctx.method != "tools/list":
+        return result
+
+    listed = getattr(result, "tools", None)
+    if listed is None:
+        return result
+
+    user_id = caller_id()
+    if user_id is not None and _is_staff(user_id):
+        return result
+    return result.model_copy(
+        update={"tools": [t for t in listed if t.name not in STAFF_TOOLS]}
+    )
+
+
 # The connector's authorization server is this backend (app/mcp/oauth.py),
 # which fronts Zitadel for the login. api_base_url has to be concrete here —
 # AuthSettings needs absolute URLs, unlike the request-host fallback elsewhere.
@@ -158,6 +197,7 @@ mcp = MCPServer(
     # Seals multi-round-trip state with the app secret so a resumed call can be
     # picked up by any worker. Same key everywhere, same server name.
     request_state_security=RequestStateSecurity(keys=[settings.secret_key]),
+    middleware=[hide_staff_tools],
 )
 
 

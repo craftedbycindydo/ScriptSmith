@@ -252,6 +252,46 @@ def check_tokens():
     assert 'payload.get("scope") != "mcp"' in inspect.getsource(app_auth.get_current_user)
 
 
+def check_tools_list_filtering():
+    """A student is not shown the teaching-staff tools."""
+    import asyncio
+
+    from mcp.types import ListToolsResult
+
+    listed = asyncio.run(server.mcp.list_tools())
+    assert server.hide_staff_tools in server.mcp.middleware
+
+    class Ctx:
+        method = "tools/list"
+
+    async def call_next(_ctx):
+        return ListToolsResult(tools=listed)
+
+    def filtered_for(user_id):
+        server.caller_id = lambda: user_id
+        result = asyncio.run(server.hide_staff_tools(Ctx(), call_next))
+        return {t.name for t in result.tools}
+
+    student_sees = filtered_for(ALICE)
+    prof_sees = filtered_for(PROF)
+    anonymous_sees = filtered_for(None)
+
+    assert "run_code" not in student_sees, student_sees
+    assert not (student_sees & server.STAFF_TOOLS), student_sees & server.STAFF_TOOLS
+    assert "check_my_lab" in student_sees and "get_teaching_plan" in student_sees
+    assert server.STAFF_TOOLS <= prof_sees, server.STAFF_TOOLS - prof_sees
+    # No identity resolves to the narrow list, never the wide one.
+    assert not (anonymous_sees & server.STAFF_TOOLS)
+
+    # Anything other than tools/list passes through untouched.
+    class Other:
+        method = "tools/call"
+
+    server.caller_id = lambda: ALICE
+    passthrough = asyncio.run(server.hide_staff_tools(Other(), call_next))
+    assert {t.name for t in passthrough.tools} == {t.name for t in listed}
+
+
 def check_sdk_server():
     """The SDK server: registration, schemas, and the ask-or-degrade path."""
     import asyncio
@@ -353,6 +393,7 @@ def main():
     check_run_code_is_admin_only()
     check_run_lab()
     check_tokens()
+    check_tools_list_filtering()
     check_sdk_server()
     print("mcp selfcheck: ok")
 
