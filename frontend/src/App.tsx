@@ -19,6 +19,7 @@ const ResumeBuilder = lazy(() => import('./pages/ResumeBuilder'));
 const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+const MCPConnectPage = lazy(() => import('./pages/MCPConnectPage'));
 
 function RouteFallback() {
   return (
@@ -50,6 +51,8 @@ function App() {
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/verify-email" element={<VerifyEmailPage />} />
+                {/* Consent screen for the MCP connector; the backend redirects here */}
+                <Route path="/mcp/connect" element={<MCPConnectPage />} />
 
                 {/* Collaboration routes */}
                 <Route path="/collab/:shareId" element={<CollaborativeIDE />} />

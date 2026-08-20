@@ -8,5 +8,6 @@ from .collaboration import CollaborationSession, CollaborationParticipant
 from .admin_settings import AdminSettings
 from .classroom import Classroom, UserClassroom
 from .resume import Resume
+from .oauth_client import OAuthClient
 
-__all__ = ["User", "Template", "TemplateSubmission", "TemplateDraft", "UserTemplate", "CodeSubmission", "Assignment", "StudentSubmission", "CollaborationSession", "CollaborationParticipant", "AdminSettings", "Classroom", "UserClassroom", "Resume"]
+__all__ = ["User", "Template", "TemplateSubmission", "TemplateDraft", "UserTemplate", "CodeSubmission", "Assignment", "StudentSubmission", "CollaborationSession", "CollaborationParticipant", "AdminSettings", "Classroom", "UserClassroom", "Resume", "OAuthClient"]
