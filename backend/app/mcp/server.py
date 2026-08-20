@@ -332,7 +332,10 @@ def _ask_in_chat(kind: str, options: list) -> dict:
     return {
         "needs": kind,
         "options": options,
-        "message": f"Ask which {kind.replace('_', ' ')} this is about, then call again with it.",
+        "message": (
+            f"Ask which {kind.replace('_', ' ')} this is about, then call this tool "
+            f"again passing {kind} as an argument."
+        ),
     }
 
 
@@ -427,12 +430,14 @@ _install_tools()
 
 @mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "list_classroom_students"))
 async def list_classroom_students(
+    classroom_id: int | None = None,
     classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
 ) -> Any:
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    classroom_id = _resolved(classroom, "classroom_id")
+    # An id the caller passed wins; the resolver only fills the gap.
+    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
     return _session(tools.list_classroom_students, user_id, classroom_id)
@@ -440,12 +445,14 @@ async def list_classroom_students(
 
 @mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_report"))
 async def get_classroom_report(
+    classroom_id: int | None = None,
     classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
 ) -> Any:
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    classroom_id = _resolved(classroom, "classroom_id")
+    # An id the caller passed wins; the resolver only fills the gap.
+    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
     return _session(tools.get_classroom_report, user_id, classroom_id)
@@ -453,13 +460,15 @@ async def get_classroom_report(
 
 @mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_gradebook"))
 async def get_classroom_gradebook(
+    classroom_id: int | None = None,
     classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
 ) -> Any:
     """Asks which classroom rather than grading the wrong cohort."""
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    classroom_id = _resolved(classroom, "classroom_id")
+    # An id the caller passed wins; the resolver only fills the gap.
+    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
 
@@ -472,12 +481,13 @@ async def get_classroom_gradebook(
 
 @mcp.tool(description=next(d for f, _, d in tools.STUDENT_TOOLS if f.__name__ == "check_my_lab"))
 async def check_my_lab(
+    lab_id: int | None = None,
     lab: Annotated[ElicitationResult[LabChoice] | int | None, Resolve(pick_lab)] = None,
 ) -> Any:
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    lab_id = _resolved(lab, "lab_id")
+    lab_id = lab_id or _resolved(lab, "lab_id")
 
     db = SessionLocal()
     try:
