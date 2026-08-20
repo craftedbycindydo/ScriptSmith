@@ -339,9 +339,21 @@ def get_my_error_patterns(db: Session, user_id: int):
 def get_my_progress(db: Session, user_id: int):
     """The student's overall record across the platform."""
     submissions = db.query(TemplateSubmission).filter(TemplateSubmission.user_id == user_id).all()
-    total_runs = db.query(CodeSubmission).filter(CodeSubmission.user_id == user_id).count()
-    successful_runs = db.query(CodeSubmission).filter(
-        CodeSubmission.user_id == user_id, CodeSubmission.status == "success"
+
+    # Runs split by whether they belong to a lab. A single "total runs" number
+    # counts scratch runs in the editor too, which made the tutor tell students
+    # they had attempted a lab far more times than they had - the count did not
+    # agree with list_my_labs, and the disagreement was invisible in the name.
+    lab_runs = db.query(CodeSubmission).filter(
+        CodeSubmission.user_id == user_id, CodeSubmission.template_id.isnot(None)
+    ).count()
+    successful_lab_runs = db.query(CodeSubmission).filter(
+        CodeSubmission.user_id == user_id,
+        CodeSubmission.template_id.isnot(None),
+        CodeSubmission.status == "success",
+    ).count()
+    scratch_runs = db.query(CodeSubmission).filter(
+        CodeSubmission.user_id == user_id, CodeSubmission.template_id.is_(None)
     ).count()
 
     recent = sorted(
@@ -351,8 +363,9 @@ def get_my_progress(db: Session, user_id: int):
     return {
         "labs_submitted": len(submissions),
         "labs_passed": len([s for s in submissions if s.status == "success"]),
-        "total_runs": total_runs,
-        "successful_runs": successful_runs,
+        "lab_runs": lab_runs,
+        "successful_lab_runs": successful_lab_runs,
+        "scratch_runs": scratch_runs,
         "recent": [{"name": s.template_name, "status": s.status} for s in recent],
     }
 

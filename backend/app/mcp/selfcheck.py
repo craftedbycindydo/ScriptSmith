@@ -95,6 +95,10 @@ def seed():
                        code="BOBS_PRIVATE_CODE = 1\n",
                        output="PASS reverses three items\nPASS handles the empty list\n"
                               "2/2 tests passed\n"),
+        # A scratch run in the editor, attached to no lab. Counting these as
+        # lab attempts is what made the two tools disagree.
+        CodeSubmission(id=102, user_id=ALICE, template_id=None, language="python",
+                       code="print('scratch')\n", output="scratch\n", status="success"),
     ])
     db.commit()
     db.close()
@@ -136,6 +140,23 @@ def check_unreleased_labs():
         # student cannot reach it by guessing.
         assert tools.get_lab_brief(db, ALICE, 11) == tools._NO_LAB
         assert tools.get_lab_brief(db, PROF, 11)["name"] == "Next week's lab"
+    finally:
+        db.close()
+
+
+def check_run_counts_agree():
+    """get_my_progress must count the same runs list_my_labs does."""
+    db = Session()
+    try:
+        progress = tools.get_my_progress(db, ALICE)
+        per_lab = sum(lab["runs"] for lab in tools.list_my_labs(db, ALICE)["labs"])
+
+        assert progress["lab_runs"] == per_lab, (progress["lab_runs"], per_lab)
+        assert progress["scratch_runs"] == 1, progress
+        # The scratch run is real work, just not a lab attempt: it must be
+        # reported, not silently folded into the lab count or dropped.
+        assert progress["lab_runs"] + progress["scratch_runs"] == 2
+        assert "total_runs" not in progress, "the ambiguous field is back"
     finally:
         db.close()
 
@@ -462,6 +483,7 @@ def main():
     check_extraction()
     check_scoping()
     check_unreleased_labs()
+    check_run_counts_agree()
     check_no_answer_leak()
     check_role_boundary()
     check_run_code_is_admin_only()
