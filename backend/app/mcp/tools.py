@@ -121,6 +121,22 @@ def _current_code(db: Session, user_id: int, lab_id: Optional[int]):
     return None
 
 
+# Returned with every teaching plan. Observed failure this is answering: a
+# session where the model said "I am not going to write the code you submit",
+# then wrote the same program about animals and named the substitution
+# ("Animal -> Employee, speak -> work"). It had been told not to do exactly
+# that; the rule was simply too far back in the conversation to bind.
+REPLY_CONTRACT = [
+    "Do not write code that becomes this lab by renaming things. If a reader could "
+    "map your example onto the lab one identifier at a time, you have written the "
+    "answer, whatever domain you set it in and whatever you say around it.",
+    "Never name the substitution. 'Yours is the same with X instead of Y' is the answer "
+    "plus the key to it.",
+    "Be brief. Aim for under 150 words. One idea per reply, not a lecture.",
+    "End with 2-4 lettered options they can pick, so a student who does not want to "
+    "type a paragraph can still move.",
+]
+
 _NO_LAB = {"error": "No lab in scope. Call list_my_labs and pass a lab_id."}
 _NO_RUN = {"error": "The student has not run this lab yet — ask them to run it first."}
 
@@ -494,6 +510,7 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
         "open_problem": open_problem,
         "teaching_mode": mode,
         "next_move": next_move,
+        "reply_contract": REPLY_CONTRACT,
         "repeated_habit": repeated,
         "grinding": grinding,
         "minutes_on_lab": timing.get("elapsed_minutes"),

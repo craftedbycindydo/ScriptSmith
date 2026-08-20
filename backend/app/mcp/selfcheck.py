@@ -121,6 +121,15 @@ def check_scoping():
         assert plan["teaching_mode"] == "conceptual"
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
+
+        # The contract has to ride along with every plan, not just live in the
+        # server instructions: a real session showed those being rationalised
+        # past. It must name the rename test, brevity and the options.
+        contract = " ".join(plan["reply_contract"]).lower()
+        assert "renaming" in contract, contract
+        assert "substitution" in contract, contract
+        assert "150 words" in contract, contract
+        assert "lettered options" in contract, contract
     finally:
         db.close()
 
