@@ -675,6 +675,15 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
     return {
         "student_id": student_id,
         "lab_id": lab_id,
+        # Named at the point of use, because a description alone did not stop
+        # the model iterating this tool over a whole class. One call per
+        # student is a round trip per student; the bulk tool is three queries
+        # for any class size.
+        "for_the_whole_class": (
+            f"If you are grading more than this one student, stop and call "
+            f"get_lab_submissions(classroom_id={enrolled.classroom_id}, lab_id={lab_id}) "
+            "once instead of calling this per student."
+        ),
         "submitted": bool(submission),
         "status": getattr(source, "status", None),
         "code": (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")[:MAX_CODE_CHARS],
@@ -1016,7 +1025,7 @@ ADMIN_TOOLS = [
     (get_student_report, _STUDENT_ARG,
      "TEACHING STAFF. One student's full record — progress, error patterns, lab history — for writing feedback or justifying a grade."),
     (get_student_work, _STUDENT_LAB_ARG,
-     "TEACHING STAFF. One student's submitted code and run outcome for one lab. Use it to look closely at a single student; for grading a whole class use get_lab_submissions instead."),
+     "TEACHING STAFF. One student's work on one lab. Use this ONLY when the instructor named a single student. For grading, comparing, or anything covering more than one student, call get_lab_submissions once — calling this in a loop is a round trip per student and is the wrong tool."),
     (get_lab_submissions, _CLASSROOM_LAB_ARG,
      "TEACHING STAFF. Every student's work on one lab for a whole classroom, in a single call. This is the tool for grading a class: it returns the same per-student detail as get_student_work without one call per student. Code is capped, and any row whose code was cut says so."),
     (get_classroom_gradebook, _CLASSROOM_ARG,

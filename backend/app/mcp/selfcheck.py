@@ -220,6 +220,9 @@ def check_role_boundary():
 
     work = json.loads(asyncio.run(tools.call("get_student_work", {"student_id": BOB, "lab_id": 10}, PROF)))
     assert "BOBS_PRIVATE_CODE" in work["code"], work
+    # The single-student tool must name the bulk call, with the real ids, so
+    # the model is not left to infer them.
+    assert f"get_lab_submissions(classroom_id={CS101}, lab_id=10)" in work["for_the_whole_class"], work
 
 
 def check_bulk_submissions():
