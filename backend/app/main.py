@@ -307,6 +307,20 @@ async def _startup():
     # Load routers
     await load_routers()
 
+# Claude resolves a connector's icon from its domain's favicon, not from the
+# icons declared in the MCP handshake — GakkoDeck declares none and still shows
+# its own mark, because its API sits under its own domain. Ours is a
+# Railway-generated host, so an absent favicon falls up the domain tree to
+# Railway's logo. Redirecting to the web app's logo keeps one source of truth.
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(
+        f"{settings.frontend_url.rstrip('/')}/scriptingsmith-logo.svg", status_code=302
+    )
+
+
 # Simple health check (like shop project)
 @app.get("/health")
 async def health_check():
