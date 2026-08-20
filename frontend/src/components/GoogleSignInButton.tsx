@@ -3,14 +3,17 @@ import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { beginLogin, isOidcConfigured } from '@/lib/oidc';
 
-export default function GoogleSignInButton({ label = 'Continue with Google' }: { label?: string }) {
+export default function GoogleSignInButton({
+  label = 'Continue with Google',
+  returnTo = '/',
+}: { label?: string; returnTo?: string }) {
   const [redirecting, setRedirecting] = useState(false);
 
   if (!isOidcConfigured()) return null;
 
   const handleClick = async () => {
     setRedirecting(true);
-    await beginLogin('/');
+    await beginLogin(returnTo);
   };
 
   return (

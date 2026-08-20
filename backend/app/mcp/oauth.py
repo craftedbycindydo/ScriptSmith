@@ -1,23 +1,25 @@
-"""OAuth 2.1 for the MCP connector, with Zitadel doing the login.
+"""OAuth 2.1 for the MCP connector.
 
-Zitadel is still the identity provider — it owns the user store, the password
-hashes, the Google IdP, MFA and the login page, and none of that changes. What
-this module adds is the three things Zitadel cannot give us for a connector:
+The connector needs three things an MCP client can talk to, and this module is
+all three:
 
-- a registration endpoint Claude and ChatGPT can talk to (RFC 7591),
-- a consent screen we control, showing the student which account they are
-  about to hand an AI assistant,
-- a token minted for *this* resource. Zitadel accepts but ignores the RFC 8707
-  `resource` parameter, so a Zitadel-minted token carries an audience shared by
-  every client registered on the instance. Minting our own after Zitadel has
-  authenticated the person is what makes `aud` mean something.
+- a registration endpoint clients can call before any user exists (RFC 7591),
+- a consent screen, served by our own web app and authenticated by the user's
+  existing Scripting Smith session,
+- a token minted for this resource, so `aud` means something.
+
+Identity comes from the app session and nothing else. This module never sends
+anyone to an identity provider: Scripting Smith has local email-and-password
+accounts as well as Zitadel ones, and a person already signed in to the web app
+should not have to sign in again to connect an assistant. How the app
+authenticates people is the app's own business, decided on its login page.
 
 The redirect chain:
 
     client  -> /mcp/oauth/authorize     validate client, stash the request
-            -> zitadel /oauth/v2/authorize   the actual login
-            -> /mcp/oauth/callback      verify Zitadel's token, resolve users.id
-            -> FRONTEND/mcp/connect     the consent page
+            -> FRONTEND/mcp/connect     consent, using the app session
+                                        (which sends them to the app's own
+                                        login first if they are signed out)
             -> /mcp/oauth/approve       issue a one-time code
             -> client                   which exchanges it at /mcp/oauth/token
 
@@ -33,7 +35,6 @@ import logging
 import secrets
 from urllib.parse import urlencode, urlparse
 
-import httpx
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -45,8 +46,9 @@ from app.database.base import get_db
 from app.mcp import auth
 from app.models.oauth_client import OAuthClient
 from app.models.user import User
+# The app's own session check: password and Zitadel logins alike land here.
+from app.routers.auth import get_current_user
 from app.services.security import SecurityService
-from app.services.zitadel_auth import ZitadelAuth
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +69,6 @@ def get_redis():
 AUTHREQ_TTL = 600  # a pending authorization request, from /authorize to /approve
 AUTHCODE_TTL = 300  # an issued code, from /approve to /token
 SCOPE = auth.SCOPE
-
-
-def _zitadel_issuer() -> str:
-    return (settings.zitadel_issuer or "").rstrip("/")
 
 
 # ── discovery ───────────────────────────────────────────────────
@@ -162,11 +160,27 @@ async def register_client(request: Request, db: Session = Depends(get_db)):
     }
 
 
-# ── authorize: hand the person to Zitadel ───────────────────────
+def _s256(verifier: str) -> str:
+    """The PKCE S256 transform, used to check the client's code_verifier."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+# ── authorize: hand the person to our own UI ────────────────────
 
 
 @router.get("/mcp/oauth/authorize")
 async def authorize(request: Request, db: Session = Depends(get_db)):
+    """Validate the client, then send the person to our consent page.
+
+    There is deliberately no identity-provider leg here. Who the user is comes
+    from their Scripting Smith session on the consent page, for two reasons:
+    this app still has local email-and-password accounts, which a bounce
+    through Zitadel would lock out entirely; and somebody already signed in to
+    Scripting Smith should not have to log in a second time to connect an
+    assistant. However the app authenticates people is the app's business —
+    the connector never sends anyone to an identity provider itself.
+    """
     query = request.query_params
     client_id = query.get("client_id") or ""
     redirect_uri = query.get("redirect_uri") or ""
@@ -177,7 +191,6 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
     client = db.query(OAuthClient).filter(OAuthClient.client_id == client_id).first()
     if not client or redirect_uri not in (client.redirect_uris or []):
         raise HTTPException(status_code=400, detail="Unknown client_id or unregistered redirect_uri")
-    client_name = client.client_name
 
     def redirect_error(error: str, description: str):
         params = {"error": error, "error_description": description}
@@ -191,85 +204,18 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
     if not code_challenge or query.get("code_challenge_method") != "S256":
         return redirect_error("invalid_request", "PKCE with code_challenge_method=S256 is required")
 
-    # Our own PKCE pair for the leg to Zitadel, so the backend needs no secret.
-    verifier = secrets.token_urlsafe(48)
     request_id = secrets.token_urlsafe(32)
     await get_redis().setex(
         f"mcp:authreq:{request_id}",
         AUTHREQ_TTL,
         json.dumps({
             "client_id": client_id,
-            "client_name": client_name,
+            "client_name": client.client_name,
             "redirect_uri": redirect_uri,
             "code_challenge": code_challenge,
             "state": query.get("state"),
-            "zitadel_verifier": verifier,
         }),
     )
-
-    zitadel_params = {
-        "client_id": settings.zitadel_mcp_client_id,
-        "redirect_uri": f"{auth.base_url(request)}/mcp/oauth/callback",
-        "response_type": "code",
-        "scope": "openid profile email",
-        "code_challenge": _s256(verifier),
-        "code_challenge_method": "S256",
-        "state": request_id,
-    }
-    return RedirectResponse(
-        f"{_zitadel_issuer()}/oauth/v2/authorize?{urlencode(zitadel_params)}", status_code=302
-    )
-
-
-def _s256(verifier: str) -> str:
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-
-
-@router.get("/mcp/oauth/callback")
-async def callback(request: Request, db: Session = Depends(get_db)):
-    """Zitadel sends the person back here once they have signed in."""
-    request_id = request.query_params.get("state") or ""
-    code = request.query_params.get("code") or ""
-    if not request_id or not code:
-        raise HTTPException(status_code=400, detail="Login response was incomplete")
-
-    redis = get_redis()
-    raw = await redis.get(f"mcp:authreq:{request_id}")
-    if not raw:
-        raise HTTPException(status_code=400, detail="Connection request expired")
-    authreq = json.loads(raw)
-
-    async with httpx.AsyncClient(timeout=10.0) as http:
-        response = await http.post(
-            f"{_zitadel_issuer()}/oauth/v2/token",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": settings.zitadel_mcp_client_id,
-                "redirect_uri": f"{auth.base_url(request)}/mcp/oauth/callback",
-                "code": code,
-                "code_verifier": authreq["zitadel_verifier"],
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-    if response.status_code != 200:
-        logger.warning("mcp_oauth: Zitadel token exchange failed (%s)", response.status_code)
-        raise HTTPException(status_code=400, detail="Sign-in failed")
-
-    access_token = response.json().get("access_token") or ""
-    claims = ZitadelAuth.verify(access_token, audience=settings.zitadel_mcp_client_id)
-    if not claims or not claims.get("sub"):
-        raise HTTPException(status_code=400, detail="Sign-in failed")
-
-    user = db.query(User).filter(User.zitadel_user_id == claims["sub"]).first()
-    if not user or not user.is_active:
-        # The connector reads accounts, it never creates them.
-        raise HTTPException(status_code=403, detail="No Scripting Smith account is linked to this login")
-
-    authreq["user_id"] = user.id
-    authreq["account_name"] = user.full_name or user.username
-    authreq["account_email"] = user.email
-    await redis.setex(f"mcp:authreq:{request_id}", AUTHREQ_TTL, json.dumps(authreq))
 
     consent_url = f"{settings.frontend_url.rstrip('/')}/mcp/connect?{urlencode({'request': request_id})}"
     return RedirectResponse(consent_url, status_code=302)
@@ -279,36 +225,34 @@ async def callback(request: Request, db: Session = Depends(get_db)):
 
 
 async def _pending(request_id: str, consume: bool) -> dict:
-    """Look up a pending request.
+    """Look up a pending connection request.
 
-    The request id is the capability, on the same terms as an authorization
-    code: 32 random bytes, handed only to the person's own browser by the
-    Zitadel redirect, valid for ten minutes, and consumed the first time it is
-    approved. Approval can only ever redirect to the client's pre-registered
-    redirect_uri, so a stolen id buys an attacker the connection the user was
-    already making, not one of their own.
+    The request id names *which* connection is being approved; it is not
+    identity. The caller proves who they are with their own Scripting Smith
+    session, so a leaked id approves nothing on anyone else's behalf.
     """
     if not request_id:
         raise HTTPException(status_code=400, detail="Missing request id")
-    redis = get_redis()
     key = f"mcp:authreq:{request_id}"
+    redis = get_redis()
     raw = await (redis.getdel(key) if consume else redis.get(key))
     if not raw:
         raise HTTPException(status_code=404, detail="Connection request expired or already used")
-    authreq = json.loads(raw)
-    if not authreq.get("user_id"):
-        raise HTTPException(status_code=400, detail="This connection request has not been signed in yet")
-    return authreq
+    return json.loads(raw)
 
 
 @router.get("/mcp/oauth/request/{request_id}")
-async def get_request(request_id: str):
-    """What the consent page shows: who is asking, and which account."""
+async def get_request(request_id: str, current_user: User = Depends(get_current_user)):
+    """What the consent page shows: who is asking, and which account.
+
+    The account is whoever is signed in to Scripting Smith right now, however
+    they signed in — password or Zitadel, it makes no difference here.
+    """
     authreq = await _pending(request_id, consume=False)
     return {
         "client_name": authreq.get("client_name") or "An AI assistant",
-        "account_name": authreq.get("account_name"),
-        "account_email": authreq.get("account_email"),
+        "account_name": current_user.full_name or current_user.username,
+        "account_email": current_user.email,
         "scope": SCOPE,
     }
 
@@ -318,7 +262,8 @@ class ApproveBody(BaseModel):
 
 
 @router.post("/mcp/oauth/approve")
-async def approve(body: ApproveBody):
+async def approve(body: ApproveBody, current_user: User = Depends(get_current_user)):
+    """Bind the pending request to the signed-in account and issue a code."""
     authreq = await _pending(body.request_id, consume=True)
 
     code = secrets.token_urlsafe(32)
@@ -326,7 +271,7 @@ async def approve(body: ApproveBody):
         f"mcp:authcode:{code}",
         AUTHCODE_TTL,
         json.dumps({
-            "user_id": authreq["user_id"],
+            "user_id": current_user.id,
             "client_id": authreq["client_id"],
             "redirect_uri": authreq["redirect_uri"],
             "code_challenge": authreq["code_challenge"],
@@ -336,7 +281,7 @@ async def approve(body: ApproveBody):
     params = {"code": code}
     if authreq.get("state"):
         params["state"] = authreq["state"]
-    logger.info("mcp_oauth: user %s approved client %s", authreq["user_id"], authreq["client_id"])
+    logger.info("mcp_oauth: user %s approved client %s", current_user.id, authreq["client_id"])
 
     return {"redirect_url": f"{authreq['redirect_uri']}?{urlencode(params)}"}
 

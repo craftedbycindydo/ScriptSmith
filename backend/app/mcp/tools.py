@@ -58,12 +58,22 @@ _admin_service = AdminService(settings)
 # asking for an id the student has never seen.
 
 
-def _accessible_lab(db: Session, user_id: int, lab_id: int) -> Optional[Template]:
-    """A lab is readable only if it is in the student's own classroom scope."""
-    return next(
-        (t for t in TemplateService.get_templates_for_user(db, user_id) if t.id == lab_id),
-        None,
+def _visible_labs(db: Session, user_id: int) -> list:
+    """The labs this caller may open.
+
+    Teaching staff also see labs that are not released yet, on the same rule
+    the web app uses (routers/templates.py:536). Without it a professor could
+    not grade or preview a lab whose visible_from has not arrived, or one that
+    has since been hidden again — while a student still cannot see either.
+    """
+    return TemplateService.get_templates_for_user(
+        db, user_id, include_hidden=require_admin(db, user_id) is not None
     )
+
+
+def _accessible_lab(db: Session, user_id: int, lab_id: int) -> Optional[Template]:
+    """A lab is readable only if it is in this caller's own scope."""
+    return next((t for t in _visible_labs(db, user_id) if t.id == lab_id), None)
 
 
 def _resolve_lab(db: Session, user_id: int, lab_id: Optional[int]) -> Optional[Template]:
@@ -120,7 +130,7 @@ _NO_RUN = {"error": "The student has not run this lab yet — ask them to run it
 
 def list_my_labs(db: Session, user_id: int):
     """Every lab this student can open, with how far they have got on each."""
-    labs = TemplateService.get_templates_for_user(db, user_id)
+    labs = _visible_labs(db, user_id)
 
     submitted = {
         s.template_id: s.status

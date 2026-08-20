@@ -69,79 +69,76 @@ analytics, gradebook reads and a sandboxed code runner.
 
 ## Who does what
 
-Zitadel is still the identity provider and nothing about the web app's login
-changes: it owns the user store, the argon2 hashes, the Google IdP, MFA and the
-login page. The backend (`backend/app/mcp/`) is the OAuth authorization server
-*for the connector only*, because three things are needed that Zitadel cannot
-give us:
+The backend is the connector's OAuth authorization server. It is *not* an
+identity provider and it never sends anyone to one — that is the whole point of
+the design:
 
-- a registration endpoint an AI client can talk to before any user exists,
-- a consent screen we control, showing the account holder's name and email,
-- a token minted for this resource. Zitadel
-  [accepts but ignores](https://zitadel.com/docs/guides/integrate/dynamic-client-registration)
-  the RFC 8707 `resource` parameter, so a Zitadel-minted token carries an
-  audience shared by every client registered on the instance.
+- Scripting Smith has local email-and-password accounts as well as Zitadel
+  ones. Bouncing the connector through Zitadel would lock every password user
+  out of it.
+- Somebody already signed in to the web app should not have to sign in again
+  to connect an assistant.
+- Users should never see Zitadel. How the app authenticates people is decided
+  on its own login page, and the connector inherits whatever that decides.
 
-The redirect chain, with the login still happening at Zitadel:
+So identity comes from the ordinary Scripting Smith session:
 
 ```
-client  -> /mcp/oauth/authorize          validate client, stash the request
-        -> zitadel /oauth/v2/authorize   the login, exactly as the web app does it
-        -> /mcp/oauth/callback           verify Zitadel's token, resolve users.id
-        -> FRONTEND/mcp/connect          consent: account name, email, client name
-        -> /mcp/oauth/approve            one-time code
-        -> client                        exchanges it at /mcp/oauth/token
+client  -> /mcp/oauth/authorize     validate client, stash the request
+        -> FRONTEND/mcp/connect     consent page, authenticated by the app
+                                    session (it sends signed-out visitors to
+                                    the app's own /login and back again)
+        -> /mcp/oauth/approve       issue a one-time code
+        -> client                   exchanges it at /mcp/oauth/token
 ```
 
 Connector tokens carry `scope=mcp`. `app/routers/auth.py` refuses that scope, so
 a connector token cannot be replayed against the browser API, and bumping
-`users.token_version` revokes both at once.
+`users.token_version` (which a password change does) revokes both at once.
 
 ## Setup
 
-1. **Create a Zitadel application** for the connector's login leg: an OIDC web
-   app, Authorization Code + PKCE, no secret, with one redirect URI:
+There is one variable:
 
-   ```
-   https://backend-production-964a.up.railway.app/mcp/oauth/callback
-   ```
+```
+API_BASE_URL=https://backend-production-964a.up.railway.app
+```
 
-2. **Set the backend variables** on the Railway `Backend` service:
+Empty means `/mcp` and its discovery routes are never registered, so this
+doubles as the on/off switch. It has to be absolute because MCP clients pin the
+values in the discovery documents; guessing from the request host is not good
+enough.
 
-   ```
-   ZITADEL_MCP_CLIENT_ID=<the client id from step 1>
-   API_BASE_URL=https://backend-production-964a.up.railway.app
-   ```
+`FRONTEND_URL` must point at the web app (`https://scriptingsmith.com`) — the
+consent redirect uses it. The `mcp_oauth_clients` table is created by
+`Base.metadata.create_all` at startup like every other table; no migration.
 
-   An empty `ZITADEL_MCP_CLIENT_ID` leaves `/mcp` and the discovery routes
-   unregistered, so the connector is off by default. `API_BASE_URL` only builds
-   the absolute URLs in the discovery documents and falls back to the request
-   host if unset. There is no `api.scriptingsmith.com`; the backend is served on
-   its Railway-generated domain, which is also what the frontend targets.
+Nothing needs creating in Zitadel. An OIDC application called **MCP Connector**
+was made during an earlier design that routed the connector's login through
+Zitadel; that design is gone, and both the application and any
+`ZITADEL_MCP_CLIENT_ID` variable are dead and can be deleted.
 
-   The `mcp_oauth_clients` table is created by `Base.metadata.create_all` at
-   startup, like every other table here. No migration step.
+### Verify
 
-3. **Verify**, in order:
+```
+curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-protected-resource/mcp
+curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-authorization-server
+curl -si -X POST https://backend-production-964a.up.railway.app/mcp \
+     -H 'content-type: application/json' \
+     -H 'accept: application/json, text/event-stream' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -20
+```
 
-   ```
-   curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-protected-resource/mcp
-   curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-authorization-server
-   curl -si -X POST https://backend-production-964a.up.railway.app/mcp \
-        -H 'content-type: application/json' \
-        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -20
-   ```
+The first names the backend under `authorization_servers`, the second
+advertises `/mcp/oauth/authorize` and `/mcp/oauth/register`, and the third must
+be a 401 carrying `WWW-Authenticate: Bearer resource_metadata="..."`. Those
+three are the whole discovery chain a client walks.
 
-   The first names the backend under `authorization_servers`, the second
-   advertises `/mcp/oauth/authorize` and `/mcp/oauth/register`, and the third
-   must be a 401 carrying `WWW-Authenticate: Bearer resource_metadata="..."`.
-   Those three responses are the whole discovery chain a client walks.
-
-4. **Add the connector** in Claude (Settings → Connectors → Add custom
-   connector) or ChatGPT. The student signs in through the normal Zitadel login
-   and lands on the consent screen. A Zitadel account with no matching
-   `users.zitadel_user_id` is refused — the connector reads accounts, it never
-   creates them.
+Then add the connector in Claude (Settings → Connectors → Add custom connector)
+or ChatGPT with the URL `https://backend-production-964a.up.railway.app/mcp`.
+The person signs in to Scripting Smith if they are not already, approves on the
+consent page, and that is the whole flow. A connector can only ever act as an
+account that already exists — it never creates one.
 
 ## Zitadel dynamic client registration: turn it back off
 
@@ -178,11 +175,10 @@ Known and accepted, not oversights:
   screen. Refresh tokens are stateless JWTs, matching how `app/routers/auth.py`
   already works — revocation is `users.token_version`, not a per-connection
   kill switch.
-- **The consent request id is the capability.** It is 32 random bytes, handed
-  only to the person's own browser by the Zitadel redirect, valid ten minutes,
-  and consumed on approval — the same terms as an authorization code. Approval
-  can only redirect to the client's pre-registered `redirect_uri`, so a stolen
-  id buys the connection the user was already making.
+- **The consent request id names a connection, not a person.** Approval is
+  authenticated by the caller's own Scripting Smith session, so a leaked id
+  approves nothing on anyone else's behalf; and approval can only ever redirect
+  to the client's pre-registered `redirect_uri`.
 - **No Client ID Metadata Document support.** ChatGPT is reported to prefer
   CIMD over RFC 7591 registration. It was written and then cut as speculation:
   nothing here has been tested against ChatGPT yet. If its connector refuses

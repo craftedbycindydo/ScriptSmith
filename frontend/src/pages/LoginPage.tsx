@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +16,12 @@ export default function LoginPage() {
   
   const { login, isLoading, error, clearError } = useAuthStore();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Only same-site paths: an absolute URL here would be an open redirect.
+  const redirectParam = searchParams.get('redirect') ?? '';
+  const redirectTo = redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+    ? redirectParam
+    : '/';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +35,7 @@ export default function LoginPage() {
     
     const success = await login(normalizedEmail, password);
     if (success) {
-      navigate('/');
+      navigate(redirectTo);
     }
   };
 
@@ -135,7 +141,7 @@ export default function LoginPage() {
               </form>
 
               <div className="mt-4">
-                <GoogleSignInButton />
+                <GoogleSignInButton returnTo={redirectTo} />
               </div>
             </CardContent>
 

@@ -74,13 +74,9 @@ class Settings(BaseSettings):
     zitadel_issuer: str = ""
     zitadel_client_id: str = ""
 
-    # MCP connector. Empty client id disables the /mcp endpoint entirely.
-    # This is the Zitadel OIDC application the connector's login leg uses; the
-    # connector's own tokens are minted here - see deploy/zitadel/README.md.
-    zitadel_mcp_client_id: str = ""
-
-    # Absolute public URL of this API, used to build the RFC 9728 metadata that
-    # MCP clients fetch. Falls back to the request host when unset.
+    # Absolute public URL of this API. MCP clients fetch discovery documents
+    # that must carry absolute URLs, so this doubles as the connector's on/off
+    # switch: empty means /mcp and its metadata routes are never registered.
     api_base_url: str = ""
 
     # Base URL used to build links in outgoing emails.

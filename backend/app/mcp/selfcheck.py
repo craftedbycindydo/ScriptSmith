@@ -14,8 +14,7 @@ import asyncio
 import json
 import os
 
-os.environ.setdefault("ZITADEL_MCP_CLIENT_ID", "selfcheck-client")
-os.environ.setdefault("ZITADEL_ISSUER", "https://auth.example.invalid")
+os.environ.setdefault("API_BASE_URL", "https://api.example.invalid")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -38,6 +37,8 @@ from app.mcp import auth, extraction, server, tools  # noqa: E402
 auth.SessionLocal = Session
 tools.SessionLocal = Session
 server.SessionLocal = Session
+
+from datetime import datetime, timezone  # noqa: E402
 
 from app.models.classroom import Classroom, UserClassroom  # noqa: E402
 from app.models.code_submission import CodeSubmission  # noqa: E402
@@ -80,6 +81,10 @@ def seed():
         UserClassroom(user_id=BOB, classroom_id=CS101, role="STUDENT", is_active=True),
         Template(id=10, name="Reverse a list", language="python",
                  code_content=LAB_CODE, created_by=PROF, is_active=True),
+        # Not released yet: staff may open it, students must not see it.
+        Template(id=11, name="Next week's lab", language="python",
+                 code_content=LAB_CODE, created_by=PROF, is_active=True,
+                 visible_from=datetime(2099, 1, 1, tzinfo=timezone.utc)),
         CodeSubmission(id=100, user_id=ALICE, template_id=10, language="python",
                        code="def reverse(items):\n    return items\n",
                        output="PASS handles the empty list\nFAIL reverses three items\n"
@@ -112,6 +117,25 @@ def check_scoping():
         assert plan["teaching_mode"] == "conceptual"
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
+    finally:
+        db.close()
+
+
+def check_unreleased_labs():
+    """A lab that has not been released is staff-only."""
+    db = Session()
+    try:
+        student_labs = {lab["lab_id"] for lab in tools.list_my_labs(db, ALICE)["labs"]}
+        staff_labs = {lab["lab_id"] for lab in tools.list_my_labs(db, PROF)["labs"]}
+
+        assert 10 in student_labs and 10 in staff_labs, (student_labs, staff_labs)
+        assert 11 not in student_labs, "a student was shown an unreleased lab"
+        assert 11 in staff_labs, "staff cannot see a lab they have not released yet"
+
+        # ...and the same rule holds when the id is named directly, so a
+        # student cannot reach it by guessing.
+        assert tools.get_lab_brief(db, ALICE, 11) == tools._NO_LAB
+        assert tools.get_lab_brief(db, PROF, 11)["name"] == "Next week's lab"
     finally:
         db.close()
 
@@ -358,6 +382,25 @@ def check_sdk_server():
     assert degraded["needs"] == "classroom_id"
     assert {c["classroom_id"] for c in degraded["options"]} == {CS101, 52}
 
+    # The OAuth flow keeps pending requests in Redis. There is none here, and
+    # an async client would bind to a loop TestClient closes between requests,
+    # so stand in a dict with the three operations the flow actually uses.
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        async def setex(self, key, _ttl, value):
+            self.store[key] = value
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def getdel(self, key):
+            return self.store.pop(key, None)
+
+    fake_redis = FakeRedis()
+    oauth.get_redis = lambda: fake_redis
+
     # An unauthenticated MCP request is refused by the SDK's own auth layer.
     app = FastAPI()
     app.include_router(auth.router)
@@ -383,11 +426,42 @@ def check_sdk_server():
     assert unauthorized.status_code == 401, unauthorized.status_code
     assert "www-authenticate" in {k.lower() for k in unauthorized.headers}
 
+    # /authorize must land on our own consent page and never on an identity
+    # provider: this app has password accounts an IdP bounce would lock out,
+    # and someone already signed in should not be asked to log in twice.
+    registered = client.post("/mcp/oauth/register", json={
+        "client_name": "probe", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+    }).json()
+    landing = client.get("/mcp/oauth/authorize", params={
+        "client_id": registered["client_id"],
+        "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+        "response_type": "code",
+        "code_challenge": "8Ie1Bg6dyGP8ZbFhVXbNi4pOxK5aFcwLB0Ro-3g4Xn0",
+        "code_challenge_method": "S256",
+    }, follow_redirects=False)
+    assert landing.status_code == 302, landing.status_code
+    destination = landing.headers["location"]
+    assert "/mcp/connect?request=" in destination, destination
+    for forbidden in ("oauth/v2/authorize", "accounts.google.com", "auth.scriptingsmith.com"):
+        assert forbidden not in destination, destination
+
+    # Consent is authenticated by the app session, so an anonymous caller is
+    # refused rather than the request id being trusted as identity.
+    request_id = destination.split("request=")[1]
+    assert client.get(f"/mcp/oauth/request/{request_id}").status_code == 401
+    assert client.post("/mcp/oauth/approve", json={"request_id": request_id}).status_code == 401
+
+    # An unknown client is never redirected anywhere (open-redirect guard).
+    assert client.get("/mcp/oauth/authorize", params={
+        "client_id": "nope", "redirect_uri": "https://evil.test/cb", "response_type": "code",
+    }, follow_redirects=False).status_code == 400
+
 
 def main():
     seed()
     check_extraction()
     check_scoping()
+    check_unreleased_labs()
     check_no_answer_leak()
     check_role_boundary()
     check_run_code_is_admin_only()
