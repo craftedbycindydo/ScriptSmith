@@ -62,7 +62,7 @@ own auth until the JWKS swap is deployed. To abort: delete the Zitadel service.
 
 # MCP connector
 
-Students add `https://backend-production-964a.up.railway.app/mcp` as a custom
+Students add `https://api.scriptingsmith.com/mcp` as a custom
 connector in Claude or ChatGPT and get a tutor with read access to their own
 labs, code and run history. Teaching staff additionally get classroom
 analytics, gradebook reads and a sandboxed code runner.
@@ -101,11 +101,15 @@ a connector token cannot be replayed against the browser API, and bumping
 There is one variable:
 
 ```
-API_BASE_URL=https://backend-production-964a.up.railway.app
+API_BASE_URL=https://api.scriptingsmith.com
 ```
 
 Empty means `/mcp` and its discovery routes are never registered, so this
-doubles as the on/off switch. It has to be absolute because MCP clients pin the
+doubles as the on/off switch. `TRUSTED_HOSTS` must also list the host, or
+Starlette's TrustedHostMiddleware answers every request with a bare
+`Invalid host header` before it reaches a route — and note that changing a
+Railway variable does not always redeploy, so confirm the running process
+picked it up rather than assuming. It has to be absolute because MCP clients pin the
 values in the discovery documents; guessing from the request host is not good
 enough.
 
@@ -121,9 +125,9 @@ Zitadel; that design is gone, and both the application and any
 ### Verify
 
 ```
-curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-protected-resource/mcp
-curl -s https://backend-production-964a.up.railway.app/.well-known/oauth-authorization-server
-curl -si -X POST https://backend-production-964a.up.railway.app/mcp \
+curl -s https://api.scriptingsmith.com/.well-known/oauth-protected-resource/mcp
+curl -s https://api.scriptingsmith.com/.well-known/oauth-authorization-server
+curl -si -X POST https://api.scriptingsmith.com/mcp \
      -H 'content-type: application/json' \
      -H 'accept: application/json, text/event-stream' \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -20
@@ -135,7 +139,7 @@ be a 401 carrying `WWW-Authenticate: Bearer resource_metadata="..."`. Those
 three are the whole discovery chain a client walks.
 
 Then add the connector in Claude (Settings → Connectors → Add custom connector)
-or ChatGPT with the URL `https://backend-production-964a.up.railway.app/mcp`.
+or ChatGPT with the URL `https://api.scriptingsmith.com/mcp`.
 The person signs in to Scripting Smith if they are not already, approves on the
 consent page, and that is the whole flow. A connector can only ever act as an
 account that already exists — it never creates one.
