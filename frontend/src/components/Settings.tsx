@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import AIConnectorCard from './AIConnectorCard';
 import CodeHistory from './CodeHistory';
 import UserSubmissions from './UserSubmissions';
 import UserAnalytics from './UserAnalytics';
@@ -40,7 +41,8 @@ import {
   Eye,
   EyeOff,
   BarChart3,
-  Check
+  Check,
+  Bot
 } from 'lucide-react';
 
 const SETTINGS_TABS = [
@@ -48,6 +50,7 @@ const SETTINGS_TABS = [
   { id: 'submissions', label: 'Submissions', icon: Send },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'profile', label: 'Profile', icon: User },
+  { id: 'connector', label: 'AI Assistant', icon: Bot },
   { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
 
@@ -781,6 +784,8 @@ export default function Settings() {
           </Card>
                   </div>
                 )}
+
+                {activeTab === 'connector' && <AIConnectorCard />}
 
                 {activeTab === 'appearance' && (
                   <div className="space-y-4">
