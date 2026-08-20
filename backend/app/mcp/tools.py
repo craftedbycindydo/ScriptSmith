@@ -685,6 +685,89 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
     }
 
 
+BULK_CODE_CHARS = 4_000
+
+
+def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab_id: int = None):
+    """Every student's work on one lab, for a whole classroom, in one call.
+
+    Grading a class of thirty through get_student_work is thirty round trips,
+    and a hundred is a hundred; the model spends the turn on tool calls instead
+    of on the marking. This does the same work in three queries no matter how
+    big the class, and returns the same per-student shape.
+
+    Code is capped tighter than the single-student tool - a class of a hundred
+    at the full limit would not fit in a context window - and each row says
+    whether it was cut, so a grader knows to open the student individually
+    rather than mark from a truncated file.
+    """
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if classroom_id is None or lab_id is None:
+        return {"error": "classroom_id and lab_id are both required."}
+    if classroom_id not in _taught_classroom_ids(db, admin):
+        return _NOT_YOURS
+
+    roster = db.query(User.id, User.username, User.full_name).join(
+        UserClassroom, UserClassroom.user_id == User.id
+    ).filter(
+        UserClassroom.classroom_id == classroom_id,
+        UserClassroom.role == "STUDENT",
+        UserClassroom.is_active.is_(True),
+    ).all()
+    if not roster:
+        return {"lab_id": lab_id, "classroom_id": classroom_id, "students": []}
+
+    student_ids = [row[0] for row in roster]
+
+    # Newest first, then keep the first seen per student: one pass, no N+1.
+    submissions = {}
+    for row in db.query(TemplateSubmission).filter(
+        TemplateSubmission.user_id.in_(student_ids),
+        TemplateSubmission.template_id == lab_id,
+    ).order_by(TemplateSubmission.submitted_at.desc()).all():
+        submissions.setdefault(row.user_id, row)
+
+    runs = {}
+    for row in db.query(CodeSubmission).filter(
+        CodeSubmission.user_id.in_(student_ids),
+        CodeSubmission.template_id == lab_id,
+    ).order_by(CodeSubmission.created_at.desc()).all():
+        runs.setdefault(row.user_id, row)
+
+    students = []
+    for student_id, username, full_name in roster:
+        submission = submissions.get(student_id)
+        source = submission or runs.get(student_id)
+        if source is None:
+            students.append({
+                "student_id": student_id,
+                "name": full_name or username,
+                "submitted": False,
+                "status": "no work recorded",
+            })
+            continue
+
+        code = (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")
+        output = getattr(source, "output", None)
+        students.append({
+            "student_id": student_id,
+            "name": full_name or username,
+            "submitted": bool(submission),
+            "status": getattr(source, "status", None),
+            "code": code[:BULK_CODE_CHARS],
+            "code_truncated": len(code) > BULK_CODE_CHARS,
+            "at": str(getattr(source, "submitted_at", None) or getattr(source, "created_at", None)),
+            "test_tally": extraction.extract_pass_count(output),
+            "failing_tests": extraction.extract_failing_tests(output)[:6],
+            "error_message": (getattr(source, "error_message", None) or "")[:600],
+        })
+
+    return {"lab_id": lab_id, "classroom_id": classroom_id,
+            "students": sorted(students, key=lambda row: row["name"] or "")}
+
+
 async def get_classroom_gradebook(db: Session, user_id: int, classroom_id: int = None):
     """The student x lab status matrix the gradebook screen is built from.
 
@@ -788,6 +871,14 @@ _STUDENT_LAB_ARG = {
     },
     "required": ["student_id", "lab_id"],
 }
+_CLASSROOM_LAB_ARG = {
+    "type": "object",
+    "properties": {
+        "classroom_id": {"type": "integer", "description": "Classroom id from list_my_classrooms."},
+        "lab_id": {"type": "integer", "description": "Lab id from list_my_labs."},
+    },
+    "required": ["classroom_id", "lab_id"],
+}
 _RUN_ARG = {
     "type": "object",
     "properties": {
@@ -839,7 +930,9 @@ ADMIN_TOOLS = [
     (get_student_report, _STUDENT_ARG,
      "TEACHING STAFF. One student's full record — progress, error patterns, lab history — for writing feedback or justifying a grade."),
     (get_student_work, _STUDENT_LAB_ARG,
-     "TEACHING STAFF. One student's submitted code and run outcome for one lab. This is the artefact to grade; the gradebook only records whether it ran."),
+     "TEACHING STAFF. One student's submitted code and run outcome for one lab. Use it to look closely at a single student; for grading a whole class use get_lab_submissions instead."),
+    (get_lab_submissions, _CLASSROOM_LAB_ARG,
+     "TEACHING STAFF. Every student's work on one lab for a whole classroom, in a single call. This is the tool for grading a class: it returns the same per-student detail as get_student_work without one call per student. Code is capped, and any row whose code was cut says so."),
     (get_classroom_gradebook, _CLASSROOM_ARG,
      "TEACHING STAFF. The student-by-lab status matrix for one of your classrooms. Status means the code ran, not that it is correct — pair it with get_student_work before awarding a grade."),
     (run_code, _RUN_ARG,

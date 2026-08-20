@@ -394,6 +394,10 @@ def _register_plain(core, description: str, shape: str) -> None:
         async def tool(student_id: int, lab_id: int):
             user_id = caller_id()
             return _session(core, user_id, student_id, lab_id) if user_id else _NO_CALLER
+    elif shape == "classroom_lab":
+        async def tool(classroom_id: int, lab_id: int):
+            user_id = caller_id()
+            return _session(core, user_id, classroom_id, lab_id) if user_id else _NO_CALLER
     else:
         raise ValueError(f"unknown shape {shape}")
 
@@ -403,6 +407,7 @@ def _register_plain(core, description: str, shape: str) -> None:
 
 
 _SHAPES = {
+    "get_lab_submissions": "classroom_lab",
     "list_my_labs": "none",
     "get_my_error_patterns": "none",
     "get_my_progress": "none",

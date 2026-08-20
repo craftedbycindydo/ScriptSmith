@@ -222,6 +222,32 @@ def check_role_boundary():
     assert "BOBS_PRIVATE_CODE" in work["code"], work
 
 
+def check_bulk_submissions():
+    """One call returns the whole class, and it is still classroom-scoped."""
+    db = Session()
+    try:
+        result = tools.get_lab_submissions(db, PROF, CS101, 10)
+        rows = {r["student_id"]: r for r in result["students"]}
+        assert set(rows) == {ALICE, BOB}, rows
+
+        # Same per-student detail the single-student tool gives.
+        assert "BOBS_PRIVATE_CODE" in rows[BOB]["code"]
+        assert rows[ALICE]["test_tally"] == {"passed": 1, "total": 2}
+        assert rows[ALICE]["failing_tests"][0]["test"] == "reverses three items"
+        assert rows[ALICE]["code_truncated"] is False
+
+        # It agrees with get_student_work, so grading either way is consistent.
+        single = tools.get_student_work(db, PROF, BOB, 10)
+        assert single["code"].startswith(rows[BOB]["code"][:50])
+
+        # Scoping still holds: a student is refused, and so is a classroom
+        # this professor does not teach.
+        assert tools.get_lab_submissions(db, ALICE, CS101, 10) == tools._NOT_ADMIN
+        assert tools.get_lab_submissions(db, PROF, OTHER_CLASS, 10) == tools._NOT_YOURS
+    finally:
+        db.close()
+
+
 def check_run_code_is_admin_only():
     class FakeExecutor:
         def __init__(self):
@@ -377,7 +403,7 @@ def check_sdk_server():
 
     listed = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in listed}
-    assert len(listed) == 20, sorted(names)
+    assert len(listed) == 21, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
     # Every elicited tool must expose the id the model can pass. Hiding it
@@ -529,6 +555,7 @@ def main():
     check_run_counts_agree()
     check_no_answer_leak()
     check_role_boundary()
+    check_bulk_submissions()
     check_run_code_is_admin_only()
     check_run_lab()
     check_tokens()
