@@ -380,12 +380,15 @@ def check_sdk_server():
     assert len(listed) == 20, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
-    # A Resolve-filled parameter must not appear in the model-facing schema:
-    # the resolver supplies it, so the model can neither set it nor guess it.
+    # Every elicited tool must expose the id the model can pass. Hiding it
+    # behind the resolver alone deadlocks the degrade path: a client that
+    # cannot be elicited gets told to "call again with the classroom" and has
+    # no parameter to put it in. Observed live before this was fixed.
     by_name = {t.name: t for t in listed}
     for tool_name in ("get_classroom_gradebook", "get_classroom_report", "list_classroom_students"):
         properties = (by_name[tool_name].input_schema or {}).get("properties", {})
-        assert properties == {}, (tool_name, properties)
+        assert set(properties) == {"classroom_id"}, (tool_name, properties)
+    assert set((by_name["check_my_lab"].input_schema or {})["properties"]) == {"lab_id"}
     assert set((by_name["run_code"].input_schema or {})["properties"]) == {
         "code", "language", "input_data"}
 
