@@ -123,7 +123,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
   const loadTemplates = async () => {
     setLoading(true);
     try {
-      const data = await apiService.getAllTemplatesAdmin();
+      const data = await apiService.getAllTemplatesAdminComplete();
       setTemplates(Array.isArray(data) ? data : []);
     } catch (err: any) {
       console.error('Failed to load templates:', err);

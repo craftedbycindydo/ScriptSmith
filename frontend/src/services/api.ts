@@ -618,6 +618,31 @@ export const apiService = {
     return response.data;
   },
 
+  /**
+   * Every template, not the first page of them.
+   *
+   * The manager renders this as the complete list with no pagination, so a
+   * fixed limit silently hides templates past it — the same class of bug as
+   * the five-classroom members panel. Pages until the server returns a short
+   * page, so the ceiling is the data, not a number written here.
+   */
+  async getAllTemplatesAdminComplete(): Promise<TemplateListItem[]> {
+    const pageSize = 200; // well inside the endpoint's le=1000
+    const all: TemplateListItem[] = [];
+
+    for (let skip = 0; ; skip += pageSize) {
+      const page = await this.getAllTemplatesAdmin(skip, pageSize);
+      all.push(...page);
+      if (page.length < pageSize) return all;
+      if (all.length >= 10000) {
+        // Refuse to loop forever on a misbehaving endpoint, and say so rather
+        // than returning a quietly truncated list.
+        console.warn('getAllTemplatesAdminComplete stopped at 10000 templates');
+        return all;
+      }
+    }
+  },
+
   async getTemplateAdmin(templateId: number): Promise<Template> {
     const response = await api.get(`/admin/templates/${templateId}`);
     return response.data;
