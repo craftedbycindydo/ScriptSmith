@@ -784,6 +784,54 @@ class TemplateService:
         ).first()
     
     @staticmethod
+    def _submissions_query(
+        db: Session,
+        template_id: int = None,
+        user_id: int = None,
+        status: str = None,
+        language: str = None,
+        template_name: str = None,
+    ):
+        """The filtered query, before any paging.
+
+        Every filter belongs here rather than in the caller: template_name used
+        to be applied in Python *after* the page was fetched, so searching by
+        name only searched whichever page you happened to be on.
+        """
+        query = db.query(TemplateSubmission)
+
+        if template_id is not None:
+            query = query.filter(TemplateSubmission.template_id == template_id)
+
+        if user_id is not None:
+            query = query.filter(TemplateSubmission.user_id == user_id)
+
+        if status:
+            query = query.filter(TemplateSubmission.status == status)
+
+        if language:
+            query = query.filter(TemplateSubmission.language == language)
+
+        if template_name:
+            query = query.filter(TemplateSubmission.template_name.ilike(f"%{template_name}%"))
+
+        return query
+
+    @staticmethod
+    def count_template_submissions(
+        db: Session,
+        template_id: int = None,
+        user_id: int = None,
+        status: str = None,
+        language: str = None,
+        template_name: str = None,
+    ) -> int:
+        """How many submissions match, so a page can report a real total."""
+        return TemplateService._submissions_query(
+            db, template_id, user_id, status, language, template_name
+        ).count()
+
+    @staticmethod
     def get_template_submissions(
         db: Session, 
         template_id: int = None,
@@ -791,23 +839,13 @@ class TemplateService:
         status: str = None,
         language: str = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        template_name: str = None,
     ) -> List[TemplateSubmission]:
-        """Get submissions with filters (similar to executions)"""
-        query = db.query(TemplateSubmission)
-        
-        if template_id is not None:
-            query = query.filter(TemplateSubmission.template_id == template_id)
-        
-        if user_id is not None:
-            query = query.filter(TemplateSubmission.user_id == user_id)
-        
-        if status:
-            query = query.filter(TemplateSubmission.status == status)
-            
-        if language:
-            query = query.filter(TemplateSubmission.language == language)
-        
+        """One page of submissions, newest first."""
+        query = TemplateService._submissions_query(
+            db, template_id, user_id, status, language, template_name
+        )
         return query.order_by(desc(TemplateSubmission.submitted_at)).offset(skip).limit(limit).all()
     
     @staticmethod

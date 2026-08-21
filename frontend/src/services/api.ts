@@ -734,22 +734,30 @@ export const apiService = {
     return response.data;
   },
 
-  async getAllSubmissions(
-    templateName?: string,
-    user?: string, 
-    language?: string,
-    status?: string,
-    skip: number = 0,
-    limit: number = 100
-  ): Promise<TemplateSubmission[]> {
+  /**
+   * One page of submissions, with the total.
+   *
+   * Named options rather than six positional arguments: the previous shape
+   * was `(templateName, user, language, status, skip, limit)` and a caller
+   * passing ('0', '100') meant to send skip/limit but actually filtered by
+   * template name "0" and user "100", so it could only ever return nothing.
+   */
+  async getAllSubmissions(options: {
+    templateName?: string;
+    user?: string;
+    language?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<{ submissions: TemplateSubmission[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
-    if (templateName) params.append('template_name', templateName);
-    if (user) params.append('user', user);
-    if (language) params.append('language', language);
-    if (status) params.append('status', status);
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    
+    if (options.templateName) params.append('template_name', options.templateName);
+    if (options.user) params.append('user', options.user);
+    if (options.language) params.append('language', options.language);
+    if (options.status) params.append('status', options.status);
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+
     const response = await api.get(`/admin/submissions?${params.toString()}`);
     return response.data;
   },

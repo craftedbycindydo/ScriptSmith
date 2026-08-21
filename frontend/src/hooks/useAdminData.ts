@@ -217,7 +217,7 @@ export function useTemplateStats() {
 export function useAdminSubmissions() {
   return useQuery({
     queryKey: adminQueryKeys.submissions,
-    queryFn: () => apiService.getAllSubmissions('0', '100'),
+    queryFn: () => apiService.getAllSubmissions(),
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,

@@ -800,18 +800,31 @@ async def get_classroom_users(
         )
 
 
-@router.get("/admin/submissions", response_model=List[TemplateSubmissionResponse])
+class PaginatedSubmissionsResponse(BaseModel):
+    submissions: List[TemplateSubmissionResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/admin/submissions", response_model=PaginatedSubmissionsResponse)
 async def get_all_submissions(
     template_name: Optional[str] = Query(None, description="Filter by template name"),
     user: Optional[str] = Query(None, description="Filter by username"),
     language: Optional[str] = Query(None, description="Filter by language"), 
     status: Optional[str] = Query(None, description="Filter by status"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all template submissions with filters (Admin only)"""
+    """One page of template submissions, with the total (Admin only).
+
+    Paged rather than capped. The previous version took skip/limit with a hard
+    ceiling of 100, so submission 101 was unreachable however the client asked
+    - and it reported no total, so the UI could not offer pages either. Filters
+    are applied in SQL, which is also what makes the total mean anything.
+    """
     try:
         # Convert user filter to user_id if provided
         user_id = None
@@ -819,21 +832,21 @@ async def get_all_submissions(
             from app.models.user import User as UserModel
             user_obj = db.query(UserModel).filter(UserModel.username == user).first()
             user_id = user_obj.id if user_obj else -1  # Use -1 to return no results if user not found
-        
+
+        filters = {
+            "user_id": user_id,
+            "status": status,
+            "language": language,
+            "template_name": template_name,
+        }
+        total = TemplateService.count_template_submissions(db=db, **filters)
         submissions = TemplateService.get_template_submissions(
-            db=db,
-            user_id=user_id,
-            status=status,
-            language=language,
-            skip=skip,
-            limit=limit
+            db=db, skip=(page - 1) * page_size, limit=page_size, **filters
         )
-        
-        # Filter by template name if provided (since we can't easily do this in SQL with current structure)
-        if template_name:
-            submissions = [s for s in submissions if s.template_name and template_name.lower() in s.template_name.lower()]
-        
-        return submissions
+
+        return PaginatedSubmissionsResponse(
+            submissions=submissions, total=total, page=page, page_size=page_size
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
