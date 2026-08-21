@@ -79,6 +79,12 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
   
   // State
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
+  // Filtering and the classroom grouping below both run over whatever is
+  // loaded, so a page must be loaded before it can be searched. Rather than
+  // pull everything on mount or cap silently, load a page at a time and say
+  // plainly how much of the total is in hand.
+  const [templatesTotal, setTemplatesTotal] = useState(0);
+  const templatePageSize = 200;
   const [templateStats, setTemplateStats] = useState<TemplateStats | null>(null);
   const [availableClassrooms, setAvailableClassrooms] = useState<ClassroomInfo[]>([]);
   const [classroomUsers, setClassroomUsers] = useState<{[classroomId: number]: UserInfo[]}>({});
@@ -120,14 +126,17 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
 
 
 
-  const loadTemplates = async () => {
+  const loadTemplates = async (page: number = 1) => {
     setLoading(true);
     try {
-      const data = await apiService.getAllTemplatesAdminComplete();
-      setTemplates(Array.isArray(data) ? data : []);
+      const data = await apiService.getAllTemplatesAdmin({ page, pageSize: templatePageSize });
+      setTemplates(prev =>
+        page === 1 ? (data.templates ?? []) : [...prev, ...(data.templates ?? [])]
+      );
+      setTemplatesTotal(data.total ?? 0);
     } catch (err: any) {
       console.error('Failed to load templates:', err);
-      setTemplates([]);
+      if (page === 1) setTemplates([]);
     } finally {
       setLoading(false);
     }
@@ -1024,11 +1033,32 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         <CardHeader className="space-y-4">
           <div className="flex items-center justify-between gap-2">
             <CardTitle>Templates</CardTitle>
-            {filtersActive && (
-              <span className="text-sm text-muted-foreground">
-                {filteredTemplates().length} of {templates.length} shown
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              {filtersActive && (
+                <span className="text-sm text-muted-foreground">
+                  {filteredTemplates().length} of {templates.length} shown
+                </span>
+              )}
+              {/* Never let the list end without saying whether it is the whole
+                  list. Silence is what made the old cap a bug. */}
+              {templatesTotal > templates.length && (
+                <>
+                  <span className="text-sm text-muted-foreground">
+                    {templates.length} of {templatesTotal} loaded
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() =>
+                      loadTemplates(Math.floor(templates.length / templatePageSize) + 1)
+                    }
+                  >
+                    {loading ? 'Loading…' : 'Load more'}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Filters */}

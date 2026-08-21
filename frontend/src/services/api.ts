@@ -613,35 +613,20 @@ export const apiService = {
     return response.data;
   },
 
-  async getAllTemplatesAdmin(skip: number = 0, limit: number = 100): Promise<TemplateListItem[]> {
-    const response = await api.get(`/admin/templates?skip=${skip}&limit=${limit}`);
+  /** One page of templates, with the total. */
+  async getAllTemplatesAdmin(options: { page?: number; pageSize?: number } = {}): Promise<{
+    templates: TemplateListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> {
+    const params = new URLSearchParams();
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+    const response = await api.get(`/admin/templates?${params.toString()}`);
     return response.data;
   },
 
-  /**
-   * Every template, not the first page of them.
-   *
-   * The manager renders this as the complete list with no pagination, so a
-   * fixed limit silently hides templates past it — the same class of bug as
-   * the five-classroom members panel. Pages until the server returns a short
-   * page, so the ceiling is the data, not a number written here.
-   */
-  async getAllTemplatesAdminComplete(): Promise<TemplateListItem[]> {
-    const pageSize = 200; // well inside the endpoint's le=1000
-    const all: TemplateListItem[] = [];
-
-    for (let skip = 0; ; skip += pageSize) {
-      const page = await this.getAllTemplatesAdmin(skip, pageSize);
-      all.push(...page);
-      if (page.length < pageSize) return all;
-      if (all.length >= 10000) {
-        // Refuse to loop forever on a misbehaving endpoint, and say so rather
-        // than returning a quietly truncated list.
-        console.warn('getAllTemplatesAdminComplete stopped at 10000 templates');
-        return all;
-      }
-    }
-  },
 
   async getTemplateAdmin(templateId: number): Promise<Template> {
     const response = await api.get(`/admin/templates/${templateId}`);
@@ -780,20 +765,21 @@ export const apiService = {
   },
 
   // User submissions endpoints (for regular users to see their own submissions)
-  async getUserSubmissions(
-    templateName?: string,
-    language?: string,
-    status?: string,
-    skip: number = 0,
-    limit: number = 100
-  ): Promise<TemplateSubmission[]> {
+  /** One page of the signed-in user's submissions, with the total. */
+  async getUserSubmissions(options: {
+    templateName?: string;
+    language?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<{ submissions: TemplateSubmission[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
-    if (templateName) params.append('template_name', templateName);
-    if (language) params.append('language', language);
-    if (status) params.append('status', status);
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    
+    if (options.templateName) params.append('template_name', options.templateName);
+    if (options.language) params.append('language', options.language);
+    if (options.status) params.append('status', options.status);
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+
     const response = await api.get(`/my-submissions?${params.toString()}`);
     return response.data;
   },

@@ -247,6 +247,15 @@ class TemplateService:
             return []
     
     @staticmethod
+    def count_all_templates(db: Session) -> int:
+        """How many active templates exist, so a page can report a real total."""
+        try:
+            return db.query(Template).filter(Template.is_active == True).count()
+        except Exception as e:
+            print(f"Error counting templates: {str(e)}")
+            return 0
+
+    @staticmethod
     def get_all_templates(db: Session, skip: int = 0, limit: int = 100) -> List[Template]:
         """Get all active templates with pagination (Admin only)"""
         try:

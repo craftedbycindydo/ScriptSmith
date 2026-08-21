@@ -24,7 +24,7 @@ export function useCodeHistory() {
 export function useUserSubmissions() {
   return useQuery({
     queryKey: settingsQueryKeys.userSubmissions,
-    queryFn: () => apiService.getUserSubmissions(),
+    queryFn: async () => (await apiService.getUserSubmissions({ pageSize: 100 })).submissions,
     staleTime: 1 * 60 * 1000, // 1 minute
     gcTime: 3 * 60 * 1000, // 3 minutes
     refetchOnWindowFocus: false,
