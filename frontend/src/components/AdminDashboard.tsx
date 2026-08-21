@@ -11,8 +11,8 @@ import {
   useTemplateExecutions,
   useTemplatesOptions,
   useUsersOptions,
-  useClassroomMembers,
-  useClassroomSettings,
+  useClassroomMembersMap,
+  useClassroomSettingsMap,
   useToggleUserActivation,
   useCreateClassroom,
   useDeleteClassroom,
@@ -352,23 +352,15 @@ export default function AdminDashboard() {
     return hours > 0 ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`;
   };
 
-  // Pre-load classroom settings for all classrooms to avoid calling hooks in loops
+  // One query per classroom the teacher actually has. This used to be five
+  // hand-written hooks indexed 0..4, which silently did nothing for a sixth
+  // classroom.
   const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
 
-  // Call classroom settings hooks at top level for each classroom - Load immediately when classrooms tab is active
-  const classroomSettings1 = useClassroomSettings(allClassroomIds[0], activeTab === 'classrooms' && allClassroomIds.length > 0);
-  const classroomSettings2 = useClassroomSettings(allClassroomIds[1], activeTab === 'classrooms' && allClassroomIds.length > 1);
-  const classroomSettings3 = useClassroomSettings(allClassroomIds[2], activeTab === 'classrooms' && allClassroomIds.length > 2);
-  const classroomSettings4 = useClassroomSettings(allClassroomIds[3], activeTab === 'classrooms' && allClassroomIds.length > 3);
-  const classroomSettings5 = useClassroomSettings(allClassroomIds[4], activeTab === 'classrooms' && allClassroomIds.length > 4);
-
-  // Create a map of classroom settings queries manually
-  const classroomSettingsQueries: any = {};
-  if (allClassroomIds[0]) classroomSettingsQueries[allClassroomIds[0]] = classroomSettings1;
-  if (allClassroomIds[1]) classroomSettingsQueries[allClassroomIds[1]] = classroomSettings2;
-  if (allClassroomIds[2]) classroomSettingsQueries[allClassroomIds[2]] = classroomSettings3;
-  if (allClassroomIds[3]) classroomSettingsQueries[allClassroomIds[3]] = classroomSettings4;
-  if (allClassroomIds[4]) classroomSettingsQueries[allClassroomIds[4]] = classroomSettings5;
+  const classroomSettingsQueries = useClassroomSettingsMap(
+    allClassroomIds,
+    activeTab === 'classrooms',
+  );
 
   // Helper function to get classroom settings data
   const getClassroomSettings = (classroomId: number) => {
@@ -457,13 +449,13 @@ export default function AdminDashboard() {
           // Classroom data is managed via user context, also refetch classroom settings
           await refreshUser();
           // Refetch all classroom settings
-          const settingsRefetchPromises: Promise<any>[] = [];
-          if (classroomSettings1?.refetch) settingsRefetchPromises.push(classroomSettings1.refetch());
-          if (classroomSettings2?.refetch) settingsRefetchPromises.push(classroomSettings2.refetch());
-          if (classroomSettings3?.refetch) settingsRefetchPromises.push(classroomSettings3.refetch());
-          if (classroomSettings4?.refetch) settingsRefetchPromises.push(classroomSettings4.refetch());
-          if (classroomSettings5?.refetch) settingsRefetchPromises.push(classroomSettings5.refetch());
-          await Promise.all(settingsRefetchPromises);
+          // Every classroom, not the first five: a manual refresh used to skip
+          // the rest for the same reason the members panel did.
+          await Promise.all(
+            Object.values(classroomSettingsQueries)
+              .map((query: any) => query?.refetch?.())
+              .filter(Boolean)
+          );
           break;
         case 'analytics':
           // Analytics component manages its own data, trigger a page-level refresh
@@ -554,20 +546,14 @@ export default function AdminDashboard() {
     setIsCreatingClassroom(false);
   };
 
-  // Call classroom members hooks at top level for each classroom - Load when classroom is expanded and tab is active
-  const classroomMembers1 = useClassroomMembers(allClassroomIds[0], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[0]);
-  const classroomMembers2 = useClassroomMembers(allClassroomIds[1], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[1]);
-  const classroomMembers3 = useClassroomMembers(allClassroomIds[2], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[2]);
-  const classroomMembers4 = useClassroomMembers(allClassroomIds[3], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[3]);
-  const classroomMembers5 = useClassroomMembers(allClassroomIds[4], activeTab === 'classrooms' && expandedClassroom === allClassroomIds[4]);
-
-  // Create a map of classroom members queries manually
-  const classroomMembersQueries: any = {};
-  if (allClassroomIds[0]) classroomMembersQueries[allClassroomIds[0]] = classroomMembers1;
-  if (allClassroomIds[1]) classroomMembersQueries[allClassroomIds[1]] = classroomMembers2;
-  if (allClassroomIds[2]) classroomMembersQueries[allClassroomIds[2]] = classroomMembers3;
-  if (allClassroomIds[3]) classroomMembersQueries[allClassroomIds[3]] = classroomMembers4;
-  if (allClassroomIds[4]) classroomMembersQueries[allClassroomIds[4]] = classroomMembers5;
+  // Members load for whichever classroom is expanded, whatever its position in
+  // the list. The previous five-slot version left classroom six with no query,
+  // so the panel showed "No members found" and never called the API.
+  const classroomMembersQueries = useClassroomMembersMap(
+    allClassroomIds,
+    expandedClassroom,
+    activeTab === 'classrooms',
+  );
 
   // Helper function to get classroom members data
   const getClassroomMembers = (classroomId: number) => {

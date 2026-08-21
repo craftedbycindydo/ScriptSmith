@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiService } from '@/services/api';
 
 // Query keys for consistent caching
@@ -128,6 +128,57 @@ export function useClassroomMembers(classroomId: number, enabled: boolean = true
     gcTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
   });
+}
+
+/**
+ * Members for every classroom, keyed by id.
+ *
+ * Replaces five hand-written useClassroomMembers calls that only covered
+ * allClassroomIds[0..4]: a teacher with a sixth classroom got no query for it
+ * at all, so the panel rendered "No members found" without ever calling the
+ * API. useQueries takes the list, so the count is whatever the teacher has.
+ */
+export function useClassroomMembersMap(
+  classroomIds: number[],
+  expandedId: number | null,
+  enabled: boolean = true,
+) {
+  const results = useQueries({
+    queries: classroomIds.map((id) => ({
+      queryKey: adminQueryKeys.classroomMembers(id),
+      queryFn: () => apiService.getClassroomMembers(id),
+      enabled: enabled && expandedId === id,
+      staleTime: 3 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+      refetchOnWindowFocus: false,
+    })),
+  });
+
+  const byId: Record<number, any> = {};
+  classroomIds.forEach((id, index) => {
+    byId[id] = results[index];
+  });
+  return byId;
+}
+
+/** Settings for every classroom, keyed by id. Same fix as the members map. */
+export function useClassroomSettingsMap(classroomIds: number[], enabled: boolean = true) {
+  const results = useQueries({
+    queries: classroomIds.map((id) => ({
+      queryKey: adminQueryKeys.classroomSettings(id),
+      queryFn: () => apiService.getClassroomAdminSettings(id),
+      enabled,
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      refetchOnWindowFocus: false,
+    })),
+  });
+
+  const byId: Record<number, any> = {};
+  classroomIds.forEach((id, index) => {
+    byId[id] = results[index];
+  });
+  return byId;
 }
 
 export function useClassroomSettings(classroomId: number, enabled: boolean = true) {
