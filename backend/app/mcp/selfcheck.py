@@ -523,6 +523,15 @@ def check_sdk_server():
     assert isinstance(asked, server.Elicit), asked
     assert "CS101" in asked.message and "CS202" in asked.message, asked.message
 
+    # A supplied id is never second-guessed: the resolver takes the tool's own
+    # argument by name and returns it before looking anything up or asking.
+    assert asyncio.run(server.pick_classroom(Ctx(CanElicit()), classroom_id=CS101)) == CS101
+    assert asyncio.run(server.pick_lab(Ctx(CanElicit()), lab_id=10)) == 10
+    for tool_name, arg in (("get_classroom_gradebook", "classroom_id"), ("check_my_lab", "lab_id")):
+        plans = server.mcp._tool_manager.get_tool(tool_name).resolver_plans
+        kinds = {name: p.kind for plan in plans.values() for name, p in plan.params.items()}
+        assert kinds.get(arg) == "by_name", (tool_name, kinds)
+
     # Same ambiguity, client that cannot be asked: resolve to nothing, and the
     # tool hands the model the options instead of failing.
     assert asyncio.run(server.pick_classroom(Ctx(NoElicit()))) is None

@@ -235,8 +235,15 @@ def _my_labs(user_id: int) -> list:
         db.close()
 
 
-async def pick_classroom(ctx: Context) -> Any:
-    """Resolve the classroom, asking only when genuinely ambiguous."""
+async def pick_classroom(ctx: Context, classroom_id: int | None = None) -> Any:
+    """Resolve the classroom, asking only when genuinely ambiguous.
+
+    `classroom_id` is the tool's own argument, matched by name. The SDK runs
+    resolvers on every call, so without it a supplied id would still cost a
+    lookup and, on a client that can be asked, a needless question.
+    """
+    if classroom_id is not None:
+        return classroom_id
     user_id = caller_id()
     if user_id is None:
         return None
@@ -254,8 +261,10 @@ async def pick_classroom(ctx: Context) -> Any:
     return Elicit(f"Which classroom? You teach: {options}.", ClassroomChoice)
 
 
-async def pick_lab(ctx: Context) -> Any:
+async def pick_lab(ctx: Context, lab_id: int | None = None) -> Any:
     """Resolve the lab the same way: silent when there is only one candidate."""
+    if lab_id is not None:
+        return lab_id
     user_id = caller_id()
     if user_id is None:
         return None
