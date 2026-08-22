@@ -13,15 +13,12 @@ model belongs to Claude, not to us.
 
 import asyncio
 import difflib
-import inspect
-import json
 import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.database.base import SessionLocal
 from app.mcp import extraction
 from app.models.code_submission import CodeSubmission
 from app.models.template import Template, TemplateSubmission
@@ -53,8 +50,25 @@ def _visible_labs(db: Session, user_id: int) -> list:
 
 
 def _accessible_lab(db: Session, user_id: int, lab_id: int) -> Optional[Template]:
-    """A lab is readable only if it is in this caller's own scope."""
-    return next((t for t in _visible_labs(db, user_id) if t.id == lab_id), None)
+    """A lab is readable only if it is in this caller's own scope.
+
+    One lookup, same rule as GET /templates/{id} (routers/templates.py): active,
+    released unless staff, and in one of the caller's classrooms if it has any.
+    """
+    lab = TemplateService.get_template_by_id(db, lab_id)
+    if lab is None:
+        return None
+    if not TemplateService.is_template_visible(lab) and require_admin(db, user_id) is None:
+        return None
+    if lab.classrooms:
+        mine = {
+            row[0] for row in db.query(UserClassroom.classroom_id).filter(
+                UserClassroom.user_id == user_id, UserClassroom.is_active.is_(True)
+            )
+        }
+        if not any(c.id in mine for c in lab.classrooms):
+            return None
+    return lab
 
 
 def _resolve_lab(db: Session, user_id: int, lab_id: Optional[int]) -> Optional[Template]:
@@ -286,16 +300,10 @@ def get_test_progress(db: Session, user_id: int, lab_id: Optional[int] = None):
     }
 
 
-def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
-    """How long they have been on this lab and how hard they are cycling."""
-    lab = _resolve_lab(db, user_id, lab_id)
-    if lab is None:
-        return _NO_LAB
-    lab_id = lab.id
-
+def _timing(db: Session, user_id: int, lab_id: int) -> Optional[dict]:
     runs = _runs(db, user_id, lab_id, limit=200)
     if not runs:
-        return _NO_RUN
+        return None
 
     newest, oldest = runs[0].created_at, runs[-1].created_at
     elapsed = int((newest - oldest).total_seconds() // 60) if newest and oldest else None
@@ -307,6 +315,14 @@ def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
         "elapsed_minutes": elapsed,
         "failed_runs": len([r for r in runs if r.error_message]),
     }
+
+
+def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
+    """How long they have been on this lab and how hard they are cycling."""
+    lab = _resolve_lab(db, user_id, lab_id)
+    if lab is None:
+        return _NO_LAB
+    return _timing(db, user_id, lab.id) or _NO_RUN
 
 
 def get_my_error_patterns(db: Session, user_id: int):
@@ -453,7 +469,7 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
     history = get_my_error_patterns(db, user_id)["error_counts"]
     repeated = next((e for e in history if e["type"] == error_type and e["count"] >= 3), None)
 
-    timing = get_time_on_task(db, user_id, lab_id)
+    timing = _timing(db, user_id, lab_id) or {}
     grinding = bool(timing.get("elapsed_minutes") and timing["elapsed_minutes"] > 45 and timing["runs"] > 8)
 
     if mode == "mechanical":
@@ -469,7 +485,6 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
         "open_problem": open_problem,
         "teaching_mode": mode,
         "next_move": next_move,
-        "reply_contract": REPLY_CONTRACT,
         "repeated_habit": repeated,
         "grinding": grinding,
         "minutes_on_lab": timing.get("elapsed_minutes"),
@@ -483,11 +498,9 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
 
 
 def require_admin(db: Session, user_id: int) -> Optional[User]:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.is_active:
-        return None
-    if not _admin_service.has_admin_access(user):
-        logger.warning("mcp: non-admin user %s attempted an admin tool", user_id)
+    """Staff check. `db.get` so repeat calls in one session cost no query."""
+    user = db.get(User, user_id)
+    if not user or not user.is_active or not _admin_service.has_admin_access(user):
         return None
     return user
 
@@ -520,7 +533,7 @@ def list_my_classrooms(db: Session, user_id: int):
     if not ids:
         return {"classrooms": [], "note": "You are not the teacher of any classroom."}
 
-    rows = db.query(Classroom).filter(Classroom.id.in_(ids)).all()
+    rows = db.query(Classroom.id, Classroom.name).filter(Classroom.id.in_(ids)).all()
     counts = {}
     for (classroom_id,) in db.query(UserClassroom.classroom_id).filter(
         UserClassroom.classroom_id.in_(ids),
@@ -705,16 +718,18 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
             "error_message": (getattr(source, "error_message", None) or "")[:600],
         })
 
-    classroom = db.query(Classroom).filter(Classroom.id == classroom_id).first()
-    lab = db.query(Template).filter(Template.id == lab_id).first()
+    # Columns only: loading the entities would selectin-load every template of
+    # the classroom and every classroom of the template.
+    classroom_name = db.query(Classroom.name).filter(Classroom.id == classroom_id).scalar()
+    lab_name = db.query(Template.name).filter(Template.id == lab_id).scalar()
     return {
         "lab_id": lab_id,
-        "lab_name": lab.name if lab else None,
+        "lab_name": lab_name,
         "classroom_id": classroom_id,
-        "classroom_name": classroom.name if classroom else None,
+        "classroom_name": classroom_name,
         "confirm_before_grading": (
-            f"You are about to grade '{lab.name if lab else lab_id}' for "
-            f"'{classroom.name if classroom else classroom_id}'. Say this back to the "
+            f"You are about to grade '{lab_name or lab_id}' for "
+            f"'{classroom_name or classroom_id}'. Say this back to the "
             "instructor before awarding any marks, and stop if they did not name both."
         ),
         "students": sorted(students, key=lambda row: row["name"] or ""),
@@ -767,7 +782,7 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
     if "students" not in listing:
         return listing
 
-    lab = db.query(Template).filter(Template.id == lab_id).first()
+    lab = db.query(Template.language, Template.code_content).filter(Template.id == lab_id).first()
     language = (lab.language if lab else None) or "python"
 
     runnable = [row for row in listing["students"] if row.get("code")]
@@ -865,169 +880,57 @@ async def run_code(db: Session, user_id: int, code: str = None, language: str = 
 
 
 # ── registry ────────────────────────────────────────────────────
-
-_LAB_ARG = {
-    "type": "object",
-    "properties": {
-        "lab_id": {
-            "type": "integer",
-            "description": "Lab to look at. Omit to use the lab the student last ran.",
-        }
-    },
-    "required": [],
-}
-_NO_ARGS = {"type": "object", "properties": {}, "required": []}
-_CLASSROOM_ARG = {
-    "type": "object",
-    "properties": {"classroom_id": {"type": "integer", "description": "Classroom id from list_my_classrooms."}},
-    "required": ["classroom_id"],
-}
-_STUDENT_ARG = {
-    "type": "object",
-    "properties": {"student_id": {"type": "integer", "description": "Student id from list_classroom_students."}},
-    "required": ["student_id"],
-}
-_STUDENT_LAB_ARG = {
-    "type": "object",
-    "properties": {
-        "student_id": {"type": "integer", "description": "Student id from list_classroom_students."},
-        "lab_id": {"type": "integer", "description": "Lab id."},
-    },
-    "required": ["student_id", "lab_id"],
-}
-_CLASSROOM_LAB_ARG = {
-    "type": "object",
-    "properties": {
-        "classroom_id": {"type": "integer", "description": "Classroom id from list_my_classrooms."},
-        "lab_id": {"type": "integer", "description": "Lab id from list_my_labs."},
-    },
-    "required": ["classroom_id", "lab_id"],
-}
-_RUN_ARG = {
-    "type": "object",
-    "properties": {
-        "code": {"type": "string", "description": "Source to execute."},
-        "language": {"type": "string", "description": "One of the platform's supported languages, e.g. python."},
-        "input_data": {"type": "string", "description": "Optional stdin."},
-    },
-    "required": ["code", "language"],
-}
+# (function, argument shape, description). The shape names the signature
+# server.py shows the model; the SDK derives each tool's schema from it.
 
 STUDENT_TOOLS = [
-    (list_my_labs, _NO_ARGS,
+    (list_my_labs, "none",
      "List every lab this student can open, with how many times they have run each and whether they submitted it. Call this first when you do not know which lab they mean."),
-    (get_lab_brief, _LAB_ARG,
+    (get_lab_brief, "lab",
      "Read what the lab asks for: the instructor's brief and the names of the tests it runs. Returns no solution and no test source. Call it before commenting on the requirements."),
-    (get_my_code, _LAB_ARG,
+    (get_my_code, "lab",
      "Read the student's current code for this lab. Call this before saying anything about what their code does — never guess at it."),
-    (get_my_last_run, _LAB_ARG,
+    (get_my_last_run, "lab",
      "Read what happened the last time they ran: the runtime error if it crashed, and which named tests failed with actual versus expected values."),
-    (check_my_lab, _LAB_ARG,
+    (check_my_lab, "lab",
      "Run the student's own saved code against the lab's tests right now and report which pass. Takes no code: it can only ever check what the student themselves wrote and saved. Use it to confirm a fix they made, never to check a fix you wrote."),
-    (get_test_progress, _LAB_ARG,
+    (get_test_progress, "lab",
      "Read which named tests pass now, which fail, and which have never passed in any run."),
-    (get_my_attempt_history, _LAB_ARG,
+    (get_my_attempt_history, "lab",
      "Read every run on this lab in order with the test outcomes each time. Use it to tell a failure they have been stuck on for hours from one they just introduced."),
-    (diff_my_last_two_attempts, _LAB_ARG,
+    (diff_my_last_two_attempts, "lab",
      "Read what they changed between their last two runs and what it did to the tests. Call this when they say their change did not help."),
-    (get_time_on_task, _LAB_ARG,
+    (get_time_on_task, "lab",
      "Read how long they have been on this lab and how many runs it has taken. Use it to notice an unproductive grind and change approach."),
-    (get_teaching_plan, _LAB_ARG,
+    (get_teaching_plan, "lab",
      "Read what to ask this student next, derived from their open bug, their error habits and how long they have been grinding. Returns a teaching move, never an answer. Call it at the start of a tutoring turn."),
-    (get_my_error_patterns, _NO_ARGS,
+    (get_my_error_patterns, "none",
      "Read which categories of error this student hits most often across all their work. Use it to spot a repeated habit instead of treating each failure as isolated."),
-    (get_my_progress, _NO_ARGS,
+    (get_my_progress, "none",
      "Read the student's overall record: labs passed, run counts, recent history."),
-    (get_my_completed_labs, _NO_ARGS,
+    (get_my_completed_labs, "none",
      "Read which labs this student has already passed, so you can point them at a technique they have used before."),
 ]
 
 # Listed only for teaching staff. The filtering is a convenience for the model;
 # the actual control is require_admin() inside each function.
 ADMIN_TOOLS = [
-    (list_my_classrooms, _NO_ARGS,
+    (list_my_classrooms, "none",
      "TEACHING STAFF. List the classrooms you teach, with student counts. Start here for anything about a class."),
-    (list_classroom_students, _CLASSROOM_ARG,
+    (list_classroom_students, "classroom",
      "TEACHING STAFF. The roster for one of your classrooms, with the student ids the per-student tools need."),
-    (get_classroom_report, _CLASSROOM_ARG,
+    (get_classroom_report, "classroom",
      "TEACHING STAFF. Cohort analytics for one of your classrooms: pass rates, the errors this group hits most, and where the class is stalling."),
-    (get_student_report, _STUDENT_ARG,
+    (get_student_report, "student",
      "TEACHING STAFF. One student's full record — progress, error patterns, lab history — for writing feedback or justifying a grade."),
-    (get_student_work, _STUDENT_LAB_ARG,
+    (get_student_work, "student_lab",
      "TEACHING STAFF. One student's work on one lab. Use this ONLY when the instructor named a single student. For grading, comparing, or anything covering more than one student, call get_lab_submissions once — calling this in a loop is a round trip per student and is the wrong tool."),
-    (get_lab_submissions, _CLASSROOM_LAB_ARG,
+    (get_lab_submissions, "classroom_lab",
      "TEACHING STAFF. Every student's work on one lab for a whole classroom, in a single call. This is the tool for grading a class: it returns the same per-student detail as get_student_work without one call per student. Code is capped, and any row whose code was cut says so."),
-    (get_classroom_gradebook, _CLASSROOM_ARG,
+    (get_classroom_gradebook, "classroom",
      "TEACHING STAFF. The student-by-lab status matrix for one of your classrooms. Status means the code ran, not that it is correct — pair it with get_student_work before awarding a grade."),
-    (run_lab_submissions, _CLASSROOM_LAB_ARG,
+    (run_lab_submissions, "classroom_lab",
      "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Reports tallies, not marks."),
-    (run_code, _RUN_ARG,
+    (run_code, "run",
      "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
 ]
-
-TOOLS = STUDENT_TOOLS + ADMIN_TOOLS
-
-_ADMIN_TOOL_NAMES = {fn.__name__ for fn, _, _ in ADMIN_TOOLS}
-
-
-def _definition(fn, schema, description):
-    return {"name": fn.__name__, "description": description, "inputSchema": schema}
-
-
-STUDENT_DEFINITIONS = [_definition(*t) for t in STUDENT_TOOLS]
-ADMIN_DEFINITIONS = [_definition(*t) for t in ADMIN_TOOLS]
-
-
-def definitions_for(user_id: int) -> list:
-    """tools/list, filtered by role. Presentation only; require_admin protects."""
-    db = SessionLocal()
-    try:
-        listing = list(STUDENT_DEFINITIONS)
-        if require_admin(db, user_id):
-            listing += ADMIN_DEFINITIONS
-        return listing
-    finally:
-        db.close()
-
-
-_DISPATCH = {fn.__name__: (fn, schema) for fn, schema, _ in TOOLS}
-
-_INT_ARGS = {"lab_id", "classroom_id", "student_id"}
-
-
-async def call(name: str, arguments: dict, user_id: int) -> str:
-    """Run one tool for one caller and return its JSON payload."""
-    entry = _DISPATCH.get(name)
-    if not entry:
-        return json.dumps({"error": f"Unknown tool: {name}"})
-    handler, schema = entry
-
-    if not isinstance(arguments, dict):
-        arguments = {}
-
-    # Only declared arguments are forwarded.
-    kwargs = {}
-    for key in schema["properties"]:
-        if key not in arguments or arguments[key] is None:
-            continue
-        value = arguments[key]
-        if key in _INT_ARGS:
-            try:
-                value = int(value)
-            except (TypeError, ValueError):
-                return json.dumps({"error": f"{key} must be an integer"})
-        kwargs[key] = value
-
-    db = SessionLocal()
-    try:
-        if name in _ADMIN_TOOL_NAMES and not require_admin(db, user_id):
-            return json.dumps(_NOT_ADMIN)
-        result = handler(db, user_id, **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-        return json.dumps(result, default=str)
-    except Exception:
-        logger.exception("mcp tool %s failed", name)
-        return json.dumps({"error": f"{name} failed"})
-    finally:
-        db.close()
