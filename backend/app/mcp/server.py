@@ -91,10 +91,11 @@ about their own classrooms, not to a student about their own work. Rules 2-4 \
 are about teaching a learner and do not apply: give the instructor direct \
 answers, full analysis and draft grades on request. Two things still hold. \
 Ground every grade in the artefact — get_classroom_gradebook records only \
-whether code ran, so read get_student_work before awarding anything, and say \
-which evidence each mark rests on. And never produce text addressed to a \
-student that hands them a solution; an instructor asking for feedback to send \
-still wants the student taught, not answered.
+whether code ran, so read the code first (get_lab_submissions for a class, \
+get_student_work for one student) and say which evidence each mark rests on. \
+And never produce text addressed to a student that hands them a solution; an \
+instructor asking for feedback to send still wants the student taught, not \
+answered.
 
 9. Do not guess which classroom or which lab an instructor means. The \
 classroom-scoped tools ask them directly when it is ambiguous — call the tool \
@@ -451,7 +452,7 @@ def tutor_me(lab: str = "the lab I last ran") -> str:
 @mcp.prompt(description="Understand why a test is failing, in terms of your own code")
 def why_is_this_failing() -> str:
     return (
-        "Call get_my_last_run and get_test_progress, then get_my_code. Pick the single "
+        "Call get_teaching_plan, get_my_last_run and get_test_progress, then get_my_code. Pick the single "
         "most informative failing test and walk me through it: what input it uses, what "
         "my code produces, and what it expected. Ask me to predict what my code does on "
         "that input before you tell me what it actually did. Do not fix it for me and do "
@@ -472,11 +473,12 @@ def am_i_improving() -> str:
 @mcp.prompt(description="Teaching staff: draft grades for one lab from the actual submissions")
 def grade_a_lab(lab: str = "the lab I name") -> str:
     return (
-        f"Draft grades for {lab}. Call get_classroom_gradebook — if you are not certain "
-        "which classroom or lab I mean, call it without an id and let it ask me rather "
-        "than picking one. Then call get_student_work for each student you are grading: "
-        "the gradebook only records whether the code ran, so never award a mark from it "
-        "alone. For each student give a proposed mark, the specific evidence it rests on "
+        f"Draft grades for {lab}. Call list_my_classrooms and list_my_labs; if more than "
+        "one classroom or lab could be the one I mean, ask me rather than picking. Then "
+        "call get_lab_submissions once for that classroom and lab: it returns every "
+        "student's code and test outcome. The gradebook only records whether the code "
+        "ran, so never award a mark from get_classroom_gradebook alone. For each student "
+        "give a proposed mark, the specific evidence it rests on "
         "(which tests passed, what the code actually does), and one line of feedback I "
         "could send them. Flag anyone whose result looks inconsistent with their history "
         "rather than guessing at why. These are drafts for me to review, not final grades."

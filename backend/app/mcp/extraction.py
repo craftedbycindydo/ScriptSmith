@@ -4,8 +4,6 @@ The instructor templates carry their own teaching scaffold - a docstring brief,
 numbered STEP comments and a named test harness that prints PASS/FAIL lines.
 These helpers read that structure so the tutor can point at the instructor's
 own framing rather than inventing a competing one.
-
-Ported unchanged from the tutor branch (services/agentic_tools/extraction.py).
 """
 
 import re
