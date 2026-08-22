@@ -36,10 +36,8 @@ export function DateTimePicker({
 
   // Update local state when value prop changes
   React.useEffect(() => {
-    if (value) {
-      setSelectedDate(value)
-      setTimeValue(format(value, "HH:mm"))
-    }
+    setSelectedDate(value)
+    if (value) setTimeValue(format(value, "HH:mm"))
   }, [value])
 
   const handleDateSelect = (date: Date | undefined) => {
@@ -59,15 +57,15 @@ export function DateTimePicker({
 
   const handleTimeChange = (time: string) => {
     setTimeValue(time)
-    
-    if (selectedDate) {
-      const [hours, minutes] = time.split(":").map(Number)
-      const newDateTime = new Date(selectedDate)
-      newDateTime.setHours(hours, minutes, 0, 0)
-      
-      setSelectedDate(newDateTime)
-      onChange?.(newDateTime)
-    }
+    if (!time) return  // partial input while typing
+
+    // A time with no day picked yet means today
+    const [hours, minutes] = time.split(":").map(Number)
+    const newDateTime = new Date(selectedDate ?? new Date())
+    newDateTime.setHours(hours, minutes, 0, 0)
+
+    setSelectedDate(newDateTime)
+    onChange?.(newDateTime)
   }
 
   const handleClear = () => {

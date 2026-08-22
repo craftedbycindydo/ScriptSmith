@@ -81,6 +81,7 @@ class TemplateListResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     visible_from: Optional[datetime] = None  # When the template becomes visible to students
+    submission_deadline: Optional[datetime] = None
     submission_code: Optional[str] = None  # Admin responses only - never sent to students
     can_submit: Optional[bool] = None  # Whether user can submit to this template
     deadline_info: Optional[str] = None  # Deadline information if applicable
@@ -217,6 +218,7 @@ def _prepare_template_list_response(template: Template, include_submission_code:
         "created_at": template.created_at,
         "updated_at": template.updated_at,
         "visible_from": template.visible_from,
+        "submission_deadline": template.submission_deadline,
         "submission_code": template.submission_code if include_submission_code else None,
         "can_submit": getattr(template, 'can_submit', None),
         "deadline_info": getattr(template, 'deadline_info', None),
@@ -365,7 +367,8 @@ async def update_template(
             exclusions=template.exclusions,
             visible_from=template.visible_from,
             # An explicit null (not an omitted field) unschedules the template
-            clear_visible_from='visible_from' in template.model_fields_set and template.visible_from is None
+            clear_visible_from='visible_from' in template.model_fields_set and template.visible_from is None,
+            clear_submission_deadline='submission_deadline' in template.model_fields_set and template.submission_deadline is None
         )
 
         updated_template.creator_username = updated_template.creator.username

@@ -132,6 +132,7 @@ export interface TemplateListItem {
   created_at: string;
   updated_at: string;
   visible_from?: string;
+  submission_deadline?: string;
   submission_code?: string | null;  // Admin responses only
   can_submit?: boolean;
   deadline_info?: string;
@@ -154,7 +155,7 @@ export interface TemplateUpdate {
   description?: string;
   code_content?: string;
   classroom_ids?: number[];
-  submission_deadline?: string;
+  submission_deadline?: string | null;  // null removes the deadline
   visible_from?: string | null;  // null clears a scheduled visible time
   exclusions?: Array<{ user_id: number; deadline: string }>;
 }

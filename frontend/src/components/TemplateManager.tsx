@@ -253,13 +253,14 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           description: editingTemplate.description.trim() || undefined,
           code_content: editingTemplate.code_content,
           classroom_ids: editingTemplate.classroom_ids.length > 0 ? editingTemplate.classroom_ids : undefined,
-          // null (not undefined) so clearing the picker unschedules the template
+          // null (not undefined) so clearing a picker unschedules / removes the deadline
           visible_from: editingTemplate.visible_from ? editingTemplate.visible_from.toISOString() : null,
-          submission_deadline: editingTemplate.submission_deadline ? editingTemplate.submission_deadline.toISOString() : undefined,
-          exclusions: editingTemplate.exclusions.length > 0 ? editingTemplate.exclusions.map(e => ({
+          submission_deadline: editingTemplate.submission_deadline ? editingTemplate.submission_deadline.toISOString() : null,
+          // Always sent, so removing every exclusion actually removes them
+          exclusions: editingTemplate.exclusions.map(e => ({
             user_id: e.user_id,
             deadline: e.deadline
-          })) : undefined
+          }))
         };
         await apiService.updateTemplate(editingId, updateData);
       }
@@ -1178,6 +1179,12 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                             <Badge variant="outline" className="shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
                               <Clock className="w-3 h-3 mr-1" />
                               Visible {formatDateTime(template.visible_from)}
+                            </Badge>
+                          )}
+                          {template.submission_deadline && (
+                            <Badge variant="outline" className="shrink-0">
+                              <Clock className="w-3 h-3 mr-1" />
+                              Due {formatDateTime(template.submission_deadline)}
                             </Badge>
                           )}
                         </div>
