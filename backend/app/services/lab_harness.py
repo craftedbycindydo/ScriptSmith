@@ -123,3 +123,40 @@ def grade_result(result: dict) -> dict:
 
     status = result.get("status") or "error"
     return {**result, "status": "error" if status == "success" else status, "error": error}
+
+
+# ── authoring guardrails ────────────────────────────────────────
+# What a model or an instructor reaches for when the tests end up inside the
+# starter file instead of `tests`: a test-runner function, a "do not write
+# below this line" banner, or a tally printed from the file itself.
+TESTS_IN_CODE_RE = re.compile(
+    r"^[ \t]*(?:def|function|fn|func)[ \t]+"
+    r"(?:run_tests|test_cases|tests|run_checks|check_all|check_answers|test_\w+)[ \t]*\("
+    r"|^[ \t]*(?:#|//).*\btests?\b.*\b(?:do not|don't|dont)\b"
+    r"|\btests passed\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+HARNESS_CONTRACT = (
+    "A harness is appended to the student's code, so their functions are in scope. "
+    "It prints one line per case - `PASS <name>` or `FAIL <name>` followed by "
+    "`  got: <value>` and `  expected: <value>` lines - then the tally `N/M tests passed`, "
+    "and exits non-zero when any case fails "
+    "(Python: sys.exit(f\"{failed}/{total} tests failed\"))."
+)
+
+
+def looks_like_tests(code: Optional[str]) -> bool:
+    """Whether starter code seems to carry its own test section."""
+    return bool(TESTS_IN_CODE_RE.search(code or ""))
+
+
+def harness_problems(harness: Optional[str]) -> list:
+    """What a harness is missing for its runs to be gradable; empty when it is fine."""
+    text = harness or ""
+    problems = []
+    if "tests passed" not in text:
+        problems.append("it never prints the `N/M tests passed` tally, so no run can be graded")
+    if "PASS" not in text and "FAIL" not in text:
+        problems.append("it prints no `PASS <name>` / `FAIL <name>` lines, so nothing can name the failing case")
+    return problems
