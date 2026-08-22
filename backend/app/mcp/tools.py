@@ -622,20 +622,23 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
         CodeSubmission.template_id == lab_id,
     ).order_by(CodeSubmission.created_at.desc()).first()
 
+    # At the point of use: the description alone did not stop the loop. On the
+    # no-work path too, which is where a per-student loop spends most of its calls.
+    hint = (
+        f"If you are grading more than this one student, stop and call "
+        f"get_lab_submissions(classroom_id={enrolled.classroom_id}, lab_id={lab_id}) "
+        "once instead of calling this per student."
+    )
     if not submission and not run:
-        return {"error": "That student has no work recorded for this lab."}
+        return {"error": "That student has no work recorded for this lab.",
+                "for_the_whole_class": hint}
 
     source = submission or run
     output = getattr(source, "output", None)
     return {
         "student_id": student_id,
         "lab_id": lab_id,
-        # At the point of use: the description alone did not stop the loop.
-        "for_the_whole_class": (
-            f"If you are grading more than this one student, stop and call "
-            f"get_lab_submissions(classroom_id={enrolled.classroom_id}, lab_id={lab_id}) "
-            "once instead of calling this per student."
-        ),
+        "for_the_whole_class": hint,
         "submitted": bool(submission),
         "status": getattr(source, "status", None),
         "code": (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")[:MAX_CODE_CHARS],

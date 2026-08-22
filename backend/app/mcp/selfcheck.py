@@ -230,6 +230,10 @@ def check_role_boundary():
     # The single-student tool must name the bulk call, with the real ids, so
     # the model is not left to infer them.
     assert f"get_lab_submissions(classroom_id={CS101}, lab_id=10)" in work["for_the_whole_class"], work
+    # ...and so must the no-work path, which is where a per-student loop lands most.
+    none = _call("get_student_work", {"student_id": BOB, "lab_id": 14})
+    assert "no work" in none["error"], none
+    assert f"get_lab_submissions(classroom_id={CS101}, lab_id=14)" in none["for_the_whole_class"], none
 
 
 def check_bulk_submissions():
