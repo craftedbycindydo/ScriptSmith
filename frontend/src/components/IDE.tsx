@@ -188,7 +188,12 @@ export default function IDE() {
   const templatesByClassroom = (): Array<{ label: string; items: any[] }> => {
     const groups = new Map<string, { label: string; items: any[] }>();
 
-    (templates || []).forEach((template) => {
+    // Newest lab first within each section
+    const newestFirst = [...(templates || [])].sort(
+      (a, b) => (parseDate(b?.created_at)?.getTime() ?? 0) - (parseDate(a?.created_at)?.getTime() ?? 0)
+    );
+
+    newestFirst.forEach((template) => {
       if (!template || !template.id) return;
       const names = (template.classrooms || [])
         .map((classroom: any) => classroom?.name)
@@ -943,9 +948,16 @@ export default function IDE() {
                           textValue={formatTemplateName(template.name || 'Untitled Template')}
                         >
                           <div className="flex flex-col gap-1.5 w-80 min-w-80">
-                            {/* Row 1: Template name */}
-                            <div className="font-medium text-sm truncate w-full">
-                              {formatTemplateName(template.name || 'Untitled Template')}
+                            {/* Row 1: Template name, plus the deadline while submissions are open */}
+                            <div className="flex items-center justify-between gap-2 w-full">
+                              <span className="font-medium text-sm truncate min-w-0">
+                                {formatTemplateName(template.name || 'Untitled Template')}
+                              </span>
+                              {template.can_submit !== false && template.deadline_info && (
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  Due {formatSubmittedAt(template.deadline_info)}
+                                </span>
+                              )}
                             </div>
                             {/* Row 2: Date and status */}
                             <div className="flex items-center justify-between text-xs w-80">
