@@ -390,7 +390,8 @@ class TemplateService:
         submission_deadline: Optional[datetime] = None,
         exclusions: Optional[List[Dict]] = None,
         visible_from: Optional[datetime] = None,
-        clear_visible_from: bool = False  # Explicitly unschedule (visible immediately)
+        clear_visible_from: bool = False,  # Explicitly unschedule (visible immediately)
+        clear_submission_deadline: bool = False  # Explicit null removes the deadline
     ) -> Template:
         """Update an existing template"""
         
@@ -434,6 +435,8 @@ class TemplateService:
             template.code_content = code_content
         if submission_deadline is not None:
             template.submission_deadline = submission_deadline
+        elif clear_submission_deadline:
+            template.submission_deadline = None
         if visible_from is not None:
             template.visible_from = visible_from
         elif clear_visible_from:
