@@ -14,8 +14,10 @@ model belongs to Claude, not to us.
 import asyncio
 import difflib
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -882,6 +884,81 @@ async def run_code(db: Session, user_id: int, code: str = None, language: str = 
     }
 
 
+# ── lab creation ────────────────────────────────────────────────
+
+
+def _utc_naive(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return TemplateService._as_utc(parsed).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() + "Z" if value else None
+
+
+def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = None,
+               code: str = None, language: str = "python", description: str = None,
+               visible_from: str = None, submission_deadline: str = None,
+               exclusions: list = None):
+    """Create a lab in one of the caller's classrooms."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if classroom_id is None or classroom_id not in _taught_classroom_ids(db, admin):
+        return _NOT_YOURS
+    if not name or not name.strip():
+        return {"error": "name is required."}
+    if not code or not code.strip():
+        return {"error": "code is required."}
+    language = (language or "python").lower().strip()
+    if language not in (settings.supported_languages or []):
+        return {"error": f"Unsupported language: {language}"}
+    if len(code.encode("utf-8")) > settings.max_code_size_kb * 1024:
+        return {"error": f"Code exceeds the {settings.max_code_size_kb}KB limit."}
+
+    try:
+        visible = _utc_naive(visible_from) if visible_from else None
+        deadline = _utc_naive(submission_deadline) if submission_deadline else None
+        per_student = [
+            {"user_id": int(e["student_id"]), "deadline": _iso(_utc_naive(e["deadline"]))}
+            for e in exclusions or []
+        ]
+    except (ValueError, KeyError, TypeError):
+        return {"error": "Dates must be ISO 8601 date-times such as 2026-09-01T23:59:00-04:00, "
+                         "and each exclusion needs student_id and deadline."}
+
+    if per_student:
+        wanted = {e["user_id"] for e in per_student}
+        enrolled = {row[0] for row in db.query(UserClassroom.user_id).filter(
+            UserClassroom.classroom_id == classroom_id,
+            UserClassroom.user_id.in_(wanted),
+            UserClassroom.role == "STUDENT",
+            UserClassroom.is_active.is_(True),
+        )}
+        if wanted - enrolled:
+            return {"error": f"Not students of this classroom: {sorted(wanted - enrolled)}"}
+
+    try:
+        lab = TemplateService.create_template(
+            db=db, name=name.strip(), description=description, language=language,
+            code_content=code, created_by=admin.id, classroom_ids=[classroom_id],
+            submission_deadline=deadline, exclusions=per_student or None, visible_from=visible,
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    return {
+        "lab_id": lab.id,
+        "name": lab.name,
+        "classroom_id": classroom_id,
+        "language": lab.language,
+        "visible_from": _iso(lab.visible_from),
+        "submission_deadline": _iso(lab.submission_deadline),
+        "exclusions": lab.exclusions or [],
+        "submission_code": lab.submission_code,
+    }
+
+
 # ── registry ────────────────────────────────────────────────────
 # (function, argument shape, description). The shape names the signature
 # server.py shows the model; the SDK derives each tool's schema from it.
@@ -936,4 +1013,6 @@ ADMIN_TOOLS = [
      "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Reports tallies, not marks."),
     (run_code, "run",
      "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
+    (create_lab, "create_lab",
+     "TEACHING STAFF. Create a lab in one of your classrooms: name, starter code, language, optional description, when it becomes visible, its submission deadline, and per-student deadline exclusions. Dates are ISO 8601 date-times with a timezone offset; one without an offset is UTC. Call list_my_classrooms first for the classroom_id. Returns the new lab id and the submission code students need for their first hand-in."),
 ]
