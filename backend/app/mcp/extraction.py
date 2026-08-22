@@ -17,7 +17,9 @@ FAIL_BLOCK_RE = re.compile(
 
 TALLY_RE = re.compile(r"(\d+)\s*/\s*(\d+)\s+tests passed")
 DOCSTRING_RE = re.compile(r'"""(.*?)"""', re.DOTALL)
-TEST_NAME_RE = re.compile(r'\(\s*"([^"]+)"\s*,')
+# A case tuple `("name", given, expected)`: the opening paren must not follow an
+# identifier, or every `print("label", value)` in a starter file reads as a test.
+TEST_NAME_RE = re.compile(r'(?<![\w.])\(\s*"([^"]+)"\s*,')
 
 MECHANICAL_ERRORS = {"SyntaxError", "SyntaxWarning", "IndentationError", "TabError"}
 
