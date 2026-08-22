@@ -12,6 +12,7 @@ from app.models.template import Template, TemplateSubmission
 from app.models.user import User
 from app.models.classroom import Classroom, UserClassroom
 from app.models.code_submission import CodeSubmission
+from app.services import lab_harness
 
 
 class AnalyticsService:
@@ -155,6 +156,10 @@ class AnalyticsService:
         text = message or ""
         lowered = text.lower()
 
+        # The lab's harness reporting failures is not a crash: the code ran to
+        # the end and the tests disagreed with it (services/lab_harness.py).
+        if lab_harness.is_tests_failed(text):
+            return "Tests failed"
         if "timed out" in lowered or "timeout" in lowered:
             return "Timeout"
         if lowered.startswith("network error") or "cannot connect to host" in lowered:

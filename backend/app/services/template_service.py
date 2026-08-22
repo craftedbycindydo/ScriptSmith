@@ -106,6 +106,13 @@ class TemplateService:
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
     @staticmethod
+    def _clean_harness(value: Optional[str]) -> Optional[str]:
+        """A test harness as stored: None when blank, otherwise without outer blank lines"""
+        if value is None or not value.strip():
+            return None
+        return value.strip("\r\n")
+
+    @staticmethod
     def _validate_visibility_window(
         visible_from: Optional[datetime],
         submission_deadline: Optional[datetime]
@@ -138,7 +145,8 @@ class TemplateService:
         classroom_ids: Optional[List[int]] = None,
         submission_deadline: Optional[datetime] = None,
         exclusions: Optional[List[Dict]] = None,
-        visible_from: Optional[datetime] = None
+        visible_from: Optional[datetime] = None,
+        test_harness: Optional[str] = None
     ) -> Template:
         """Create a new template with optional classroom associations"""
         
@@ -193,7 +201,8 @@ class TemplateService:
             submission_deadline=submission_deadline,
             exclusions=enriched_exclusions,
             visible_from=visible_from,
-            submission_code=TemplateService.generate_submission_code()
+            submission_code=TemplateService.generate_submission_code(),
+            test_harness=TemplateService._clean_harness(test_harness)
         )
         
         db.add(template)
@@ -391,7 +400,8 @@ class TemplateService:
         exclusions: Optional[List[Dict]] = None,
         visible_from: Optional[datetime] = None,
         clear_visible_from: bool = False,  # Explicitly unschedule (visible immediately)
-        clear_submission_deadline: bool = False  # Explicit null removes the deadline
+        clear_submission_deadline: bool = False,  # Explicit null removes the deadline
+        test_harness: Optional[str] = None  # "" removes the harness; None leaves it alone
     ) -> Template:
         """Update an existing template"""
         
@@ -433,6 +443,8 @@ class TemplateService:
             template.description = description
         if code_content is not None:
             template.code_content = code_content
+        if test_harness is not None:
+            template.test_harness = TemplateService._clean_harness(test_harness)
         if submission_deadline is not None:
             template.submission_deadline = submission_deadline
         elif clear_submission_deadline:
@@ -566,6 +578,53 @@ class TemplateService:
             }
     
     @staticmethod
+    def prepare_submission(
+        db: Session,
+        template_id: int,
+        user_id: int,
+        submission_code: Optional[str] = None
+    ) -> Template:
+        """Every check a hand-in must pass, before any code is executed.
+
+        The submit endpoint runs the code server-side, so refusing a late or
+        miscoded hand-in first means a refused one costs no execution. The
+        first submission must carry the lab's in-class code; after that the
+        student may resubmit without it, as long as the deadline hasn't passed.
+        """
+        template = TemplateService.get_template_by_id(db, template_id)
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found"
+            )
+
+        # Template hasn't been released to students yet
+        if not TemplateService.is_template_visible(template):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This template is not available yet"
+            )
+
+        # Deadline and per-student exclusions
+        can_submit, deadline_info = TemplateService.can_user_submit(db, template_id, user_id)
+        if not can_submit:
+            submission_time = datetime.now(timezone.utc).isoformat()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Submission denied - submitted at: {submission_time}, deadline: {deadline_info}"
+            )
+
+        # First hand-in has to prove the student is in class; later ones don't
+        already_submitted = db.query(TemplateSubmission.id).filter(
+            TemplateSubmission.template_id == template_id,
+            TemplateSubmission.user_id == user_id
+        ).first() is not None
+        if not already_submitted:
+            TemplateService.verify_submission_code(template, user_id, submission_code)
+
+        return template
+
+    @staticmethod
     def submit_template(
         db: Session,
         template_id: int,
@@ -579,26 +638,12 @@ class TemplateService:
         error_message: str = None,
         submission_code: Optional[str] = None
     ) -> TemplateSubmission:
-        """Submit code for a template with execution results.
+        """Record a hand-in with the results of the server's own run.
 
-        The first submission must carry the lab's in-class code. After that the
-        student may resubmit without it, as long as the deadline hasn't passed.
+        `prepare_submission` has already refused anything late or miscoded; it
+        is repeated here so the record can never be written without it.
         """
-        
-        # Check if template exists and is active
-        template = TemplateService.get_template_by_id(db, template_id)
-        if not template:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Template not found"
-            )
-        
-        # Template hasn't been released to students yet
-        if not TemplateService.is_template_visible(template):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This template is not available yet"
-            )
+        template = TemplateService.prepare_submission(db, template_id, user_id, submission_code)
 
         # Get user details
         from app.models.user import User
@@ -608,25 +653,12 @@ class TemplateService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
-        # Check if user can submit (deadline and exclusions)
-        can_submit, deadline_info = TemplateService.can_user_submit(db, template_id, user_id)
-        if not can_submit:
-            submission_time = datetime.now(timezone.utc).isoformat()
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Submission denied - submitted at: {submission_time}, deadline: {deadline_info}"
-            )
-        
+
         # Check if user has already submitted
         existing_submission = db.query(TemplateSubmission).filter(
             TemplateSubmission.template_id == template_id,
             TemplateSubmission.user_id == user_id
         ).first()
-
-        # First hand-in has to prove the student is in class; later ones don't
-        if not existing_submission:
-            TemplateService.verify_submission_code(template, user_id, submission_code)
 
         if existing_submission:
             # Resubmission inside the deadline replaces the previous attempt

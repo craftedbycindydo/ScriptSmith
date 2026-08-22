@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { lockedTail as buildLockedTail, withLockedTail } from '@/lib/labHarness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -318,7 +319,10 @@ const TemplateSubmissions: React.FC = () => {
           name: template.name,
           description: template.description || '',
           language: template.language,
-          code_content: template.code_content || ''
+          // The grader sees what the student saw: starter code with the locked tests below it
+          code_content: template.test_harness
+            ? withLockedTail(template.code_content || '', buildLockedTail(template.test_harness, template.language))
+            : (template.code_content || '')
         },
         submissions: maskedSubmissions,
         grade_scale: parseInt(gradeScale),

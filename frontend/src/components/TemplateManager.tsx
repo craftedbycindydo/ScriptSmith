@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from '@/components/ui/label';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import CodeEditor from './CodeEditor';
+import { lockedTail as buildLockedTail, splitHarness, withLockedTail } from '@/lib/labHarness';
 import { apiService } from '@/services/api';
 import type { TemplateCreate, TemplateUpdate, TemplateListItem, TemplateStats, ClassroomInfo, UserInfo } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
@@ -44,6 +45,7 @@ type EditingTemplate = {
   description: string;
   language: string;
   code_content: string;
+  test_harness: string;  // Locked tests; '' means the lab has none
   classroom_ids: number[];
   visible_from: Date | undefined;
   submission_deadline: Date | undefined;
@@ -56,6 +58,7 @@ const defaultTemplate: EditingTemplate = {
   description: '',
   language: 'python',
   code_content: '',
+  test_harness: '',
   classroom_ids: [],
   visible_from: undefined,
   submission_deadline: undefined,
@@ -186,6 +189,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         description: fullTemplate.description || '',
         language: fullTemplate.language,
         code_content: fullTemplate.code_content,
+        test_harness: fullTemplate.test_harness || '',
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         visible_from: fullTemplate.visible_from ?
           parseDate(fullTemplate.visible_from) || undefined : undefined,
@@ -239,6 +243,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           description: editingTemplate.description.trim() || undefined,
           language: editingTemplate.language,
           code_content: editingTemplate.code_content,
+          test_harness: editingTemplate.test_harness.trim() ? editingTemplate.test_harness : undefined,
           classroom_ids: editingTemplate.classroom_ids.length > 0 ? editingTemplate.classroom_ids : undefined,
           visible_from: editingTemplate.visible_from ? editingTemplate.visible_from.toISOString() : undefined,
           submission_deadline: editingTemplate.submission_deadline ? editingTemplate.submission_deadline.toISOString() : undefined,
@@ -254,6 +259,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
           name: editingTemplate.name.trim(),
           description: editingTemplate.description.trim() || undefined,
           code_content: editingTemplate.code_content,
+          // Always sent: an emptied editor removes the harness
+          test_harness: editingTemplate.test_harness,
           classroom_ids: editingTemplate.classroom_ids.length > 0 ? editingTemplate.classroom_ids : undefined,
           // null (not undefined) so clearing a picker unschedules / removes the deadline
           visible_from: editingTemplate.visible_from ? editingTemplate.visible_from.toISOString() : null,
@@ -331,14 +338,17 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
       // Read file content and load into editor (no backend call yet)
       const fileContent = await uploadFile.text();
       const fileName = uploadFile.name.replace(/\.[^/.]+$/, ""); // Remove extension
-      
+      // A file carrying the locked-tests marker comes apart into starter code and tests
+      const { student: starter, harness } = splitHarness(fileContent);
+
       // Load content into the editing template
       setEditingTemplate({
         id: null,
         name: fileName,
         description: `Uploaded from ${uploadFile.name}`,
         language: uploadLanguage,
-        code_content: fileContent,
+        code_content: starter,
+        test_harness: harness ?? '',
         classroom_ids: [],
         visible_from: undefined,
         submission_deadline: undefined,
@@ -366,6 +376,7 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
         description: fullTemplate.description || '',
         language: fullTemplate.language,
         code_content: fullTemplate.code_content,
+        test_harness: fullTemplate.test_harness || '',
         classroom_ids: fullTemplate.classrooms.map(c => c.id),
         visible_from: fullTemplate.visible_from ?
           parseDate(fullTemplate.visible_from) || undefined : undefined,
@@ -392,7 +403,12 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
       const langConfig = supportedLanguages.find(l => l.value === template.language);
       const extension = langConfig?.extension || '.txt';
       
-      const blob = new Blob([fullTemplate.code_content], { type: 'text/plain' });
+      // What the student sees: the starter code with the locked tests below it
+      const tail = fullTemplate.test_harness
+        ? buildLockedTail(fullTemplate.test_harness, fullTemplate.language)
+        : null;
+      const content = tail ? withLockedTail(fullTemplate.code_content, tail) + '\n' : fullTemplate.code_content;
+      const blob = new Blob([content], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1014,6 +1030,27 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
               </div>
             </div>
 
+            {/* Test harness: locked in the student's editor, appended by the server on every run */}
+            <div>
+              <Label>Tests (locked for students)</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Shown read-only under the student's code and appended by the server on every run, so it cannot be
+                edited or removed. Print one <code>PASS name</code> or <code>FAIL name</code> line per case
+                (a FAIL followed by <code>got:</code> and <code>expected:</code> lines), then <code>N/M tests passed</code>.
+                A run whose tally shows failures is recorded as an error.
+              </p>
+              <div className="mt-2 border rounded-lg overflow-hidden">
+                <div className="h-64">
+                  <CodeEditor
+                    language={editingTemplate.language}
+                    value={editingTemplate.test_harness}
+                    onChange={(value) => setEditingTemplate(prev => ({...prev, test_harness: value || ''}))}
+                    theme="vs-dark"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Save/Cancel buttons */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
               {error && <p className="text-sm text-destructive sm:mr-auto">{error}</p>}
@@ -1493,6 +1530,26 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                                 language={editingTemplate.language}
                                 value={editingTemplate.code_content}
                                 onChange={(value) => setEditingTemplate(prev => ({...prev, code_content: value || ''}))}
+                                theme="vs-dark"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Test harness: locked in the student's editor, appended by the server on every run */}
+                        <div>
+                          <Label>Tests (locked for students)</Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Shown read-only under the student's code and appended by the server on every run.
+                            Print <code>PASS name</code> / <code>FAIL name</code> lines and a <code>N/M tests passed</code> tally;
+                            a run whose tally shows failures is recorded as an error. Leave empty for no tests.
+                          </p>
+                          <div className="mt-2 border rounded-lg overflow-hidden">
+                            <div className="h-64">
+                              <CodeEditor
+                                language={editingTemplate.language}
+                                value={editingTemplate.test_harness}
+                                onChange={(value) => setEditingTemplate(prev => ({...prev, test_harness: value || ''}))}
                                 theme="vs-dark"
                               />
                             </div>

@@ -19,6 +19,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useAdminSettingsStore } from '@/store/adminSettingsStore';
 import { apiService } from '@/services/api';
 import type { MissedTemplate, TemplateSubmission } from '@/services/api';
+import { lockedTail as buildLockedTail, withLockedTail, stripHarness } from '@/lib/labHarness';
 import { Play, Save, Download, Share2, Users, Send, CheckCircle, XCircle, Clock, ChevronDown, FileText } from 'lucide-react';
 
 export default function IDE() {
@@ -46,6 +47,7 @@ export default function IDE() {
     setLanguage,
     loadLanguages,
     executeCode,
+    setResult,
     setSelectedTemplate
   } = useCodeStore();
 
@@ -125,6 +127,19 @@ export default function IDE() {
     draft: any;
     templateId: string;
   } | null>(null);
+
+  // The lab's test harness as shown (and locked) at the bottom of the editor;
+  // null for scratch code and personal templates. The server appends its own
+  // copy on every run, so this is display only (lib/labHarness.ts).
+  const [lockedTail, setLockedTail] = useState<string | null>(null);
+  type LabLike = { test_harness?: string | null; language?: string } | null | undefined;
+  const labTail = (template: LabLike): string | null =>
+    template?.test_harness ? buildLockedTail(template.test_harness, template.language) : null;
+  // A lab's buffer: the student's code with the locked tests below it
+  const labBuffer = (template: LabLike, studentCode: string): string => {
+    const tail = labTail(template);
+    return tail ? withLockedTail(studentCode, tail) : studentCode;
+  };
 
   // Format template name to add leading zeros to dates
   const formatTemplateName = (name: string): string => {
@@ -283,6 +298,7 @@ export default function IDE() {
       setSelectedAdminTemplateName('');
       setSelectedUserTemplate('');
       setSelectedUserTemplateName('');
+      setLockedTail(null);
     }
   }, [language, isAuthenticated]);
 
@@ -373,6 +389,7 @@ export default function IDE() {
       setCanSubmit(false);
       setHasSubmitted(false);
       setLastDraftSave('');
+      setLockedTail(null);
       // Only clear user template if this is a clear action, not if there are no templates
       if (templateId === 'clear-admin') {
         setSelectedUserTemplate('');
@@ -394,6 +411,8 @@ export default function IDE() {
         // Check submission status
         setCanSubmit(template.can_submit || false);
         setHasSubmitted(!!template.user_submission);
+        // The lab's tests, shown locked under whatever code is loaded below
+        setLockedTail(labTail(template));
         
         // Clear any existing draft state to avoid cross-template issues
         setShowDraftChoice(false);
@@ -404,7 +423,8 @@ export default function IDE() {
           const draft = await apiService.getTemplateDraft(parseInt(templateId));
           if (draft && draft.code_content) {
             // Compare draft content with template content
-            const draftContent = draft.code_content.trim();
+            // Drafts hold the student's part only; older ones may still carry a harness
+            const draftContent = stripHarness(draft.code_content).trim();
             const templateContent = template.code_content.trim();
             
             if (draftContent !== templateContent) {
@@ -420,24 +440,25 @@ export default function IDE() {
             } else {
               // Draft is same as template, just load template
               console.log('Draft is identical to template, loading template directly');
-              setCode(template.code_content);
+              setCode(labBuffer(template, template.code_content));
               setLastDraftSave(formatDraftTime(draft.updated_at));
             }
           } else {
             // No draft found, use template's original code
             console.log('No draft found, loading template');
-            setCode(template.code_content);
+            setCode(labBuffer(template, template.code_content));
             setLastDraftSave('');
           }
         } catch (error) {
           console.error('Failed to load draft, using template code:', error);
-          setCode(template.code_content);
+          setCode(labBuffer(template, template.code_content));
           setLastDraftSave('');
         }
       }
     } catch (error) {
       console.error('Failed to load template:', error);
       setSelectedTemplate(null);
+      setLockedTail(null);
       setCanSubmit(false);
       setHasSubmitted(false);
       setLastDraftSave('');
@@ -455,6 +476,7 @@ export default function IDE() {
     try {
       const template = await apiService.getUserTemplate(parseInt(templateId));
       if (template && template.code_content) {
+        setLockedTail(null);
         setCode(template.code_content);
         setSelectedUserTemplate(templateId);
         setSelectedUserTemplateName(template.name || 'Untitled Template');
@@ -548,23 +570,18 @@ export default function IDE() {
     setSubmitting(true);
     setSubmitCodeError('');
     try {
-      // Execute code fresh with is_submission=true to avoid cache issues and get latest results
-      const freshResult = await apiService.executeCode({
-        code,
-        language,
-        input_data: '',
-        template_id: parseInt(selectedAdminTemplate),
-        is_submission: true // Force fresh execution for submission - bypasses all cache
-      });
+      // The server runs the submitted code itself, against the lab's own
+      // tests, and records that run; nothing from the browser's last run is sent.
       
-      // IMPORTANT: Submit ONLY with fresh execution results - no old/cached data used
-      await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
+      const submission = await apiService.submitTemplate(parseInt(selectedAdminTemplate), {
         code_content: code, // Current code in editor
-        execution_output: freshResult.output || "", // Fresh output only
-        execution_status: freshResult.status || "error", // Fresh status only
-        execution_time: freshResult.execution_time || 0, // Fresh execution time only
-        error_message: freshResult.error || "", // Fresh error only
         submission_code: needsSubmissionCode ? submissionCode.trim() : undefined
+      });
+      // Show the graded run in the console: this is what was recorded
+      setResult({
+        output: submission.output || '',
+        error: submission.error_message || '',
+        executionTime: submission.execution_time || 0,
       });
       
       // Refresh template data to get updated submission status
@@ -592,6 +609,11 @@ export default function IDE() {
         setCodeRequired(true);  // keep the input on screen so they can retry
       } else if (status === 403 && typeof detail === 'string' && detail.includes('Submission denied')) {
         // Deadline passed
+        setSubmissionErrorMessage(detail);
+        setShowSubmissionErrorModal(true);
+        setShowSubmitModal(false);
+      } else if ((status === 503 || status === 400) && typeof detail === 'string') {
+        // The runner was unavailable, or the code was refused before it ran
         setSubmissionErrorMessage(detail);
         setShowSubmissionErrorModal(true);
         setShowSubmitModal(false);
@@ -738,7 +760,7 @@ export default function IDE() {
   // Handle user choice for loading draft or fresh template
   const handleLoadFreshTemplate = () => {
     if (draftChoiceData) {
-      setCode(draftChoiceData.template.code_content);
+      setCode(labBuffer(draftChoiceData.template, draftChoiceData.template.code_content));
       setLastDraftSave('');
       setShowDraftChoice(false);
       setDraftChoiceData(null);
@@ -752,12 +774,12 @@ export default function IDE() {
         // Always fetch the latest draft from backend to ensure we have the most recent save
         const latestDraft = await apiService.getTemplateDraft(parseInt(draftChoiceData.templateId));
         if (latestDraft && latestDraft.code_content) {
-          setCode(latestDraft.code_content);
+          setCode(labBuffer(draftChoiceData.template, latestDraft.code_content));
           setLastDraftSave(formatDraftTime(latestDraft.updated_at));
           console.log('Loaded latest saved draft from backend');
         } else {
           // Fallback to cached version if API call fails
-          setCode(draftChoiceData.draft.code_content);
+          setCode(labBuffer(draftChoiceData.template, draftChoiceData.draft.code_content));
           setLastDraftSave(formatDraftTime(draftChoiceData.draft.updated_at));
           console.log('Loaded cached draft (API call failed)');
         }
@@ -784,6 +806,7 @@ export default function IDE() {
     setCanSubmit(false);
     setHasSubmitted(false);
     setLastDraftSave('');
+    setLockedTail(null);
     console.log('Draft choice modal closed - template selection cleared');
   };
 
@@ -1368,6 +1391,15 @@ export default function IDE() {
                       Copy-paste disabled
                     </span>
                   )}
+                  {lockedTail && (
+                    <span
+                      className="status-pill"
+                      data-tone="info"
+                      title="The lab's tests are locked. The server runs its own copy of them on every run."
+                    >
+                      Tests locked
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <CodeEditor
@@ -1380,6 +1412,7 @@ export default function IDE() {
                       );
                     }}
                     copyPasteDisabled={copyPasteDisabled}
+                    lockedTail={lockedTail}
                   />
                 </div>
               </div>
@@ -1442,6 +1475,9 @@ export default function IDE() {
 
               <p className="text-gray-600 dark:text-gray-300">
                 Do you want to submit "<strong>{selectedAdminTemplateName}</strong>"?
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Your code is run on the server against the lab's tests, and that run is what gets recorded.
               </p>
 
               {/* Only the first submission needs the in-class code */}
@@ -1534,7 +1570,7 @@ export default function IDE() {
                       📝 Code has been modified since last run
                     </p>
                     <p className="text-orange-600 dark:text-orange-300 text-sm mt-1">
-                      You've changed your code after running it. The <strong>last executed results</strong> will be submitted, not your current code changes.
+                      You've changed your code after running it. Run it again so you see the result before you hand it in.
                     </p>
                   </div>
                 )}
@@ -1544,7 +1580,7 @@ export default function IDE() {
                     💡 Why is this required?
                   </p>
                   <p className="text-blue-600 dark:text-blue-300 text-sm mt-1">
-                    This ensures your submitted code and execution results always match exactly. It prevents submitting outdated results with new code.
+                    So you always know what your code does before it is handed in. The server runs your submitted code itself, so what it records is what you see when you press Run.
                   </p>
                 </div>
               </div>

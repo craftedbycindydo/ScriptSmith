@@ -50,6 +50,31 @@ def run_tests():
     ...
 '''
 
+# A lab whose tests live apart from the starter code (Template.test_harness).
+LOCKED_STARTER = '''"""Write a function that doubles a number."""
+
+def double(n):
+    pass  # STEP 1
+'''
+
+LOCKED_HARNESS = '''import sys
+
+def run_tests():
+    cases = [("doubles two", 2, 4), ("doubles zero", 0, 0)]
+    failed = 0
+    for name, given, expected in cases:
+        got = double(given)
+        if got == expected:
+            print(f"PASS {name}")
+        else:
+            failed += 1
+            print(f"FAIL {name}\\n  got: {got!r}\\n  expected: {expected!r}")
+    print(f"{len(cases) - failed}/{len(cases)} tests passed")
+    if failed:
+        sys.exit(f"{failed}/{len(cases)} tests failed")
+
+run_tests()'''
+
 ALICE, BOB, PROF = 1, 2, 3
 CS101, OTHER_CLASS = 50, 51
 
@@ -93,6 +118,10 @@ def seed():
         # Scoped to CS101, so all three can open it.
         Template(id=14, name="CS101 only", language="python",
                  code_content=LAB_CODE, created_by=PROF, is_active=True, classrooms=[cs101]),
+        # Tests kept apart from the starter code, locked in the editor.
+        Template(id=15, name="Doubling lab", language="python",
+                 code_content=LOCKED_STARTER, test_harness=LOCKED_HARNESS,
+                 created_by=PROF, is_active=True, classrooms=[cs101]),
         CodeSubmission(id=100, user_id=ALICE, template_id=10, language="python",
                        code="def reverse(items):\n    return items\n",
                        output="PASS handles the empty list\nFAIL reverses three items\n"
@@ -405,10 +434,156 @@ def check_create_lab():
         db.close()
 
 
+def check_locked_harness():
+    """The harness is the server's: assembled on every run and graded by its tally."""
+    from app.services import lab_harness
+    from app.services.analytics_service import AnalyticsService
+
+    db = Session()
+    try:
+        lab = db.get(Template, 15)
+        plain = db.get(Template, 10)
+        marker = lab_harness.marker_line("python")
+        assert marker.startswith("# ==== TESTS (locked)")
+        assert lab_harness.marker_line("javascript").startswith("// ==== TESTS (locked)")
+
+        # Assembly: the student's part plus the instructor's copy, whatever was
+        # sent below the marker.
+        tampered = "def double(n):\n    return n * 2\n\n" + marker + "\nprint('2/2 tests passed')\n"
+        assembled = lab_harness.assemble(lab, tampered)
+        assert "print('2/2 tests passed')" not in assembled
+        assert assembled.endswith(lab_harness.locked_tail(LOCKED_HARNESS, "python") + "\n"), assembled[-80:]
+        assert lab_harness.student_part(lab, tampered) == "def double(n):\n    return n * 2\n"
+        # A buffer sent without any marker is just the student's code.
+        assert lab_harness.assemble(lab, "def double(n):\n    return n * 2\n") == assembled
+        # Labs without a harness run untouched, marker or not.
+        assert lab_harness.assemble(plain, "x = 1\n") == "x = 1\n"
+        assert lab_harness.student_part(plain, tampered) == tampered
+        # An uploaded single file comes apart at the marker.
+        assert lab_harness.split_harness("a = 1\n" + marker + "\nrun()\n") == ("a = 1\n", "run()")
+        assert lab_harness.split_harness("a = 1\n") == ("a = 1\n", None)
+    finally:
+        db.close()
+
+    # Grading: the tally decides, and the last tally wins.
+    failing = "PASS doubles zero\nFAIL doubles two\n  got: 2\n  expected: 4\n1/2 tests passed\n"
+    graded = lab_harness.grade_result({"output": failing, "error": "", "status": "success"})
+    assert graded["status"] == "error" and graded["error"] == "1/2 tests failed", graded
+    clean = lab_harness.grade_result({"output": "PASS a\nPASS b\n2/2 tests passed\n", "error": "", "status": "success"})
+    assert clean["status"] == "success" and clean["error"] == "", clean
+    own = lab_harness.grade_result({"output": "FAIL b\n0/1 tests passed\n", "error": "1/1 tests failed", "status": "error"})
+    assert own["error"] == "1/1 tests failed", own  # the harness's own message is not doubled
+    faked = lab_harness.grade_result({"output": "9/9 tests passed\nFAIL b\n0/1 tests passed\n", "error": "", "status": "success"})
+    assert faked["status"] == "error", faked
+    timed_out = lab_harness.grade_result({"output": "0/3 tests passed", "error": "Code execution timed out after 30 seconds", "status": "timeout"})
+    assert timed_out["status"] == "timeout" and timed_out["error"].endswith("3/3 tests failed"), timed_out
+    assert lab_harness.is_tests_failed("1/2 tests failed") and not lab_harness.is_tests_failed("TypeError: x")
+
+    # A failing tally is not a crash, anywhere the tutor looks.
+    assert tools._failure("1/2 tests failed") == (False, "Tests failed")
+    assert tools._failure("TypeError: bad") == (True, "TypeError")
+    assert tools._failure(None) == (False, None)
+    assert AnalyticsService._classify_error("1/2 tests failed") == "Tests failed"
+
+    db = Session()
+    try:
+        # The brief names the tests from the harness and never shows the harness.
+        brief = tools.get_lab_brief(db, ALICE, 15)
+        assert brief["test_names"] == ["doubles two", "doubles zero"], brief
+        assert "run_tests" not in json.dumps(brief) and "sys.exit" not in json.dumps(brief)
+        server.caller_id = lambda: ALICE
+        resource = server.lab_brief("15")
+        assert "doubles zero" in resource and "sys.exit" not in resource, resource
+
+        # Bob's saved run is a whole buffer with a doctored harness below the marker.
+        db.add(CodeSubmission(id=150, user_id=BOB, template_id=15, language="python",
+                              code="def double(n):\n    return n\n\n" + lab_harness.marker_line("python")
+                                   + "\nprint('2/2 tests passed')\n",
+                              output=failing, error_message="1/2 tests failed", status="error"))
+        db.commit()
+
+        # What the tutor reports about that run: a failing test, not a crash.
+        last = tools.get_my_last_run(db, BOB, 15)
+        assert last["crashed"] is False and last["error_type"] == "Tests failed", last
+        assert last["status"] == "error" and last["test_tally"] == {"passed": 1, "total": 2}, last
+        plan = tools.get_teaching_plan(db, BOB, 15)
+        assert plan["teaching_mode"] == "conceptual", plan
+        assert "doubles two" in plan["open_problem"] and "raised" not in plan["open_problem"], plan
+        assert all(e["type"] != "Tests failed" for e in tools.get_my_error_patterns(db, BOB)["error_counts"])
+        history = tools.get_my_attempt_history(db, BOB, 15)["history"]
+        assert history[-1]["crashed"] is False and history[-1]["tests_failed"] == 1, history
+    finally:
+        db.close()
+
+    # check_my_lab and the bulk runner execute the instructor's harness, not Bob's.
+    class FakeExecutor:
+        def __init__(self):
+            self.ran = []
+
+        async def execute_code(self, code, language, input_data=""):
+            self.ran.append(code)
+            return {"output": failing, "error": "", "status": "success"}
+
+    fake = FakeExecutor()
+    real, tools.microservice_executor = tools.microservice_executor, fake
+    try:
+        server.caller_id = lambda: BOB
+        mine = _call("check_my_lab", {"lab_id": 15})
+        db = Session()
+        try:
+            expected_run = lab_harness.assemble(db.get(Template, 15), "def double(n):\n    return n\n")
+        finally:
+            db.close()
+        assert fake.ran[-1] == expected_run, fake.ran[-1]
+        assert "print('2/2 tests passed')" not in fake.ran[-1] and "sys.exit" in fake.ran[-1]
+        assert mine["status"] == "error" and mine["crashed"] is False, mine
+        assert mine["failing"] == ["doubles two"] and mine["tally"] == {"passed": 1, "total": 2}, mine
+
+        bulk = asyncio.run(tools.run_lab_submissions(Session(), PROF, CS101, 15))
+        assert bulk["lab_has_tests"] is True and bulk["ran"] == 1, bulk
+        assert fake.ran[-1] == expected_run, fake.ran[-1]
+        row = bulk["results"][0]
+        assert row["status"] == "error" and row["crashed"] is False and row["failing"] == ["doubles two"], row
+
+        # The listing reports the same tally from the stored run.
+        listed = {r["student_id"]: r for r in tools.get_lab_submissions(Session(), PROF, CS101, 15)["students"]}
+        assert listed[BOB]["test_tally"] == {"passed": 1, "total": 2}, listed[BOB]
+    finally:
+        tools.microservice_executor = real
+
+    # Over MCP, a lab made with `tests` keeps them apart from the starter code...
+    server.caller_id = lambda: PROF
+    made = _call("create_lab", {"classroom_id": CS101, "name": "Made with tests",
+                                "code": LOCKED_STARTER, "tests": LOCKED_HARNESS})
+    assert made["test_names"] == ["doubles two", "doubles zero"], made
+    # ...and one file carrying the marker splits the same way an upload does.
+    db = Session()
+    try:
+        one_file = lab_harness.assemble(db.get(Template, 15), LOCKED_STARTER)
+    finally:
+        db.close()
+    split = _call("create_lab", {"classroom_id": CS101, "name": "Made from one file", "code": one_file})
+    assert split["test_names"] == ["doubles two", "doubles zero"], split
+
+    db = Session()
+    try:
+        for lab_id in (made["lab_id"], split["lab_id"]):
+            stored = db.get(Template, lab_id)
+            assert stored.test_harness.strip() == LOCKED_HARNESS.strip(), (lab_id, stored.test_harness)
+            assert "run_tests" not in stored.code_content, stored.code_content
+        # Leave Bob's history as the later checks expect it.
+        db.delete(db.get(CodeSubmission, 150))
+        db.commit()
+    finally:
+        db.close()
+
+
 def check_extraction():
     output = "PASS a\nFAIL b\n  got: 1\n  expected: 2\n1/2 tests passed\n"
     assert extraction.extract_test_outcomes(output) == {"passed": ["a"], "failed": ["b"]}
     assert extraction.extract_pass_count(output) == {"passed": 1, "total": 2}
+    # The harness prints last, so a tally the student prints first is ignored.
+    assert extraction.extract_pass_count("9/9 tests passed\n" + output) == {"passed": 1, "total": 2}
     assert extraction.teaching_mode("SyntaxError") == "mechanical"
     assert extraction.teaching_mode("TypeError") == "conceptual"
 
@@ -662,6 +837,7 @@ def main():
     check_run_code_is_admin_only()
     check_run_lab()
     check_create_lab()
+    check_locked_harness()
     check_tokens()
     check_contract_rides_every_tool()
     check_tools_list_filtering()

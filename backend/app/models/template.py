@@ -52,7 +52,12 @@ class Template(Base):
     # first submission so labs can only be handed in during the session
     submission_code = Column(String(4), nullable=True)
     exclusions = Column(JSON, nullable=True)  # List of user exclusions with custom deadlines: [{"user_id": int, "deadline": str}]
-    
+
+    # Test harness kept apart from the starter code. Shown read-only at the
+    # bottom of the student's editor and appended by the server on every run,
+    # so what is graded is always the instructor's copy (services/lab_harness.py).
+    test_harness = Column(Text, nullable=True)
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -48,10 +48,16 @@ PASS_LINE_RE = re.compile(r"^\s*PASS\s+(?P<name>.+?)\s*$", re.MULTILINE)
 
 
 def extract_pass_count(output: str):
-    match = TALLY_RE.search(output or "")
-    if not match:
+    """The tally the harness prints, e.g. `2/3 tests passed`.
+
+    The last one wins: the harness runs after the student's code, so a tally
+    the student prints themselves lands earlier in the output and is ignored.
+    """
+    matches = TALLY_RE.findall(output or "")
+    if not matches:
         return None
-    return {"passed": int(match.group(1)), "total": int(match.group(2))}
+    passed, total = matches[-1]
+    return {"passed": int(passed), "total": int(total)}
 
 
 def extract_test_outcomes(output: str):
