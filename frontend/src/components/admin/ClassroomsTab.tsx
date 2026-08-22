@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { useEffect, useRef, useState } from 'react';
 import { formatDate } from '@/lib/dateUtils';
 import { apiService } from '@/services/api';
@@ -119,25 +120,31 @@ function AddStudentByEmail({
     <div className="space-y-3">
       <div className="text-sm font-medium">Add Student by Email</div>
       <div className="flex space-x-2">
-        <div className="relative flex-1">
-          <Input
-            placeholder="student@example.com"
-            type="email"
-            autoComplete="off"
-            value={email}
-            onChange={(e) => onEmailChange(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            onKeyDown={handleKeyDown}
-            className={`w-full ${error ? 'border-destructive/40 focus-visible:ring-destructive' : ''}`}
-            disabled={adding}
-          />
+        <div className="flex-1">
+          <Popover open={showList}>
+            <PopoverAnchor asChild>
+              <Input
+                placeholder="student@example.com"
+                type="email"
+                autoComplete="off"
+                value={email}
+                onChange={(e) => onEmailChange(e.target.value)}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                onKeyDown={handleKeyDown}
+                className={`w-full ${error ? 'border-destructive/40 focus-visible:ring-destructive' : ''}`}
+                disabled={adding}
+              />
+            </PopoverAnchor>
 
-          {showList && (
-            // Keep mousedown from blurring the input before the click lands
-            <div
-              className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+            {/* Portaled so the card's overflow-hidden can't clip it; shrinks to the
+                viewport space below the input (or flips above) instead of overflowing */}
+            <PopoverContent
+              align="start"
+              onOpenAutoFocus={(e) => e.preventDefault()}
+              // Keep mousedown from blurring the input before the click lands
               onMouseDown={(e) => e.preventDefault()}
+              className="w-[var(--radix-popover-trigger-width)] max-h-[min(15rem,var(--radix-popover-content-available-height))] overflow-y-auto p-0"
             >
               {suggestions.length > 0 ? (
                 suggestions.map((candidate, index) => (
@@ -161,8 +168,8 @@ function AddStudentByEmail({
                   {loading ? 'Searching...' : 'No unassigned users match'}
                 </div>
               )}
-            </div>
-          )}
+            </PopoverContent>
+          </Popover>
         </div>
 
         <Button onClick={onAdd} disabled={adding || !email.trim()} size="sm">

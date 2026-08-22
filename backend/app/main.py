@@ -178,12 +178,10 @@ async def security_middleware(request: Request, call_next):
     
     # 2025 Performance headers for Cloudflare + Railway optimization
     if request.url.path.startswith("/api/"):
-        # Cache control for API responses
-        if request.method == "GET" and not request.url.path.startswith("/api/auth/"):
-            response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
-            response.headers["Vary"] = "Accept-Encoding, Authorization"
-        else:
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        # Never cache API responses: they are per-user and change on every
+        # mutation, and a cached GET makes React Query's refetch-after-invalidate
+        # hand back the stale copy until a hard refresh.
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         
         # Performance hints for browsers and CDNs
         response.headers["X-DNS-Prefetch-Control"] = "on"
