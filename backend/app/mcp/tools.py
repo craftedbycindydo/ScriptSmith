@@ -29,6 +29,7 @@ from app.models.classroom import Classroom, UserClassroom
 from app.models.user import User
 from app.services.admin_service import AdminService
 from app.services.analytics_service import AnalyticsService
+from app.services import lab_harness
 from app.services.microservice_executor import microservice_executor
 from app.services.template_service import TemplateService
 
@@ -118,6 +119,19 @@ def _current_code(db: Session, user_id: int, lab_id: Optional[int]):
     return None
 
 
+def _failure(message: Optional[str]):
+    """(crashed, error_type) for a recorded error message.
+
+    The harness reporting `K/M tests failed` is not a crash: the code ran to
+    the end and the tests disagreed with it. It is named so the tutor talks
+    about the failing case rather than about an exception.
+    """
+    if not message:
+        return False, None
+    error_type = AnalyticsService._classify_error(message)
+    return error_type != "Tests failed", error_type
+
+
 # Shipped with every student tool result, close to where the model replies.
 REPLY_CONTRACT = [
     "Do not write code that becomes this lab by renaming things. If a reader could "
@@ -177,7 +191,7 @@ def get_lab_brief(db: Session, user_id: int, lab_id: Optional[int] = None):
         "name": lab.name,
         "language": lab.language,
         "brief": extraction.extract_brief(lab.code_content),
-        "test_names": extraction.extract_test_names(lab.code_content),
+        "test_names": extraction.extract_test_names(lab_harness.tests_source(lab)),
     }
 
 
@@ -203,10 +217,12 @@ def get_my_last_run(db: Session, user_id: int, lab_id: Optional[int] = None):
     if not run:
         return _NO_RUN
 
+    crashed, error_type = _failure(run.error_message)
     return {
-        "crashed": bool(run.error_message),
+        "status": run.status,
+        "crashed": crashed,
         "error_message": (run.error_message or "")[:1200],
-        "error_type": AnalyticsService._classify_error(run.error_message) if run.error_message else None,
+        "error_type": error_type,
         "failing_tests": extraction.extract_failing_tests(run.output)[:8],
         "test_tally": extraction.extract_pass_count(run.output),
         "execution_time": run.execution_time,
@@ -228,11 +244,12 @@ def get_my_attempt_history(db: Session, user_id: int, lab_id: Optional[int] = No
     history = []
     for index, run in enumerate(runs, 1):
         outcomes = extraction.extract_test_outcomes(run.output)
+        crashed, error_type = _failure(run.error_message)
         history.append({
             "attempt": index,
             "at": str(run.created_at),
-            "crashed": bool(run.error_message),
-            "error_type": AnalyticsService._classify_error(run.error_message) if run.error_message else None,
+            "crashed": crashed,
+            "error_type": error_type,
             "tests_passed": len(outcomes["passed"]),
             "tests_failed": len(outcomes["failed"]),
             "failing_tests": outcomes["failed"][:5],
@@ -273,8 +290,8 @@ def diff_my_last_two_attempts(db: Session, user_id: int, lab_id: Optional[int] =
         "newly_passing": [t for t in after["passed"] if t not in before["passed"]],
         "newly_failing": [t for t in after["failed"] if t not in before["failed"]],
         "still_failing": [t for t in after["failed"] if t in before["failed"]],
-        "error_before": AnalyticsService._classify_error(older.error_message) if older.error_message else None,
-        "error_after": AnalyticsService._classify_error(newer.error_message) if newer.error_message else None,
+        "error_before": _failure(older.error_message)[1],
+        "error_after": _failure(newer.error_message)[1],
     }
 
 
@@ -336,6 +353,8 @@ def get_my_error_patterns(db: Session, user_id: int):
         CodeSubmission.error_message != "",
     ).all():
         label = AnalyticsService._classify_error(message)
+        if label == "Tests failed":
+            continue  # a wrong answer is not an error habit
         counts[label] = counts.get(label, 0) + 1
 
     ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
@@ -409,24 +428,28 @@ async def check_my_lab(db: Session, user_id: int, lab_id: Optional[int] = None):
         return {"error": "The student has not written any code for this lab yet."}
 
     try:
+        # The lab's own harness is appended here, never taken from the student
         result = await microservice_executor.execute_code(
-            code=current["code"], language=lab.language or "python"
+            code=lab_harness.assemble(lab, current["code"]), language=lab.language or "python"
         )
     except Exception as exc:
         logger.warning("mcp check_my_lab: execution failed: %s", exc)
         return {"error": "The code runner is unavailable right now."}
 
+    result = lab_harness.grade_result(result)
     output = result.get("output") or ""
     outcomes = extraction.extract_test_outcomes(output)
     failures = extraction.extract_failing_tests(output)
     error = result.get("error") or ""
+    crashed, error_type = _failure(error)
 
     return {
         "ran": current["source"],
         "code_last_changed": current["at"],
-        "crashed": bool(error),
+        "status": result.get("status"),
+        "crashed": crashed,
         "error_message": error[:1200],
-        "error_type": AnalyticsService._classify_error(error) if error else None,
+        "error_type": error_type,
         "passing": outcomes["passed"],
         "failing": [f["test"] for f in failures],
         "failure_detail": failures[:8],
@@ -451,10 +474,10 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
             "grinding": False,
         }
 
-    error_type = AnalyticsService._classify_error(run.error_message) if run.error_message else None
-    mode = extraction.teaching_mode(error_type) if error_type else "conceptual"
+    crashed, error_type = _failure(run.error_message)
+    mode = extraction.teaching_mode(error_type) if crashed else "conceptual"
 
-    if run.error_message:
+    if crashed:
         lines = (run.error_message or "").strip().splitlines()
         open_problem = f"Last run raised {error_type}: {lines[-1][:160] if lines else ''}"
     else:
@@ -655,10 +678,12 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
 BULK_CODE_CHARS = 4_000
 
 
-def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab_id: int = None):
-    """Every student's work on one lab, in three queries whatever the class size.
+def _class_work(db: Session, user_id: int, classroom_id: int = None, lab_id: int = None):
+    """Each enrolled student's newest work on one lab, uncapped.
 
-    Code is capped tighter than the single-student tool; rows say when it was cut.
+    Three queries whatever the class size. Returns rows of
+    {student_id, name, submission, run}, or an error dict when the caller may
+    not see this classroom, so every bulk tool refuses the same way.
     """
     admin = require_admin(db, user_id)
     if not admin:
@@ -676,7 +701,7 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
         UserClassroom.is_active.is_(True),
     ).all()
     if not roster:
-        return {"lab_id": lab_id, "classroom_id": classroom_id, "students": []}
+        return []
 
     student_ids = [row[0] for row in roster]
 
@@ -695,24 +720,63 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
     ).order_by(CodeSubmission.created_at.desc()).all():
         runs.setdefault(row.user_id, row)
 
+    return [
+        {
+            "student_id": student_id,
+            "name": full_name or username,
+            "submission": submissions.get(student_id),
+            "run": runs.get(student_id),
+        }
+        for student_id, username, full_name in roster
+    ]
+
+
+def _names(db: Session, classroom_id: int, lab_id: int):
+    """(classroom name, lab name). Columns only: loading the entities would
+    selectin-load every template of the classroom and every classroom of the
+    template."""
+    classroom_name = db.query(Classroom.name).filter(Classroom.id == classroom_id).scalar()
+    lab_name = db.query(Template.name).filter(Template.id == lab_id).scalar()
+    return classroom_name, lab_name
+
+
+def _work_code(row) -> str:
+    """One roster row's own code: the submission, else the last run."""
+    source = row["submission"] or row["run"]
+    if source is None:
+        return ""
+    return getattr(source, "submitted_code", None) or getattr(source, "code", "") or ""
+
+
+def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab_id: int = None):
+    """Every student's work on one lab, in three queries whatever the class size.
+
+    Code is capped tighter than the single-student tool; rows say when it was cut.
+    """
+    work = _class_work(db, user_id, classroom_id, lab_id)
+    if isinstance(work, dict):
+        return work
+    if not work:
+        return {"lab_id": lab_id, "classroom_id": classroom_id, "students": []}
+
     students = []
-    for student_id, username, full_name in roster:
-        submission = submissions.get(student_id)
-        source = submission or runs.get(student_id)
+    for row in work:
+        submission = row["submission"]
+        source = submission or row["run"]
         if source is None:
             students.append({
-                "student_id": student_id,
-                "name": full_name or username,
+                "student_id": row["student_id"],
+                "name": row["name"],
                 "submitted": False,
                 "status": "no work recorded",
             })
             continue
 
-        code = (getattr(source, "submitted_code", None) or getattr(source, "code", "") or "")
+        code = _work_code(row)
         output = getattr(source, "output", None)
         students.append({
-            "student_id": student_id,
-            "name": full_name or username,
+            "student_id": row["student_id"],
+            "name": row["name"],
             "submitted": bool(submission),
             "status": getattr(source, "status", None),
             "code": code[:BULK_CODE_CHARS],
@@ -723,10 +787,7 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
             "error_message": (getattr(source, "error_message", None) or "")[:600],
         })
 
-    # Columns only: loading the entities would selectin-load every template of
-    # the classroom and every classroom of the template.
-    classroom_name = db.query(Classroom.name).filter(Classroom.id == classroom_id).scalar()
-    lab_name = db.query(Template.name).filter(Template.id == lab_id).scalar()
+    classroom_name, lab_name = _names(db, classroom_id, lab_id)
     return {
         "lab_id": lab_id,
         "lab_name": lab_name,
@@ -748,8 +809,10 @@ async def get_classroom_gradebook(db: Session, user_id: int, classroom_id: int =
     REST route behind it gates on admin role alone (admin.py:1994), which is a
     wider door than this connector should open.
 
-    Status is the recorded execution outcome - it means the code ran, not that
-    it is correct. A grade needs get_student_work on top of it.
+    Status is the recorded outcome of the server's own run. For a lab with a
+    test harness a failing tally is recorded as "error", so "success" means
+    every test passed; for a lab without tests it means only that the code
+    ran. Either way a grade needs get_lab_submissions on top of it.
     """
     admin = require_admin(db, user_id)
     if not admin:
@@ -776,22 +839,23 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
                               lab_id: int = None):
     """Run every student's saved code for one lab, concurrently.
 
-    Bounded by a semaphore so a class does not hit the executors at once.
-    Reports tallies, not marks.
+    Each run is the student's own part with the lab's harness appended,
+    exactly as a submission runs, and graded by the same tally rule. Bounded
+    by a semaphore so a class does not hit the executors at once. Reports
+    tallies, not marks.
     """
-    admin = require_admin(db, user_id)
-    if not admin:
-        return _NOT_ADMIN
+    work = _class_work(db, user_id, classroom_id, lab_id)
+    if isinstance(work, dict):
+        return work
 
-    listing = get_lab_submissions(db, user_id, classroom_id, lab_id)
-    if "students" not in listing:
-        return listing
-
-    lab = db.query(Template.language, Template.code_content).filter(Template.id == lab_id).first()
+    lab = db.query(Template.language, Template.code_content, Template.test_harness).filter(
+        Template.id == lab_id
+    ).first()
     language = (lab.language if lab else None) or "python"
 
-    runnable = [row for row in listing["students"] if row.get("code")]
-    skipped = [row["name"] for row in listing["students"] if not row.get("code")]
+    rows = [{**row, "code": _work_code(row)} for row in work]
+    skipped = [row["name"] for row in rows if not row["code"]]
+    runnable = [row for row in rows if row["code"]]
     capped = len(runnable) > MAX_BULK_RUNS
     if capped:
         runnable = runnable[:MAX_BULK_RUNS]
@@ -802,28 +866,31 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
         async with semaphore:
             try:
                 result = await microservice_executor.execute_code(
-                    code=row["code"], language=language
+                    code=lab_harness.assemble(lab, row["code"]), language=language
                 )
             except Exception as exc:
                 logger.warning("mcp run_lab_submissions: %s failed: %s", row["student_id"], exc)
                 return {"student_id": row["student_id"], "name": row["name"],
                         "error": "run failed"}
+            result = lab_harness.grade_result(result)
             output = result.get("output") or ""
             outcomes = extraction.extract_test_outcomes(output)
+            crashed, _ = _failure(result.get("error"))
             return {
                 "student_id": row["student_id"],
                 "name": row["name"],
+                "status": result.get("status"),
                 "tally": extraction.extract_pass_count(output),
                 "passing": outcomes["passed"],
                 "failing": outcomes["failed"],
-                "crashed": bool(result.get("error")),
+                "crashed": crashed,
                 "error_message": (result.get("error") or "")[:400],
             }
 
     results = await asyncio.gather(*(run_one(row) for row in runnable))
 
     # No harness means the code ran and nothing checked it; say so.
-    has_tests = bool(extraction.extract_test_names(lab.code_content if lab else ""))
+    has_tests = bool(extraction.extract_test_names(lab_harness.tests_source(lab) if lab else ""))
     note = None
     if not has_tests:
         note = (
@@ -833,13 +900,14 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
             "or ask the instructor what the basis should be."
         )
 
+    classroom_name, lab_name = _names(db, classroom_id, lab_id)
     return {
         "lab_id": lab_id,
         "lab_has_tests": has_tests,
         "note": note,
-        "lab_name": listing.get("lab_name"),
+        "lab_name": lab_name,
         "classroom_id": classroom_id,
-        "classroom_name": listing.get("classroom_name"),
+        "classroom_name": classroom_name,
         "ran": len(results),
         "no_code_to_run": skipped,
         "capped_at": MAX_BULK_RUNS if capped else None,
@@ -899,7 +967,7 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = None,
                code: str = None, language: str = "python", description: str = None,
                visible_from: str = None, submission_deadline: str = None,
-               exclusions: list = None):
+               exclusions: list = None, tests: str = None):
     """Create a lab in one of the caller's classrooms."""
     admin = require_admin(db, user_id)
     if not admin:
@@ -915,6 +983,10 @@ def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = 
         return {"error": f"Unsupported language: {language}"}
     if len(code.encode("utf-8")) > settings.max_code_size_kb * 1024:
         return {"error": f"Code exceeds the {settings.max_code_size_kb}KB limit."}
+
+    # One file carrying the locked-tests marker splits the same way an upload does
+    if tests is None:
+        code, tests = lab_harness.split_harness(code)
 
     try:
         visible = _utc_naive(visible_from) if visible_from else None
@@ -943,6 +1015,7 @@ def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = 
             db=db, name=name.strip(), description=description, language=language,
             code_content=code, created_by=admin.id, classroom_ids=[classroom_id],
             submission_deadline=deadline, exclusions=per_student or None, visible_from=visible,
+            test_harness=tests,
         )
     except HTTPException as exc:
         return {"error": exc.detail}
@@ -956,6 +1029,7 @@ def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = 
         "submission_deadline": _iso(lab.submission_deadline),
         "exclusions": lab.exclusions or [],
         "submission_code": lab.submission_code,
+        "test_names": extraction.extract_test_names(lab_harness.tests_source(lab)),
     }
 
 
@@ -1010,9 +1084,9 @@ ADMIN_TOOLS = [
     (get_classroom_gradebook, "classroom",
      "TEACHING STAFF. The student-by-lab status matrix for one of your classrooms. Status means the code ran, not that it is correct — pair it with get_student_work before awarding a grade."),
     (run_lab_submissions, "classroom_lab",
-     "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Reports tallies, not marks."),
+     "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Each run has the lab's own test harness appended, and a run whose tally shows failures has status error; crashed is true only for a real runtime failure. Reports tallies, not marks."),
     (run_code, "run",
      "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
     (create_lab, "create_lab",
-     "TEACHING STAFF. Create a lab in one of your classrooms: name, starter code, language, optional description, when it becomes visible, its submission deadline, and per-student deadline exclusions. Dates are ISO 8601 date-times with a timezone offset; one without an offset is UTC. Call list_my_classrooms first for the classroom_id. Returns the new lab id and the submission code students need for their first hand-in."),
+     "TEACHING STAFF. Create a lab in one of your classrooms: name, starter code, language, optional description, when it becomes visible, its submission deadline, and per-student deadline exclusions. Put the tests in `tests`, not in the starter code: they are shown locked at the bottom of the student's editor and appended by the server on every run, so students cannot edit or remove them. A harness prints one `PASS name` or `FAIL name` line per case (a FAIL followed by `got:` and `expected:` lines), then `N/M tests passed`, and exits non-zero when any fail; a run whose tally shows failures is recorded as an error either way. Dates are ISO 8601 date-times with a timezone offset; one without an offset is UTC. Call list_my_classrooms first for the classroom_id. Returns the new lab id, the test names it found, and the submission code students need for their first hand-in."),
 ]

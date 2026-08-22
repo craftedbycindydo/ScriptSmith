@@ -108,6 +108,7 @@ export interface Template {
   description?: string;
   language: string;
   code_content: string;
+  test_harness?: string | null;  // Tests shown locked under the starter code; the server appends its own copy on every run
   created_by: number;
   creator_username: string;
   classrooms: ClassroomInfo[];
@@ -144,6 +145,7 @@ export interface TemplateCreate {
   description?: string;
   language: string;
   code_content: string;
+  test_harness?: string;
   classroom_ids?: number[];
   submission_deadline?: string;
   visible_from?: string;
@@ -154,6 +156,7 @@ export interface TemplateUpdate {
   name?: string;
   description?: string;
   code_content?: string;
+  test_harness?: string | null;  // "" removes the harness; omitted leaves it alone
   classroom_ids?: number[];
   submission_deadline?: string | null;  // null removes the deadline
   visible_from?: string | null;  // null clears a scheduled visible time
@@ -175,12 +178,13 @@ export interface TemplateStats {
 
 export interface TemplateSubmissionRequest {
   code_content: string;
+  submission_code?: string;  // Required for a student's first submission
+  // Ignored by the server, which runs the submitted code itself; kept for older callers
   execution_output?: string;
   execution_status?: string;
   execution_time?: number;
   memory_used?: number;
   error_message?: string;
-  submission_code?: string;  // Required for a student's first submission
 }
 
 export interface GradebookStudent {

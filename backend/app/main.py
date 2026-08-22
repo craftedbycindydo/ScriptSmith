@@ -250,6 +250,9 @@ async def _startup():
             if backfilled:
                 print(f"🔑 Generated submission codes for {backfilled} template(s)")
 
+            # Locked test harness per lab (null = the lab has no separate tests)
+            DatabaseMigrationService.add_column_if_not_exists(db, "templates", "test_harness", "TEXT")
+
             if DatabaseMigrationService.is_migration_needed(db):
                 print("🚀 Running classroom migration...")
                 migration_result = DatabaseMigrationService.run_classroom_migration(db)

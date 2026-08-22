@@ -58,11 +58,11 @@ export default function OutputConsole({ output, error, isLoading, executionTime,
             </div>
           ) : hasContent ? (
             <div className="whitespace-pre-wrap">
-              {hasError ? (
-                <span className="console-error">{error}</span>
-              ) : (
-                <span className="console-ok">{output}</span>
-              )}
+              {/* Both, in order: what the program printed, then what went wrong.
+                  A lab's PASS/FAIL lines are stdout even when the run is an error. */}
+              {hasOutput && <span className="console-ok">{output}</span>}
+              {hasOutput && hasError && '\n'}
+              {hasError && <span className="console-error">{error}</span>}
             </div>
           ) : (
             <div className="console-dim flex flex-col items-center justify-center h-full">

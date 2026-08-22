@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from datetime import datetime
 import os
 import time
@@ -13,8 +14,10 @@ from app.models.template import Template, TemplateSubmission
 from app.models.template_draft import TemplateDraft
 from app.models.user_template import UserTemplate
 from app.models.classroom import Classroom, UserClassroom
+from app.models.code_submission import CodeSubmission
 from app.services.template_service import TemplateService
 from app.services.code_execution import code_execution_service
+from app.services import lab_harness
 from app.services.user_template_service import UserTemplateService
 from app.services.admin_service import AdminService
 from app.core.config import settings
@@ -30,6 +33,9 @@ class TemplateCreate(BaseModel):
     description: Optional[str] = None
     language: str
     code_content: str
+    # Tests kept apart from the starter code: locked in the student's editor and
+    # appended by the server on every run (services/lab_harness.py)
+    test_harness: Optional[str] = None
     classroom_ids: Optional[List[int]] = None
     submission_deadline: Optional[datetime] = None  # UTC datetime
     visible_from: Optional[datetime] = None  # UTC datetime the template becomes visible to students
@@ -39,6 +45,7 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     code_content: Optional[str] = None
+    test_harness: Optional[str] = None  # "" removes the harness; omitted leaves it alone
     classroom_ids: Optional[List[int]] = None
     submission_deadline: Optional[datetime] = None  # UTC datetime
     visible_from: Optional[datetime] = None  # UTC datetime the template becomes visible to students
@@ -55,6 +62,7 @@ class TemplateResponse(BaseModel):
     description: Optional[str]
     language: str
     code_content: str
+    test_harness: Optional[str] = None  # Shown read-only under the student's code
     created_by: int
     creator_username: str
     classrooms: List[ClassroomInfo] = []
@@ -97,12 +105,14 @@ class TemplateStatsResponse(BaseModel):
 
 class TemplateSubmitRequest(BaseModel):
     code_content: str
+    submission_code: Optional[str] = None  # Required for a student's first submission
+    # Accepted for compatibility and ignored: the server runs the code itself,
+    # so a submission's status and output can never be asserted by the client
     execution_output: Optional[str] = None
-    execution_status: str = "pending"
+    execution_status: Optional[str] = None
     execution_time: Optional[float] = None
     memory_used: Optional[int] = None
     error_message: Optional[str] = None
-    submission_code: Optional[str] = None  # Required for a student's first submission
 
 class MissedTemplateResponse(BaseModel):
     template_id: int
@@ -177,6 +187,7 @@ def _prepare_template_response(template: Template, include_submission_code: bool
         "description": template.description,
         "language": template.language,
         "code_content": template.code_content,
+        "test_harness": template.test_harness,
         "created_by": template.created_by,
         "creator_username": getattr(template, 'creator_username', 'Unknown'),
         "classrooms": classroom_info,
@@ -252,7 +263,8 @@ async def create_template(
             classroom_ids=template.classroom_ids,
             submission_deadline=template.submission_deadline,
             exclusions=template.exclusions,
-            visible_from=template.visible_from
+            visible_from=template.visible_from,
+            test_harness=template.test_harness
         )
 
         # Add creator username and classroom info for response
@@ -366,6 +378,7 @@ async def update_template(
             submission_deadline=template.submission_deadline,
             exclusions=template.exclusions,
             visible_from=template.visible_from,
+            test_harness=template.test_harness,
             # An explicit null (not an omitted field) unschedules the template
             clear_visible_from='visible_from' in template.model_fields_set and template.visible_from is None,
             clear_submission_deadline='submission_deadline' in template.model_fields_set and template.submission_deadline is None
@@ -517,6 +530,10 @@ async def upload_template_file(
             except (json.JSONDecodeError, ValueError):
                 parsed_classroom_ids = None
         
+        # A file that already carries the locked-tests marker splits into the
+        # starter code and the harness, the same way the editor shows them
+        code_content, test_harness = lab_harness.split_harness(code_content)
+
         # Create template
         db_template = TemplateService.create_template(
             db=db,
@@ -525,7 +542,8 @@ async def upload_template_file(
             language=language,
             code_content=code_content,
             created_by=admin_user.id,
-            classroom_ids=parsed_classroom_ids
+            classroom_ids=parsed_classroom_ids,
+            test_harness=test_harness
         )
         
         # Add creator username for response
@@ -642,24 +660,74 @@ async def submit_template(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Submit code for a template with execution results"""
+    """Hand in a lab: the server runs the code and records what it saw.
+
+    The client sends only the code (plus the in-class code on a first hand-in).
+    Any execution fields it sends are ignored: the run happens here, against
+    the lab's own test harness, so a submission's status and tally cannot be
+    asserted by the browser. It is the same run the admin re-run performs.
+    """
     try:
+        # Refuse late or miscoded hand-ins before spending an execution
+        template = TemplateService.prepare_submission(
+            db, template_id, current_user.id, request.submission_code
+        )
+        student_code = lab_harness.student_part(template, request.code_content)
+        language = template.language or "python"
+        code_to_run = lab_harness.assemble(template, student_code)
+
+        code_size_kb = len(code_to_run.encode("utf-8")) / 1024
+        if code_size_kb > settings.max_code_size_kb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Code size ({code_size_kb:.1f}KB) exceeds maximum allowed size ({settings.max_code_size_kb}KB)"
+            )
+
+        started = time.time()
+        result = await code_execution_service.execute_code(
+            code=code_to_run, language=language, input_data=""
+        )
+        execution_time = round(time.time() - started, 3)
+        if result.get("infrastructure_error"):
+            # Our runner failed, not their code: record nothing, let them retry
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The code runner is unavailable right now. Please try again in a moment."
+            )
+        result = lab_harness.grade_result(result)
+
+        # The submission run is also the student's latest run, so the IDE
+        # history and the MCP tutor see the same outcome the gradebook does
+        db.add(CodeSubmission(
+            user_id=current_user.id,
+            template_id=template_id,
+            code=student_code,
+            language=language,
+            input_data="",
+            output=result.get("output", ""),
+            error_message=result.get("error", ""),
+            execution_time=execution_time,
+            status=result.get("status", "error"),
+            executed_at=func.now()
+        ))
+
         submission = TemplateService.submit_template(
             db=db,
             template_id=template_id,
             user_id=current_user.id,
-            submitted_code=request.code_content,
-            execution_output=request.execution_output,
-            execution_status=request.execution_status,
-            execution_time=request.execution_time,
-            memory_used=request.memory_used,
-            error_message=request.error_message,
+            submitted_code=student_code,
+            execution_output=result.get("output", ""),
+            execution_status=result.get("status", "error"),
+            language=language,
+            execution_time=execution_time,
+            error_message=result.get("error", ""),
             submission_code=request.submission_code
         )
         return submission
     except HTTPException:
         raise
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to submit template: {str(e)}"
@@ -1103,23 +1171,25 @@ async def rerun_submission(
                     detail="Access denied: You don't have access to this submission"
                 )
         
-        # Execute the code and measure execution time
+        # Re-run exactly what a submission runs: the student's part with the
+        # lab's current harness appended, graded by the same tally rule
         start_time = time.time()
-        
+
         execution_result = await code_execution_service.execute_code(
-            code=submission.submitted_code,
+            code=lab_harness.assemble(submission.template, submission.submitted_code),
             language=submission.language or "python",
             input_data=""
         )
-        
+
         end_time = time.time()
         actual_execution_time = round(end_time - start_time, 3)
-        
+        execution_result = lab_harness.grade_result(execution_result)
+
         # Update the submission with new execution results
         submission.output = execution_result.get("output", "")
         submission.error_message = execution_result.get("error", "")
         submission.execution_time = actual_execution_time
-        # The microservice returns status: "success", "error", or "timeout"
+        # "success", "error" or "timeout" from the runner; a failing tally is "error"
         submission.status = execution_result.get("status", "error")
         
         # Save changes
@@ -1155,16 +1225,15 @@ async def save_template_draft(
 ):
     """Save a draft of template progress"""
     try:
+        # Drafts hold the student's part only; the harness is re-attached on load
+        template = db.query(Template).filter(Template.id == template_id).first()
         draft = TemplateService.save_template_draft(
             db=db,
             template_id=template_id,
             user_id=current_user.id,
-            code_content=request.code_content,
+            code_content=lab_harness.student_part(template, request.code_content),
             is_auto_save=request.is_auto_save
         )
-        
-        # Add template name for response
-        template = db.query(Template).filter(Template.id == template_id).first()
         draft_response = TemplateDraftResponse(
             id=draft.id,
             template_id=draft.template_id,

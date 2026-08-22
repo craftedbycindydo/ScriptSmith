@@ -1,8 +1,9 @@
 import { Editor } from '@monaco-editor/react';
-import type { editor } from 'monaco-editor';
-import { useEffect, useState } from 'react';
+import type { editor, IDisposable, IKeyboardEvent, Selection } from 'monaco-editor';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { registerMonaco, ensureMonacoTheme } from '@/lib/editorThemes';
+import { endsWithLockedTail } from '@/lib/labHarness';
 
 interface CodeEditorProps {
   language: string;
@@ -12,9 +13,13 @@ interface CodeEditorProps {
   theme?: string;
   readOnly?: boolean;
   copyPasteDisabled?: boolean;
+  /** Text the buffer must end with (a lab's test harness); shaded and not editable. */
+  lockedTail?: string | null;
 }
 
-export default function CodeEditor({ language, value, onChange, onMount, theme, readOnly = false, copyPasteDisabled = false }: CodeEditorProps) {
+type Monaco = typeof import('monaco-editor');
+
+export default function CodeEditor({ language, value, onChange, onMount, theme, readOnly = false, copyPasteDisabled = false, lockedTail = null }: CodeEditorProps) {
   const { resolvedTheme, editorTheme: userEditorTheme, editorBg } = useTheme();
   // The user's editor theme + background preference, unless a caller
   // explicitly pins a Monaco theme (e.g. read-only admin views).
@@ -250,12 +255,122 @@ export default function CodeEditor({ language, value, onChange, onMount, theme, 
     }
   };
 
+  // ── Locked tail ────────────────────────────────────────────────
+  // A lab's test harness sits at the bottom of the buffer. The editor shades
+  // it and refuses edits to it; the server re-attaches its own copy on every
+  // run regardless, so this is a courtesy, not the enforcement (lib/labHarness.ts).
+  const lockedTailRef = useRef<string | null>(lockedTail);
+  lockedTailRef.current = lockedTail;
+  const lastGoodRef = useRef<string | null>(null);
+  // Where the caret was before the latest edit: a rejected edit leaves it there
+  const selectionsRef = useRef<Selection[] | null>(null);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
+  const lockGuardRef = useRef<IDisposable[]>([]);
+
+  // First line of the locked block, or null when the buffer does not end with it
+  const lockStartLine = useCallback((model: editor.ITextModel): number | null => {
+    const tail = lockedTailRef.current;
+    if (!tail || !endsWithLockedTail(model.getValue(), tail)) return null;
+    return model.getLineCount() - (tail.split('\n').length - 1);
+  }, []);
+
+  const paintLockedTail = useCallback(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!editor || !monaco || !model) return;
+    if (!decorationsRef.current) decorationsRef.current = editor.createDecorationsCollection([]);
+    const start = lockStartLine(model);
+    const last = model.getLineCount();
+    decorationsRef.current.set(start === null ? [] : [{
+      range: new monaco.Range(start, 1, last, model.getLineMaxColumn(last)),
+      options: {
+        isWholeLine: true,
+        className: 'locked-tests-line',
+        linesDecorationsClassName: 'locked-tests-gutter',
+        hoverMessage: { value: 'These tests are locked. Write your solution above this block.' },
+      },
+    }]);
+  }, [lockStartLine]);
+
+  // A value set from outside (a lab being opened) is the new baseline; repaint either way
+  useEffect(() => {
+    if (lockedTail) {
+      lastGoodRef.current = endsWithLockedTail(value, lockedTail) ? value : null;
+    }
+    paintLockedTail();
+  }, [value, lockedTail, paintLockedTail]);
+
+  // User edits: anything that changes the locked block is put back
+  const handleChange = (next: string | undefined, event?: editor.IModelContentChangedEvent) => {
+    const tail = lockedTailRef.current;
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (tail && editor && model && !event?.isFlush) {
+      const current = next ?? '';
+      if (endsWithLockedTail(current, tail)) {
+        lastGoodRef.current = current;
+      } else if (lastGoodRef.current !== null) {
+        // The cursor event for this edit has not fired yet, so this is the pre-edit caret
+        const keep = selectionsRef.current;
+        // The restore edit raises its own change event, which reaches onChange with the good value
+        editor.executeEdits('locked-tests', [{ range: model.getFullModelRange(), text: lastGoodRef.current }]);
+        editor.pushUndoStop();
+        if (keep) editor.setSelections(keep);
+        return;
+      }
+    }
+    paintLockedTail();
+    onChange(next);
+  };
+
+  // Keystrokes with the caret or a selection inside the block go nowhere, so
+  // nothing flickers; pastes and drops are caught by handleChange instead
+  const installLockGuard = (editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+    lockGuardRef.current.push(editor.onDidChangeCursorSelection(() => {
+      selectionsRef.current = editor.getSelections();
+    }));
+    lockGuardRef.current.push(editor.onKeyDown((e: IKeyboardEvent) => {
+      const model = editor.getModel();
+      if (!model) return;
+      const start = lockStartLine(model);
+      if (start === null) return;
+      const last = model.getLineCount();
+      const locked = new monaco.Range(start, 1, last, model.getLineMaxColumn(last));
+      const touches = (editor.getSelections() || []).some((s: Selection) =>
+        monaco.Range.areIntersectingOrTouching(s, locked) &&
+        // An empty caret at the very start of the marker line may still type there: it pushes the block down
+        !(s.isEmpty() && s.startLineNumber === start && s.startColumn === 1)
+      );
+      if (!touches) return;
+      const navigation = [
+        monaco.KeyCode.LeftArrow, monaco.KeyCode.RightArrow, monaco.KeyCode.UpArrow, monaco.KeyCode.DownArrow,
+        monaco.KeyCode.Home, monaco.KeyCode.End, monaco.KeyCode.PageUp, monaco.KeyCode.PageDown, monaco.KeyCode.Escape,
+      ];
+      if (navigation.includes(e.keyCode) || e.ctrlKey || e.metaKey || e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }));
+  };
+
+  useEffect(() => () => { lockGuardRef.current.forEach((d) => d.dispose()); }, []);
+
   // Custom onMount handler to disable copy-paste if needed
   const handleEditorMount = (editor: any, monaco: any) => {
     // Store editor instances for dynamic updates
     setEditorInstance(editor);
     setMonacoInstance(monaco);
-    
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    installLockGuard(editor, monaco);
+    selectionsRef.current = editor.getSelections();
+    if (lockedTailRef.current && endsWithLockedTail(editor.getValue(), lockedTailRef.current)) {
+      lastGoodRef.current = editor.getValue();
+    }
+    paintLockedTail();
+
     // Setup initial security layers
     _x1f4cb(editor, monaco, copyPasteDisabled);
     
@@ -279,7 +394,7 @@ export default function CodeEditor({ language, value, onChange, onMount, theme, 
         height="100%"
         language={language}
         value={value}
-        onChange={onChange}
+        onChange={handleChange}
         beforeMount={(monaco) => {
           registerMonaco(monaco);
           // Define the active custom theme before the editor first renders

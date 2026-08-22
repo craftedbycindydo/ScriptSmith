@@ -33,6 +33,7 @@ from mcp.server.mcpserver import (
 from app.core.config import settings
 from app.database.base import SessionLocal
 from app.mcp import auth, extraction, tools
+from app.services import lab_harness
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +400,7 @@ def _register(core, shape: str) -> None:
             visible_from: str | None = None,
             submission_deadline: str | None = None,
             exclusions: list[Exclusion] | None = None,
+            tests: str | None = None,
         ):
             user_id = caller_id()
             if user_id is None:
@@ -406,6 +408,7 @@ def _register(core, shape: str) -> None:
             return await _session(
                 core, user_id, classroom_id, name, code, language, description,
                 visible_from, submission_deadline, [e.model_dump() for e in exclusions or []],
+                tests,
             )
     else:
         raise ValueError(f"unknown shape {shape}")
@@ -449,7 +452,7 @@ def lab_brief(lab_id: str) -> str:
         lab = tools._accessible_lab(db, user_id, wanted)
         if not lab:
             return "Lab not found or not available to this student."
-        names = extraction.extract_test_names(lab.code_content)
+        names = extraction.extract_test_names(lab_harness.tests_source(lab))
         body = [f"# {lab.name}", "", f"Language: {lab.language}", "",
                 extraction.extract_brief(lab.code_content)]
         if names:

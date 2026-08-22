@@ -13,6 +13,8 @@ from typing import Union
 from app.models.code_submission import CodeSubmission
 from app.services.openai_service import openai_service
 from app.services.cache_service import cache_service
+from app.services import lab_harness
+from app.services.template_service import TemplateService
 from sqlalchemy import desc
 
 router = APIRouter()
@@ -89,16 +91,28 @@ async def execute_code(
             detail=f"Code size ({code_size_kb:.1f}KB) exceeds maximum allowed size ({settings.max_code_size_kb}KB)"
         )
     
+    # A lab run: the lab's own harness is appended here, never taken from the
+    # client, and the run is graded by its tally (services/lab_harness.py).
+    # Only the student's part is recorded.
+    lab = TemplateService.get_template_by_id(db, request.template_id) if request.template_id else None
+    language = request.language
+    student_code = request.code
+    code_to_run = request.code
+    if lab is not None and lab_harness.has_harness(lab):
+        language = lab.language or request.language
+        student_code = lab_harness.student_part(lab, request.code)
+        code_to_run = lab_harness.assemble(lab, student_code)
+
     # Check cache first to avoid redundant execution (skip cache for submissions to ensure fresh results)
     # Use exact input_data to ensure bit-perfect caching
     input_data = request.input_data if request.input_data is not None else ""
     cached_result = None
-    
+
     # Only use cache if this is not a submission - submissions need fresh execution
     if not request.is_submission:
         cached_result = await cache_service.get_cached_result(
-            request.code, 
-            request.language, 
+            code_to_run,
+            language,
             input_data
         )
     
@@ -127,11 +141,13 @@ async def execute_code(
     try:
         # Execute code using microservice
         result = await microservice_executor.execute_code(
-            code=request.code,
-            language=request.language,
+            code=code_to_run,
+            language=language,
             input_data=input_data
         )
-        
+        if lab is not None:
+            result = lab_harness.grade_result(result)
+
         execution_time = time.time() - start_time
         
         # Perform complexity analysis ONLY if execution was successful - saves OpenAI calls
@@ -140,7 +156,7 @@ async def execute_code(
             try:
                 # Use asyncio.wait_for to enforce timeout and prevent blocking
                 analysis_result = await asyncio.wait_for(
-                    openai_service.analyze_code_complexity(request.code, request.language),
+                    openai_service.analyze_code_complexity(student_code, language),
                     timeout=4.0  # Maximum 4 seconds total for complexity analysis
                 )
                 complexity_analysis = ComplexityAnalysis(
@@ -165,8 +181,8 @@ async def execute_code(
             code_submission = CodeSubmission(
                 user_id=current_user.id,
                 template_id=request.template_id,
-                code=request.code,
-                language=request.language,
+                code=student_code,
+                language=language,
                 input_data=request.input_data,
                 output=result["output"],
                 error_message=result["error"],
@@ -195,8 +211,8 @@ async def execute_code(
 
         try:
             await cache_service.cache_result(
-                request.code,
-                request.language, 
+                code_to_run,
+                language,
                 input_data,
                 {
                     "output": result["output"],

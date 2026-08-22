@@ -25,6 +25,8 @@ interface CodeState {
   setLoading: (loading: boolean) => void;
   setExecutionTime: (time: number) => void;
   setComplexity: (complexity: ComplexityAnalysis | null) => void;
+  // Output and error together, e.g. the server's own run of a submission
+  setResult: (result: { output: string; error: string; executionTime: number }) => void;
   clearOutput: () => void;
   loadLanguages: () => Promise<void>;
   executeCode: () => Promise<void>;
@@ -119,6 +121,7 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setExecutionTime: (executionTime) => set({ executionTime }),
   setComplexity: (complexity) => set({ complexity }),
+  setResult: ({ output, error, executionTime }) => set({ output, error, executionTime }),
   clearOutput: () => set({ output: '', error: '', executionTime: 0, complexity: null }),
   
   loadLanguages: async () => {
