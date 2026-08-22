@@ -8,6 +8,7 @@ real classrooms first and only ask when genuinely ambiguous.
 call can land on any worker; the transport stays stateless for the same reason.
 """
 
+import inspect
 import logging
 from typing import Annotated, Any, Optional
 
@@ -309,8 +310,10 @@ _NO_CALLER = {"error": "Unauthorized"}
 # Bodies stay in tools.py; these wrappers are what the model sees, so `db` is
 # never a tool argument.
 
+DESCRIPTIONS = {fn.__name__: d for fn, _, d in tools.STUDENT_TOOLS + tools.ADMIN_TOOLS}
 
-def with_contract(result, user_id):
+
+def with_contract(result, db, user_id):
     """Attach the teaching contract to a student-facing tool result.
 
     It rides on *every* tool, not just get_teaching_plan. A live session showed
@@ -324,168 +327,83 @@ def with_contract(result, user_id):
     """
     if not isinstance(result, dict) or "reply_contract" in result:
         return result
-    if user_id is None or _is_staff(user_id):
+    if user_id is None or tools.require_admin(db, user_id):
         return result
     return {**result, "reply_contract": tools.REPLY_CONTRACT}
 
 
-def _session(fn, *args):
+async def _session(fn, *args):
+    """Run one (db, user_id, ...) body in its own session, sync or async."""
     db = SessionLocal()
     try:
-        return with_contract(fn(db, *args), args[0] if args else None)
+        result = fn(db, *args)
+        if inspect.isawaitable(result):
+            result = await result
+        return with_contract(result, db, args[0] if args else None)
     finally:
         db.close()
 
 
-def _register_plain(core, description: str, shape: str) -> None:
-    """Wrap one (db, user_id, ...) function as a model-facing tool."""
+def _register(core, shape: str) -> None:
+    """Give one tool body the signature the model sees."""
     if shape == "none":
         async def tool():
             user_id = caller_id()
-            return _session(core, user_id) if user_id else _NO_CALLER
+            return await _session(core, user_id) if user_id else _NO_CALLER
     elif shape == "lab":
         async def tool(lab_id: int | None = None):
             user_id = caller_id()
-            return _session(core, user_id, lab_id) if user_id else _NO_CALLER
+            return await _session(core, user_id, lab_id) if user_id else _NO_CALLER
     elif shape == "student":
         async def tool(student_id: int):
             user_id = caller_id()
-            return _session(core, user_id, student_id) if user_id else _NO_CALLER
+            return await _session(core, user_id, student_id) if user_id else _NO_CALLER
     elif shape == "student_lab":
         async def tool(student_id: int, lab_id: int):
             user_id = caller_id()
-            return _session(core, user_id, student_id, lab_id) if user_id else _NO_CALLER
+            return await _session(core, user_id, student_id, lab_id) if user_id else _NO_CALLER
     elif shape == "classroom_lab":
         async def tool(classroom_id: int, lab_id: int):
             user_id = caller_id()
-            return _session(core, user_id, classroom_id, lab_id) if user_id else _NO_CALLER
+            return await _session(core, user_id, classroom_id, lab_id) if user_id else _NO_CALLER
+    elif shape == "classroom":
+        # Asks which classroom rather than grading the wrong cohort.
+        async def tool(
+            classroom_id: int | None = None,
+            classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
+        ):
+            user_id = caller_id()
+            if user_id is None:
+                return _NO_CALLER
+            classroom_id = classroom_id or _resolved(classroom, "classroom_id")
+            if classroom_id is None:
+                return _ask_in_chat("classroom_id", _my_classrooms(user_id))
+            return await _session(core, user_id, classroom_id)
+    elif shape == "run":
+        async def tool(code: str, language: str, input_data: str = ""):
+            user_id = caller_id()
+            return await _session(core, user_id, code, language, input_data) if user_id else _NO_CALLER
     else:
         raise ValueError(f"unknown shape {shape}")
 
     tool.__name__ = core.__name__
-    tool.__doc__ = description
-    mcp.add_tool(tool, name=core.__name__, description=description)
+    mcp.add_tool(tool, name=core.__name__, description=DESCRIPTIONS[core.__name__])
 
 
-_SHAPES = {
-    "get_lab_submissions": "classroom_lab",
-    "run_lab_submissions": "classroom_lab",
-    "list_my_labs": "none",
-    "get_my_error_patterns": "none",
-    "get_my_progress": "none",
-    "get_my_completed_labs": "none",
-    "list_my_classrooms": "none",
-    "get_student_report": "student",
-    "get_student_work": "student_lab",
-}
+for _core, _shape, _ in tools.STUDENT_TOOLS + tools.ADMIN_TOOLS:
+    if _core is not tools.check_my_lab:  # the one lab tool that asks; below
+        _register(_core, _shape)
 
 
-def _install_tools() -> None:
-    elicited = {"list_classroom_students", "get_classroom_report",
-                "get_classroom_gradebook", "check_my_lab", "run_code"}
-    # run_lab_submissions is async but takes plain ids, so the generic wrapper
-    # serves it; _session awaits nothing, so it is registered by hand below.
-    elicited.add("run_lab_submissions")
-    for core, _schema, description in tools.STUDENT_TOOLS + tools.ADMIN_TOOLS:
-        if core.__name__ in elicited:
-            continue
-        _register_plain(core, description, _SHAPES.get(core.__name__, "lab"))
-
-
-_install_tools()
-
-
-# ── tools that ask ──────────────────────────────────────────────
-
-
-@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "list_classroom_students"))
-async def list_classroom_students(
-    classroom_id: int | None = None,
-    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
-) -> Any:
-    user_id = caller_id()
-    if user_id is None:
-        return _NO_CALLER
-    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
-    if classroom_id is None:
-        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
-    return _session(tools.list_classroom_students, user_id, classroom_id)
-
-
-@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_report"))
-async def get_classroom_report(
-    classroom_id: int | None = None,
-    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
-) -> Any:
-    user_id = caller_id()
-    if user_id is None:
-        return _NO_CALLER
-    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
-    if classroom_id is None:
-        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
-    return _session(tools.get_classroom_report, user_id, classroom_id)
-
-
-@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "get_classroom_gradebook"))
-async def get_classroom_gradebook(
-    classroom_id: int | None = None,
-    classroom: Annotated[ElicitationResult[ClassroomChoice] | int | None, Resolve(pick_classroom)] = None,
-) -> Any:
-    """Asks which classroom rather than grading the wrong cohort."""
-    user_id = caller_id()
-    if user_id is None:
-        return _NO_CALLER
-    classroom_id = classroom_id or _resolved(classroom, "classroom_id")
-    if classroom_id is None:
-        return _ask_in_chat("classroom_id", _my_classrooms(user_id))
-
-    db = SessionLocal()
-    try:
-        return await tools.get_classroom_gradebook(db, user_id, classroom_id)
-    finally:
-        db.close()
-
-
-@mcp.tool(description=next(d for f, _, d in tools.STUDENT_TOOLS if f.__name__ == "check_my_lab"))
+@mcp.tool(description=DESCRIPTIONS["check_my_lab"])
 async def check_my_lab(
     lab_id: int | None = None,
     lab: Annotated[ElicitationResult[LabChoice] | int | None, Resolve(pick_lab)] = None,
-) -> Any:
+):
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    lab_id = lab_id or _resolved(lab, "lab_id")
-
-    db = SessionLocal()
-    try:
-        return with_contract(await tools.check_my_lab(db, user_id, lab_id), user_id)
-    finally:
-        db.close()
-
-
-@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "run_lab_submissions"))
-async def run_lab_submissions(classroom_id: int, lab_id: int) -> Any:
-    user_id = caller_id()
-    if user_id is None:
-        return _NO_CALLER
-    db = SessionLocal()
-    try:
-        return await tools.run_lab_submissions(db, user_id, classroom_id, lab_id)
-    finally:
-        db.close()
-
-
-@mcp.tool(description=next(d for f, _, d in tools.ADMIN_TOOLS if f.__name__ == "run_code"))
-async def run_code(code: str, language: str, input_data: str = "") -> Any:
-    user_id = caller_id()
-    if user_id is None:
-        return tools._NOT_ADMIN
-
-    db = SessionLocal()
-    try:
-        return await tools.run_code(db, user_id, code, language, input_data)
-    finally:
-        db.close()
+    return await _session(tools.check_my_lab, user_id, lab_id or _resolved(lab, "lab_id"))
 
 
 # ── resources and prompts ───────────────────────────────────────

@@ -29,7 +29,6 @@ db_base.SessionLocal = Session
 from app.mcp import auth, extraction, server, tools  # noqa: E402
 
 auth.SessionLocal = Session
-tools.SessionLocal = Session
 server.SessionLocal = Session
 
 from datetime import datetime, timezone  # noqa: E402
@@ -53,6 +52,13 @@ def run_tests():
 
 ALICE, BOB, PROF = 1, 2, 3
 CS101, OTHER_CLASS = 50, 51
+
+
+def _call(name: str, args: dict):
+    """One tool call through the SDK, as whoever `server.caller_id` returns."""
+    result = asyncio.run(server.mcp.call_tool(name, args))
+    assert not result.is_error, result.content
+    return json.loads(result.content[0].text)
 
 
 def seed():
@@ -116,7 +122,7 @@ def check_scoping():
         assert tools.get_my_code(db, ALICE)["code"].startswith("def reverse")
 
         # The teaching plan reports a move, never a fix.
-        plan = tools.get_teaching_plan(db, ALICE, 10)
+        plan = asyncio.run(server._session(tools.get_teaching_plan, ALICE, 10))
         assert plan["teaching_mode"] == "conceptual"
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
@@ -197,38 +203,29 @@ def check_no_answer_leak():
     finally:
         db.close()
 
-    # check_my_lab must expose no way to run model-written code.
-    schema = next(d for d in tools.STUDENT_DEFINITIONS if d["name"] == "check_my_lab")
-    assert set(schema["inputSchema"]["properties"]) == {"lab_id"}
-
 
 def check_role_boundary():
     """A student must not reach professor tools, listed or not."""
-    student_tools = {d["name"] for d in tools.definitions_for(ALICE)}
-    prof_tools = {d["name"] for d in tools.definitions_for(PROF)}
-    admin_names = {d["name"] for d in tools.ADMIN_DEFINITIONS}
+    by_name = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_code" in server.STAFF_TOOLS
 
-    assert "run_code" in admin_names
-    assert not (student_tools & admin_names), student_tools & admin_names
-    assert admin_names <= prof_tools
-    assert "check_my_lab" in student_tools and "check_my_lab" in prof_tools
-
-    # Listing is presentation; calling directly is the real test.
-    for name in sorted(admin_names):
-        args = {"classroom_id": CS101, "student_id": BOB, "lab_id": 10,
-                "code": "print(1)", "language": "python"}
-        result = json.loads(asyncio.run(tools.call(name, args, ALICE)))
-        assert result == tools._NOT_ADMIN, (name, result)
+    # Listing is presentation (check_tools_list_filtering); calling is the real
+    # test, and it goes through the SDK so the wrappers are what is tested.
+    pool = {"classroom_id": CS101, "student_id": BOB, "lab_id": 10,
+            "code": "print(1)", "language": "python"}
+    server.caller_id = lambda: ALICE
+    for name in sorted(server.STAFF_TOOLS):
+        accepted = by_name[name].input_schema["properties"]
+        result = _call(name, {k: v for k, v in pool.items() if k in accepted})
+        assert result["error"] == tools._NOT_ADMIN["error"], (name, result)
 
     # ...and the professor is still confined to classrooms they teach.
-    ok = json.loads(asyncio.run(tools.call("list_classroom_students", {"classroom_id": CS101}, PROF)))
+    server.caller_id = lambda: PROF
+    ok = _call("list_classroom_students", {"classroom_id": CS101})
     assert {s["student_id"] for s in ok["students"]} == {ALICE, BOB}, ok
-    denied = json.loads(
-        asyncio.run(tools.call("list_classroom_students", {"classroom_id": OTHER_CLASS}, PROF))
-    )
-    assert denied == tools._NOT_YOURS, denied
+    assert _call("list_classroom_students", {"classroom_id": OTHER_CLASS}) == tools._NOT_YOURS
 
-    work = json.loads(asyncio.run(tools.call("get_student_work", {"student_id": BOB, "lab_id": 10}, PROF)))
+    work = _call("get_student_work", {"student_id": BOB, "lab_id": 10})
     assert "BOBS_PRIVATE_CODE" in work["code"], work
     # The single-student tool must name the bulk call, with the real ids, so
     # the model is not left to infer them.
@@ -325,19 +322,18 @@ def check_run_code_is_admin_only():
     fake = FakeExecutor()
     real, tools.microservice_executor = tools.microservice_executor, fake
     try:
-        blocked = json.loads(asyncio.run(
-            tools.call("run_code", {"code": "print('hi')", "language": "python"}, ALICE)))
-        assert blocked == tools._NOT_ADMIN
+        server.caller_id = lambda: ALICE
+        blocked = _call("run_code", {"code": "print('hi')", "language": "python"})
+        assert blocked["error"] == tools._NOT_ADMIN["error"], blocked
         assert fake.calls == 0, "a student's code reached the sandbox"
 
-        allowed = json.loads(asyncio.run(
-            tools.call("run_code", {"code": "print('hi')", "language": "python"}, PROF)))
+        server.caller_id = lambda: PROF
+        allowed = _call("run_code", {"code": "print('hi')", "language": "python"})
         assert allowed["output"] == "hi\n", allowed
         assert fake.calls == 1
 
         # An unsupported language never reaches the runner.
-        bad = json.loads(asyncio.run(
-            tools.call("run_code", {"code": "x", "language": "brainfuck"}, PROF)))
+        bad = _call("run_code", {"code": "x", "language": "brainfuck"})
         assert "Unsupported language" in bad["error"], bad
         assert fake.calls == 1
     finally:
@@ -358,7 +354,8 @@ def check_run_lab():
     fake = FakeExecutor()
     real, tools.microservice_executor = tools.microservice_executor, fake
     try:
-        result = json.loads(asyncio.run(tools.call("check_my_lab", {"lab_id": 10}, ALICE)))
+        server.caller_id = lambda: ALICE
+        result = _call("check_my_lab", {"lab_id": 10})
     finally:
         tools.microservice_executor = real
 
@@ -403,18 +400,20 @@ def check_contract_rides_every_tool():
     The live failure this pins: the model read the brief, the code and the last
     run, skipped get_teaching_plan, and so never saw the rule it then broke.
     """
-    server.caller_id = lambda: ALICE
-    for name in ("get_lab_brief", "get_my_code", "get_my_last_run", "list_my_labs"):
-        result = server._session(getattr(tools, name), ALICE, *( (10,) if name != "list_my_labs" else () ))
+    for name in ("get_lab_brief", "get_my_code", "get_my_last_run", "list_my_labs", "get_teaching_plan"):
+        args = () if name == "list_my_labs" else (10,)
+        result = asyncio.run(server._session(getattr(tools, name), ALICE, *args))
         assert "reply_contract" in result, f"{name} shipped no contract"
         assert "renaming" in " ".join(result["reply_contract"]).lower()
 
-    # Staff are exempt: instruction 8 gives instructors direct answers.
-    staff = server._session(tools.get_lab_brief, PROF, 10)
-    assert "reply_contract" not in staff, staff
+    # Staff are exempt: instruction 8 gives instructors direct answers. That
+    # holds for the plan too, which no longer carries its own copy.
+    for fn in (tools.get_lab_brief, tools.get_teaching_plan):
+        staff = asyncio.run(server._session(fn, PROF, 10))
+        assert "reply_contract" not in staff, staff
 
     # A non-dict result must pass through untouched rather than crash.
-    assert server.with_contract("plain string", ALICE) == "plain string"
+    assert server.with_contract("plain string", None, ALICE) == "plain string"
 
 
 def check_tools_list_filtering():
@@ -535,7 +534,7 @@ def check_sdk_server():
     # Same ambiguity, client that cannot be asked: resolve to nothing, and the
     # tool hands the model the options instead of failing.
     assert asyncio.run(server.pick_classroom(Ctx(NoElicit()))) is None
-    degraded = asyncio.run(server.get_classroom_report(None))
+    degraded = _call("get_classroom_report", {})
     assert degraded["needs"] == "classroom_id"
     assert {c["classroom_id"] for c in degraded["options"]} == {CS101, 52}
 
