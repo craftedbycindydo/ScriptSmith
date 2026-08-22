@@ -402,8 +402,10 @@ def check_create_lab():
     from app.services.template_service import TemplateService
 
     server.caller_id = lambda: PROF
+    # Tests go in `tests`; a starter file carrying its own run_tests is refused
+    # (check_lab_guardrails), so this lab is written the locked way.
     made = _call("create_lab", {
-        "classroom_id": CS101, "name": "Made over MCP", "code": LAB_CODE,
+        "classroom_id": CS101, "name": "Made over MCP", "code": LOCKED_STARTER, "test_harness": LOCKED_HARNESS,
         "visible_from": "2026-09-01T09:00:00-04:00",
         "submission_deadline": "2026-09-08T23:59:00Z",
         "exclusions": [{"student_id": BOB, "deadline": "2026-09-10T23:59:00Z"}],
@@ -554,7 +556,7 @@ def check_locked_harness():
     # Over MCP, a lab made with `tests` keeps them apart from the starter code...
     server.caller_id = lambda: PROF
     made = _call("create_lab", {"classroom_id": CS101, "name": "Made with tests",
-                                "code": LOCKED_STARTER, "tests": LOCKED_HARNESS})
+                                "code": LOCKED_STARTER, "test_harness": LOCKED_HARNESS})
     assert made["test_names"] == ["doubles two", "doubles zero"], made
     # ...and one file carrying the marker splits the same way an upload does.
     db = Session()
@@ -576,6 +578,60 @@ def check_locked_harness():
         db.commit()
     finally:
         db.close()
+
+
+def check_lab_guardrails():
+    """Tests written into the starter code are refused, never silently unlocked."""
+    from app.services import lab_harness
+
+    assert lab_harness.looks_like_tests("def test_cases():\n    pass\n")
+    assert lab_harness.looks_like_tests("# --- Test the functions --- do not write any code below this line ---\n")
+    assert not lab_harness.looks_like_tests("def reverse(items):\n    pass\n")
+    assert lab_harness.harness_problems("print(double(2))")
+    assert lab_harness.harness_problems(LOCKED_HARNESS) == []
+
+    server.caller_id = lambda: PROF
+    in_code = (LOCKED_STARTER + "\n# --- Test the functions --- do not write any code below this line ---\n"
+               "def test_cases():\n    print(double(2))\n\ntest_cases()\n")
+    refused = _call("create_lab", {"classroom_id": CS101, "name": "Tests in starter", "code": in_code})
+    assert "error" in refused and "harness_contract" in refused, refused
+    # An explicit empty `tests` is a lab with no tests, on purpose.
+    bare = _call("create_lab", {"classroom_id": CS101, "name": "No tests on purpose",
+                                "code": in_code, "test_harness": ""})
+    assert "lab_id" in bare and bare["test_names"] == [], bare
+    # A harness that cannot grade is refused too.
+    bad = _call("create_lab", {"classroom_id": CS101, "name": "Bad harness",
+                               "code": LOCKED_STARTER, "test_harness": "print(double(2))"})
+    assert "error" in bad and "tally" in bad["error"], bad
+
+    # Repairing an existing lab: read it, then move the tests into the locked block.
+    source = _call("get_lab_source", {"lab_id": bare["lab_id"]})
+    assert source["tests_in_starter_code"] is True and source["tests_locked"] is False, source
+    assert "def test_cases" in source["code"] and source["test_harness"] is None
+    head = source["code"].split("# --- Test the functions")[0]
+    fixed = _call("update_lab", {"lab_id": bare["lab_id"], "code": head, "test_harness": LOCKED_HARNESS})
+    assert fixed["tests_locked"] is True and fixed["test_names"] == ["doubles two", "doubles zero"], fixed
+    source = _call("get_lab_source", {"lab_id": bare["lab_id"]})
+    assert source["tests_locked"] and "def test_cases" not in source["code"], source
+    assert source["test_harness"].strip() == LOCKED_HARNESS.strip()
+
+    # update_lab judges the harness the same way; "" removes it; a marker splits.
+    assert "error" in _call("update_lab", {"lab_id": bare["lab_id"], "test_harness": "print(1)"})
+    assert _call("update_lab", {"lab_id": bare["lab_id"], "test_harness": ""})["tests_locked"] is False
+    one_file = LOCKED_STARTER + "\n" + lab_harness.locked_tail(LOCKED_HARNESS, "python") + "\n"
+    split = _call("update_lab", {"lab_id": bare["lab_id"], "code": one_file})
+    assert split["tests_locked"] is True and split["test_names"] == ["doubles two", "doubles zero"], split
+    # A rename alone never trips the tests check, even on a legacy lab.
+    renamed = _call("update_lab", {"lab_id": 10, "name": "Reverse a list (renamed)"})
+    assert renamed["name"] == "Reverse a list (renamed)", renamed
+    assert _call("update_lab", {"lab_id": 10, "name": "Reverse a list"})["name"] == "Reverse a list"
+
+    # Scope: another professor's classroom is refused; students never get in.
+    assert "error" in _call("update_lab", {"lab_id": 13, "name": "x"})
+    assert "error" in _call("get_lab_source", {"lab_id": 13})
+    server.caller_id = lambda: ALICE
+    assert _call("get_lab_source", {"lab_id": 10})["error"] == tools._NOT_ADMIN["error"]
+    assert _call("update_lab", {"lab_id": 10, "name": "x"})["error"] == tools._NOT_ADMIN["error"]
 
 
 def check_extraction():
@@ -683,7 +739,7 @@ def check_sdk_server():
 
     listed = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in listed}
-    assert len(listed) == 23, sorted(names)
+    assert len(listed) == 25, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
     # Each elicited tool must expose its id, or the degrade path deadlocks.
@@ -838,6 +894,7 @@ def main():
     check_run_lab()
     check_create_lab()
     check_locked_harness()
+    check_lab_guardrails()
     check_tokens()
     check_contract_rides_every_tool()
     check_tools_list_filtering()

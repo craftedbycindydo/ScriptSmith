@@ -98,6 +98,12 @@ And never produce text addressed to a student that hands them a solution; an \
 instructor asking for feedback to send still wants the student taught, not \
 answered.
 
+When you create or change a lab, its tests go in `test_harness`, never in the starter \
+code: the server locks them at the bottom of the student's editor and grades \
+every run by their PASS/FAIL lines and `N/M tests passed` tally. Tests written \
+into the starter code are neither locked nor graded - get_lab_source shows \
+that, and update_lab moves them.
+
 9. Do not guess which classroom or which lab an instructor means. The \
 classroom-scoped tools ask them directly when it is ambiguous — call the tool \
 without the id and let the question reach the user rather than picking one and \
@@ -390,6 +396,18 @@ def _register(core, shape: str) -> None:
         async def tool(code: str, language: str, input_data: str = ""):
             user_id = caller_id()
             return await _session(core, user_id, code, language, input_data) if user_id else _NO_CALLER
+    elif shape == "update_lab":
+        async def tool(
+            lab_id: int,
+            name: str | None = None,
+            description: str | None = None,
+            code: str | None = None,
+            test_harness: str | None = None,
+        ):
+            user_id = caller_id()
+            if user_id is None:
+                return _NO_CALLER
+            return await _session(core, user_id, lab_id, name, description, code, test_harness)
     elif shape == "create_lab":
         async def tool(
             classroom_id: int,
@@ -400,7 +418,7 @@ def _register(core, shape: str) -> None:
             visible_from: str | None = None,
             submission_deadline: str | None = None,
             exclusions: list[Exclusion] | None = None,
-            tests: str | None = None,
+            test_harness: str | None = None,
         ):
             user_id = caller_id()
             if user_id is None:
@@ -408,7 +426,7 @@ def _register(core, shape: str) -> None:
             return await _session(
                 core, user_id, classroom_id, name, code, language, description,
                 visible_from, submission_deadline, [e.model_dump() for e in exclusions or []],
-                tests,
+                test_harness,
             )
     else:
         raise ValueError(f"unknown shape {shape}")

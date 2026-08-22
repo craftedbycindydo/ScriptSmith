@@ -897,7 +897,9 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
             "This lab ships no test harness, so every tally is null: the code ran, "
             "nothing checked it. Do not read that as failure, and do not derive a "
             "score out of 100 from it — grade the submitted code against a rubric, "
-            "or ask the instructor what the basis should be."
+            "or ask the instructor what the basis should be. If the starter code carries "
+            "its own tests (get_lab_source reports tests_in_starter_code), move them into "
+            "the locked `test_harness` with update_lab so future runs are graded."
         )
 
     classroom_name, lab_name = _names(db, classroom_id, lab_id)
@@ -964,10 +966,124 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() + "Z" if value else None
 
 
+_TESTS_IN_CODE = (
+    "The starter code seems to carry its own tests. Students could edit or delete them "
+    "and nothing would be graded. Pass the harness in `test_harness` - it is locked in "
+    "the student's editor and appended by the server on every run - or pass "
+    "test_harness=\"\" to create a lab with no tests on purpose."
+)
+
+
+def _lab_tests(code: str, tests: Optional[str]):
+    """(code, test_harness, error) for a lab being written.
+
+    Tests belong in `test_harness`, where they are locked and graded. A file carrying
+    the marker splits; one that merely looks like it has tests is refused rather
+    than guessed at, so no lab is silently ungradable. An explicit "" is a lab
+    with no tests.
+    """
+    if tests is None:
+        code, tests = lab_harness.split_harness(code)
+        if tests is None and lab_harness.looks_like_tests(code):
+            return code, None, {"error": _TESTS_IN_CODE, "harness_contract": lab_harness.HARNESS_CONTRACT}
+    if tests and tests.strip():
+        problems = lab_harness.harness_problems(tests)
+        if problems:
+            return code, tests, {
+                "error": "These tests cannot grade a run: " + "; ".join(problems) + ".",
+                "harness_contract": lab_harness.HARNESS_CONTRACT,
+            }
+    return code, tests, None
+
+
+def _staff_lab(db: Session, admin: User, lab_id: int) -> Optional[Template]:
+    """A lab this staff member may edit: their own, or in a classroom they teach."""
+    lab = TemplateService.get_template_by_id(db, lab_id)
+    if lab is None:
+        return None
+    if lab.created_by == admin.id:
+        return lab
+    mine = set(_taught_classroom_ids(db, admin))
+    return lab if any(c.id in mine for c in lab.classrooms) else None
+
+
+def _lab_summary(lab: Template) -> dict:
+    return {
+        "lab_id": lab.id,
+        "name": lab.name,
+        "language": lab.language,
+        "tests_locked": lab_harness.has_harness(lab),
+        "test_names": extraction.extract_test_names(lab_harness.tests_source(lab)),
+    }
+
+
+def get_lab_source(db: Session, user_id: int, lab_id: Optional[int] = None):
+    """One lab's full starter code and locked tests. Teaching staff only."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if lab_id is None:
+        return {"error": "lab_id is required. Call list_my_labs first."}
+    lab = _staff_lab(db, admin, lab_id)
+    if lab is None:
+        return {"error": "That lab is not one you teach."}
+    return {
+        **_lab_summary(lab),
+        "description": lab.description,
+        "code": (lab.code_content or "")[:MAX_CODE_CHARS],
+        "test_harness": (lab.test_harness or "")[:MAX_CODE_CHARS] or None,
+        # Tests written into the starter file are neither locked nor graded
+        "tests_in_starter_code": (
+            not lab_harness.has_harness(lab) and lab_harness.looks_like_tests(lab.code_content)
+        ),
+        "classrooms": [{"classroom_id": c.id, "name": c.name} for c in lab.classrooms],
+    }
+
+
+def update_lab(db: Session, user_id: int, lab_id: int = None, name: str = None,
+               description: str = None, code: str = None, test_harness: str = None):
+    """Change a lab's name, brief, starter code or locked tests. Teaching staff only."""
+    admin = require_admin(db, user_id)
+    if not admin:
+        return _NOT_ADMIN
+    if lab_id is None:
+        return {"error": "lab_id is required. Call list_my_labs first."}
+    lab = _staff_lab(db, admin, lab_id)
+    if lab is None:
+        return {"error": "That lab is not one you teach."}
+    if code is not None and not code.strip():
+        return {"error": "code cannot be empty."}
+    if code is not None and len(code.encode("utf-8")) > settings.max_code_size_kb * 1024:
+        return {"error": f"Code exceeds the {settings.max_code_size_kb}KB limit."}
+
+    new_code, new_tests = code, test_harness
+    if code is not None or test_harness is not None:
+        # Same rules as create_lab, judged on the code being written; a lab
+        # that already has locked tests may keep a starter file however it is.
+        candidate = code if code is not None else (lab.code_content or "")
+        checked_code, checked_tests, refused = _lab_tests(candidate, test_harness)
+        if refused and not (test_harness is None and lab_harness.has_harness(lab)):
+            return refused
+        if code is not None:
+            new_code = checked_code
+        if test_harness is not None or checked_tests is not None:
+            new_tests = checked_tests if checked_tests is not None else test_harness
+
+    try:
+        lab = TemplateService.update_template(
+            db=db, template_id=lab.id, name=name.strip() if name else None,
+            description=description, code_content=new_code, updating_user_id=admin.id,
+            test_harness=new_tests,
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+    return _lab_summary(lab)
+
+
 def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = None,
                code: str = None, language: str = "python", description: str = None,
                visible_from: str = None, submission_deadline: str = None,
-               exclusions: list = None, tests: str = None):
+               exclusions: list = None, test_harness: str = None):
     """Create a lab in one of the caller's classrooms."""
     admin = require_admin(db, user_id)
     if not admin:
@@ -984,9 +1100,9 @@ def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = 
     if len(code.encode("utf-8")) > settings.max_code_size_kb * 1024:
         return {"error": f"Code exceeds the {settings.max_code_size_kb}KB limit."}
 
-    # One file carrying the locked-tests marker splits the same way an upload does
-    if tests is None:
-        code, tests = lab_harness.split_harness(code)
+    code, test_harness, refused = _lab_tests(code, test_harness)
+    if refused:
+        return refused
 
     try:
         visible = _utc_naive(visible_from) if visible_from else None
@@ -1015,7 +1131,7 @@ def create_lab(db: Session, user_id: int, classroom_id: int = None, name: str = 
             db=db, name=name.strip(), description=description, language=language,
             code_content=code, created_by=admin.id, classroom_ids=[classroom_id],
             submission_deadline=deadline, exclusions=per_student or None, visible_from=visible,
-            test_harness=tests,
+            test_harness=test_harness,
         )
     except HTTPException as exc:
         return {"error": exc.detail}
@@ -1087,6 +1203,10 @@ ADMIN_TOOLS = [
      "TEACHING STAFF. Run every student's saved code for one lab and return each one's test tally, in a single call. Use this instead of run_code per student when grading a class - the executions happen in parallel server-side. Each run has the lab's own test harness appended, and a run whose tally shows failures has status error; crashed is true only for a real runtime failure. Reports tallies, not marks."),
     (run_code, "run",
      "TEACHING STAFF. Execute arbitrary code in the platform's sandbox and return its output. Use it to check a reference solution or reproduce a student's failure. Never paste a student's answer back to them from this."),
+    (get_lab_source, "lab",
+     "TEACHING STAFF. Read one lab's full starter code and its locked tests, and whether the starter code seems to carry tests of its own (tests_in_starter_code), which means nothing is locked or graded. Call it before update_lab."),
+    (update_lab, "update_lab",
+     "TEACHING STAFF. Change a lab's name, description, starter code or locked tests. The tests go in `test_harness` under the same contract as create_lab; pass test_harness=\"\" to remove them. Use it to move tests that were written into the starter code into the locked block: read the lab with get_lab_source, keep the starter part as `code`, and rewrite the test section as a PASS/FAIL harness in `test_harness`."),
     (create_lab, "create_lab",
-     "TEACHING STAFF. Create a lab in one of your classrooms: name, starter code, language, optional description, when it becomes visible, its submission deadline, and per-student deadline exclusions. Put the tests in `tests`, not in the starter code: they are shown locked at the bottom of the student's editor and appended by the server on every run, so students cannot edit or remove them. A harness prints one `PASS name` or `FAIL name` line per case (a FAIL followed by `got:` and `expected:` lines), then `N/M tests passed`, and exits non-zero when any fail; a run whose tally shows failures is recorded as an error either way. Dates are ISO 8601 date-times with a timezone offset; one without an offset is UTC. Call list_my_classrooms first for the classroom_id. Returns the new lab id, the test names it found, and the submission code students need for their first hand-in."),
+     "TEACHING STAFF. Create a lab in one of your classrooms: name, starter code, language, optional description, when it becomes visible, its submission deadline, and per-student deadline exclusions. Put the tests in `test_harness`, not in the starter code: they are shown locked at the bottom of the student's editor and appended by the server on every run, so students cannot edit or remove them. A harness prints one `PASS name` or `FAIL name` line per case (a FAIL followed by `got:` and `expected:` lines), then `N/M tests passed`, and exits non-zero when any fail; a run whose tally shows failures is recorded as an error either way. Dates are ISO 8601 date-times with a timezone offset; one without an offset is UTC. Call list_my_classrooms first for the classroom_id. Returns the new lab id, the test names it found, and the submission code students need for their first hand-in."),
 ]
