@@ -286,11 +286,7 @@ async def get_all_templates_admin(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """One page of templates, with the total (Admin only).
-
-    Paged rather than capped: the manager rendered this as the complete list,
-    so any fixed limit quietly hid every template past it.
-    """
+    """One page of templates, with the total (Admin only)."""
     try:
         total = TemplateService.count_all_templates(db)
         templates = TemplateService.get_all_templates(
@@ -697,16 +693,10 @@ async def get_my_submissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """One page of the current user's submissions, with the total.
-
-    Same shape as the admin list, and for the same reasons: the old ceiling of
-    100 made a heavy student's older submissions unreachable, and the
-    template_name filter ran after the page was fetched so it only ever
-    searched the page you were on.
-    """
+    """One page of the current user's submissions, with the total."""
     try:
         filters = {
-            "user_id": current_user.id,  # Only ever this user's submissions
+            "user_id": current_user.id,
             "status": status,
             "language": language,
             "template_name": template_name,
@@ -840,13 +830,7 @@ async def get_all_submissions(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """One page of template submissions, with the total (Admin only).
-
-    Paged rather than capped. The previous version took skip/limit with a hard
-    ceiling of 100, so submission 101 was unreachable however the client asked
-    - and it reported no total, so the UI could not offer pages either. Filters
-    are applied in SQL, which is also what makes the total mean anything.
-    """
+    """One page of template submissions, with the total (Admin only)."""
     try:
         # Convert user filter to user_id if provided
         user_id = None

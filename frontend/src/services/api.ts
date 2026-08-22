@@ -719,14 +719,7 @@ export const apiService = {
     return response.data;
   },
 
-  /**
-   * One page of submissions, with the total.
-   *
-   * Named options rather than six positional arguments: the previous shape
-   * was `(templateName, user, language, status, skip, limit)` and a caller
-   * passing ('0', '100') meant to send skip/limit but actually filtered by
-   * template name "0" and user "100", so it could only ever return nothing.
-   */
+  /** One page of submissions, with the total. Named options, not positional. */
   async getAllSubmissions(options: {
     templateName?: string;
     user?: string;
@@ -1147,9 +1140,7 @@ api.interceptors.response.use(
   }
 );
 
-// Exported for callers that must hit a root-level endpoint with an absolute
-// URL (the MCP consent page): an absolute URL bypasses baseURL but still runs
-// the auth and token-refresh interceptors above.
+// Exported for callers needing an absolute URL to a root-level endpoint.
 export { api };
 
 export default apiService;

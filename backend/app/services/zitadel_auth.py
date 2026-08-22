@@ -51,12 +51,7 @@ class ZitadelAuth:
 
     @classmethod
     def verify(cls, token: str, audience: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Verify a Zitadel access token, optionally against a different audience.
-
-        The MCP connector passes its own project id here: its tokens are minted
-        for dynamically registered clients, so they never carry the web app's
-        client id in `aud`.
-        """
+        """Verify a Zitadel access token, optionally against another audience."""
         if not cls.enabled():
             return None
 

@@ -79,10 +79,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
   
   // State
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
-  // Filtering and the classroom grouping below both run over whatever is
-  // loaded, so a page must be loaded before it can be searched. Rather than
-  // pull everything on mount or cap silently, load a page at a time and say
-  // plainly how much of the total is in hand.
+  // Filters run client-side over what is loaded, so load a page at a time and
+  // show how much of the total is in hand.
   const [templatesTotal, setTemplatesTotal] = useState(0);
   const templatePageSize = 200;
   const [templateStats, setTemplateStats] = useState<TemplateStats | null>(null);
@@ -1039,8 +1037,6 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
                   {filteredTemplates().length} of {templates.length} shown
                 </span>
               )}
-              {/* Never let the list end without saying whether it is the whole
-                  list. Silence is what made the old cap a bug. */}
               {templatesTotal > templates.length && (
                 <>
                   <span className="text-sm text-muted-foreground">

@@ -248,7 +248,7 @@ class TemplateService:
     
     @staticmethod
     def count_all_templates(db: Session) -> int:
-        """How many active templates exist, so a page can report a real total."""
+        """How many active templates exist."""
         try:
             return db.query(Template).filter(Template.is_active == True).count()
         except Exception as e:
@@ -801,12 +801,8 @@ class TemplateService:
         language: str = None,
         template_name: str = None,
     ):
-        """The filtered query, before any paging.
-
-        Every filter belongs here rather than in the caller: template_name used
-        to be applied in Python *after* the page was fetched, so searching by
-        name only searched whichever page you happened to be on.
-        """
+        """The filtered query, before any paging. Filters belong here so a
+        search covers every page, not just the one being fetched."""
         query = db.query(TemplateSubmission)
 
         if template_id is not None:
@@ -835,7 +831,7 @@ class TemplateService:
         language: str = None,
         template_name: str = None,
     ) -> int:
-        """How many submissions match, so a page can report a real total."""
+        """How many submissions match."""
         return TemplateService._submissions_query(
             db, template_id, user_id, status, language, template_name
         ).count()

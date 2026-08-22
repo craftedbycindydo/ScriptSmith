@@ -37,8 +37,7 @@ import Gradebook from './Gradebook';
 const TemplateSubmissions: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('matrix');
   const [submissions, setSubmissions] = useState<TemplateSubmission[]>([]);
-  // Server-side paging: the list can grow without bound, so the page is what
-  // is fetched rather than the whole table being pulled and sliced.
+  // Server-side paging.
   const [page, setPage] = useState(1);
   const [totalSubmissions, setTotalSubmissions] = useState(0);
   const pageSize = 50;
@@ -102,8 +101,6 @@ const TemplateSubmissions: React.FC = () => {
     fetchClassrooms();
   }, []);
 
-  // Page changes refetch rather than re-slicing: the other pages were never
-  // in the browser to slice.
   useEffect(() => {
     fetchSubmissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps

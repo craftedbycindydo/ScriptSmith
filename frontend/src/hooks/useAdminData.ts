@@ -130,14 +130,7 @@ export function useClassroomMembers(classroomId: number, enabled: boolean = true
   });
 }
 
-/**
- * Members for every classroom, keyed by id.
- *
- * Replaces five hand-written useClassroomMembers calls that only covered
- * allClassroomIds[0..4]: a teacher with a sixth classroom got no query for it
- * at all, so the panel rendered "No members found" without ever calling the
- * API. useQueries takes the list, so the count is whatever the teacher has.
- */
+/** Members for every classroom, keyed by id. */
 export function useClassroomMembersMap(
   classroomIds: number[],
   expandedId: number | null,
@@ -161,7 +154,7 @@ export function useClassroomMembersMap(
   return byId;
 }
 
-/** Settings for every classroom, keyed by id. Same fix as the members map. */
+/** Settings for every classroom, keyed by id. */
 export function useClassroomSettingsMap(classroomIds: number[], enabled: boolean = true) {
   const results = useQueries({
     queries: classroomIds.map((id) => ({

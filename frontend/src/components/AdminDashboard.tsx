@@ -352,9 +352,7 @@ export default function AdminDashboard() {
     return hours > 0 ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`;
   };
 
-  // One query per classroom the teacher actually has. This used to be five
-  // hand-written hooks indexed 0..4, which silently did nothing for a sixth
-  // classroom.
+  // One query per classroom the teacher has, not a fixed five.
   const allClassroomIds = user?.classroom_context?.classrooms?.map((c) => c.id) || [];
 
   const classroomSettingsQueries = useClassroomSettingsMap(
@@ -449,8 +447,7 @@ export default function AdminDashboard() {
           // Classroom data is managed via user context, also refetch classroom settings
           await refreshUser();
           // Refetch all classroom settings
-          // Every classroom, not the first five: a manual refresh used to skip
-          // the rest for the same reason the members panel did.
+          // Every classroom, not the first five.
           await Promise.all(
             Object.values(classroomSettingsQueries)
               .map((query: any) => query?.refetch?.())
@@ -546,9 +543,6 @@ export default function AdminDashboard() {
     setIsCreatingClassroom(false);
   };
 
-  // Members load for whichever classroom is expanded, whatever its position in
-  // the list. The previous five-slot version left classroom six with no query,
-  // so the panel showed "No members found" and never called the API.
   const classroomMembersQueries = useClassroomMembersMap(
     allClassroomIds,
     expandedClassroom,

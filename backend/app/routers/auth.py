@@ -106,10 +106,8 @@ async def get_current_user(
 
     user = None
 
-    # Legacy token issued by this app. A token carrying scope=mcp is refused
-    # here: those are minted for the MCP connector (app/mcp/oauth.py) and are
-    # deliberately narrower than a browser session, so replaying one against
-    # the REST API must not widen it back out.
+    # scope=mcp tokens are refused here: connector tokens are narrower than a
+    # browser session and must not be replayed against the REST API.
     try:
         payload = SecurityService.verify_token(auth_token, "access")
         if payload and payload.get("sub") and payload.get("scope") != "mcp":
