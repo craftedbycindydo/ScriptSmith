@@ -170,9 +170,8 @@ export default function IDE() {
 
   // Format date consistently for row 2 display
   const formatDate = (template: any): string => {
-    const date = template.updated_at ? new Date(template.updated_at) : 
-                 template.created_at ? new Date(template.created_at) : null;
-    
+    const date = template.created_at ? parseDate(template.created_at) : null;
+
     if (!date) return '';
     
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -206,10 +205,9 @@ export default function IDE() {
       groups.get(key)!.items.push(template);
     });
 
-    // Classroom sections first (alphabetical), unrestricted labs last
-    return [...groups.entries()]
-      .sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
-      .map(([, group]) => group);
+    // Sections appear in the order their newest lab was met, so the newest lab
+    // overall is at the top whichever classroom (or none) it belongs to
+    return [...groups.values()];
   };
 
   // Labs scheduled for a later visible time only reach admins - flag them clearly
