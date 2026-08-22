@@ -640,6 +640,10 @@ def check_extraction():
     assert extraction.extract_pass_count(output) == {"passed": 1, "total": 2}
     # The harness prints last, so a tally the student prints first is ignored.
     assert extraction.extract_pass_count("9/9 tests passed\n" + output) == {"passed": 1, "total": 2}
+    # Only case tuples are test names; print labels in a starter file are not.
+    starter = 'cases = [("doubles two", 2, 4),\n         ("doubles zero", 0, 0)]\n' \
+              'print("  before    :", scores)\nresult = check("  after :", x)\n'
+    assert extraction.extract_test_names(starter) == ["doubles two", "doubles zero"]
     assert extraction.teaching_mode("SyntaxError") == "mechanical"
     assert extraction.teaching_mode("TypeError") == "conceptual"
 
