@@ -243,6 +243,8 @@ class ClassroomService:
                 UserClassroom.is_active == True
             )
         ).all()
+        # Newest classroom first, so a just-created class tops the admin list
+        memberships.sort(key=lambda m: m.classroom.created_at, reverse=True)
         
         if not memberships:
             return {

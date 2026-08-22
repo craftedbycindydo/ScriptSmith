@@ -580,7 +580,8 @@ export default function AdminDashboard() {
 
     try {
       await removeStudentMutation.mutateAsync({ classroomId, memberId });
-      // React Query will automatically refresh the member list
+      // React Query refreshes the member list; member_count needs the user context
+      await refreshUser();
     } catch (err: any) {
       console.error('Remove member error:', err);
     } finally {
@@ -608,7 +609,9 @@ export default function AdminDashboard() {
 
       // Clear the email input
       setStudentEmails(prev => ({ ...prev, [classroomId]: '' }));
-      // React Query will automatically refresh the member list
+      // React Query refreshes the member list; the card's member_count comes
+      // from the user's classroom context, so pull that too
+      await refreshUser();
     } catch (err: any) {
       console.error('Add student error:', err);
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to add student';
