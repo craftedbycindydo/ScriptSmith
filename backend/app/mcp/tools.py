@@ -53,8 +53,25 @@ def _visible_labs(db: Session, user_id: int) -> list:
 
 
 def _accessible_lab(db: Session, user_id: int, lab_id: int) -> Optional[Template]:
-    """A lab is readable only if it is in this caller's own scope."""
-    return next((t for t in _visible_labs(db, user_id) if t.id == lab_id), None)
+    """A lab is readable only if it is in this caller's own scope.
+
+    One lookup, same rule as GET /templates/{id} (routers/templates.py): active,
+    released unless staff, and in one of the caller's classrooms if it has any.
+    """
+    lab = TemplateService.get_template_by_id(db, lab_id)
+    if lab is None:
+        return None
+    if not TemplateService.is_template_visible(lab) and require_admin(db, user_id) is None:
+        return None
+    if lab.classrooms:
+        mine = {
+            row[0] for row in db.query(UserClassroom.classroom_id).filter(
+                UserClassroom.user_id == user_id, UserClassroom.is_active.is_(True)
+            )
+        }
+        if not any(c.id in mine for c in lab.classrooms):
+            return None
+    return lab
 
 
 def _resolve_lab(db: Session, user_id: int, lab_id: Optional[int]) -> Optional[Template]:
@@ -286,16 +303,10 @@ def get_test_progress(db: Session, user_id: int, lab_id: Optional[int] = None):
     }
 
 
-def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
-    """How long they have been on this lab and how hard they are cycling."""
-    lab = _resolve_lab(db, user_id, lab_id)
-    if lab is None:
-        return _NO_LAB
-    lab_id = lab.id
-
+def _timing(db: Session, user_id: int, lab_id: int) -> Optional[dict]:
     runs = _runs(db, user_id, lab_id, limit=200)
     if not runs:
-        return _NO_RUN
+        return None
 
     newest, oldest = runs[0].created_at, runs[-1].created_at
     elapsed = int((newest - oldest).total_seconds() // 60) if newest and oldest else None
@@ -307,6 +318,14 @@ def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
         "elapsed_minutes": elapsed,
         "failed_runs": len([r for r in runs if r.error_message]),
     }
+
+
+def get_time_on_task(db: Session, user_id: int, lab_id: Optional[int] = None):
+    """How long they have been on this lab and how hard they are cycling."""
+    lab = _resolve_lab(db, user_id, lab_id)
+    if lab is None:
+        return _NO_LAB
+    return _timing(db, user_id, lab.id) or _NO_RUN
 
 
 def get_my_error_patterns(db: Session, user_id: int):
@@ -453,7 +472,7 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
     history = get_my_error_patterns(db, user_id)["error_counts"]
     repeated = next((e for e in history if e["type"] == error_type and e["count"] >= 3), None)
 
-    timing = get_time_on_task(db, user_id, lab_id)
+    timing = _timing(db, user_id, lab_id) or {}
     grinding = bool(timing.get("elapsed_minutes") and timing["elapsed_minutes"] > 45 and timing["runs"] > 8)
 
     if mode == "mechanical":
@@ -483,11 +502,9 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
 
 
 def require_admin(db: Session, user_id: int) -> Optional[User]:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.is_active:
-        return None
-    if not _admin_service.has_admin_access(user):
-        logger.warning("mcp: non-admin user %s attempted an admin tool", user_id)
+    """Staff check. `db.get` so repeat calls in one session cost no query."""
+    user = db.get(User, user_id)
+    if not user or not user.is_active or not _admin_service.has_admin_access(user):
         return None
     return user
 
@@ -520,7 +537,7 @@ def list_my_classrooms(db: Session, user_id: int):
     if not ids:
         return {"classrooms": [], "note": "You are not the teacher of any classroom."}
 
-    rows = db.query(Classroom).filter(Classroom.id.in_(ids)).all()
+    rows = db.query(Classroom.id, Classroom.name).filter(Classroom.id.in_(ids)).all()
     counts = {}
     for (classroom_id,) in db.query(UserClassroom.classroom_id).filter(
         UserClassroom.classroom_id.in_(ids),
@@ -705,16 +722,18 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
             "error_message": (getattr(source, "error_message", None) or "")[:600],
         })
 
-    classroom = db.query(Classroom).filter(Classroom.id == classroom_id).first()
-    lab = db.query(Template).filter(Template.id == lab_id).first()
+    # Columns only: loading the entities would selectin-load every template of
+    # the classroom and every classroom of the template.
+    classroom_name = db.query(Classroom.name).filter(Classroom.id == classroom_id).scalar()
+    lab_name = db.query(Template.name).filter(Template.id == lab_id).scalar()
     return {
         "lab_id": lab_id,
-        "lab_name": lab.name if lab else None,
+        "lab_name": lab_name,
         "classroom_id": classroom_id,
-        "classroom_name": classroom.name if classroom else None,
+        "classroom_name": classroom_name,
         "confirm_before_grading": (
-            f"You are about to grade '{lab.name if lab else lab_id}' for "
-            f"'{classroom.name if classroom else classroom_id}'. Say this back to the "
+            f"You are about to grade '{lab_name or lab_id}' for "
+            f"'{classroom_name or classroom_id}'. Say this back to the "
             "instructor before awarding any marks, and stop if they did not name both."
         ),
         "students": sorted(students, key=lambda row: row["name"] or ""),
@@ -767,7 +786,7 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
     if "students" not in listing:
         return listing
 
-    lab = db.query(Template).filter(Template.id == lab_id).first()
+    lab = db.query(Template.language, Template.code_content).filter(Template.id == lab_id).first()
     language = (lab.language if lab else None) or "python"
 
     runnable = [row for row in listing["students"] if row.get("code")]

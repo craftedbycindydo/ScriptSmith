@@ -58,6 +58,10 @@ CS101, OTHER_CLASS = 50, 51
 def seed():
     Base.metadata.create_all(bind=engine)
     db = Session()
+    cs101 = Classroom(id=CS101, name="CS101", classroom_key="cs101", created_by_id=PROF)
+    # A classroom this professor has nothing to do with.
+    other = Classroom(id=OTHER_CLASS, name="Someone else's class", classroom_key="other",
+                      created_by_id=BOB)
     db.add_all([
         User(id=ALICE, email="alice@x.test", username="alice", hashed_password="x",
              full_name="Alice Example", is_active=True, role=UserRole.USER,
@@ -66,10 +70,8 @@ def seed():
              is_active=True, role=UserRole.USER, zitadel_user_id="zit-bob"),
         User(id=PROF, email="prof@x.test", username="prof", hashed_password="x",
              is_active=True, role=UserRole.ADMIN, zitadel_user_id="zit-prof"),
-        Classroom(id=CS101, name="CS101", classroom_key="cs101", created_by_id=PROF),
-        # A classroom this professor has nothing to do with.
-        Classroom(id=OTHER_CLASS, name="Someone else's class", classroom_key="other",
-                  created_by_id=BOB),
+        cs101,
+        other,
         UserClassroom(user_id=PROF, classroom_id=CS101, role="TEACHER", is_active=True),
         UserClassroom(user_id=ALICE, classroom_id=CS101, role="STUDENT", is_active=True),
         UserClassroom(user_id=BOB, classroom_id=CS101, role="STUDENT", is_active=True),
@@ -79,6 +81,12 @@ def seed():
         Template(id=11, name="Next week's lab", language="python",
                  code_content=LAB_CODE, created_by=PROF, is_active=True,
                  visible_from=datetime(2099, 1, 1, tzinfo=timezone.utc)),
+        # Scoped to a classroom none of the three belong to.
+        Template(id=13, name="Other class's lab", language="python",
+                 code_content=LAB_CODE, created_by=BOB, is_active=True, classrooms=[other]),
+        # Scoped to CS101, so all three can open it.
+        Template(id=14, name="CS101 only", language="python",
+                 code_content=LAB_CODE, created_by=PROF, is_active=True, classrooms=[cs101]),
         CodeSubmission(id=100, user_id=ALICE, template_id=10, language="python",
                        code="def reverse(items):\n    return items\n",
                        output="PASS handles the empty list\nFAIL reverses three items\n"
@@ -138,6 +146,22 @@ def check_unreleased_labs():
         # student cannot reach it by guessing.
         assert tools.get_lab_brief(db, ALICE, 11) == tools._NO_LAB
         assert tools.get_lab_brief(db, PROF, 11)["name"] == "Next week's lab"
+    finally:
+        db.close()
+
+
+def check_lab_access_matches_listing():
+    """The one-lab lookup must agree with the listing rule for every caller."""
+    db = Session()
+    try:
+        every_lab = [row[0] for row in db.query(Template.id).all()]
+        assert 13 in every_lab
+        for user in (ALICE, BOB, PROF):
+            listed = {lab.id for lab in tools._visible_labs(db, user)}
+            direct = {lab for lab in every_lab if tools._accessible_lab(db, user, lab)}
+            assert listed == direct, (user, listed, direct)
+            assert 13 not in direct, "a classroom-scoped lab leaked to a non-member"
+            assert 14 in direct, "a member cannot open their own classroom's lab"
     finally:
         db.close()
 
@@ -580,6 +604,7 @@ def main():
     check_extraction()
     check_scoping()
     check_unreleased_labs()
+    check_lab_access_matches_listing()
     check_run_counts_agree()
     check_no_answer_leak()
     check_role_boundary()
