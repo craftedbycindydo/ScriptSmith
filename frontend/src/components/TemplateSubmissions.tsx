@@ -37,6 +37,10 @@ import Gradebook from './Gradebook';
 const TemplateSubmissions: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('matrix');
   const [submissions, setSubmissions] = useState<TemplateSubmission[]>([]);
+  // Server-side paging.
+  const [page, setPage] = useState(1);
+  const [totalSubmissions, setTotalSubmissions] = useState(0);
+  const pageSize = 50;
   const [filteredSubmissions, setFilteredSubmissions] = useState<TemplateSubmission[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -98,6 +102,11 @@ const TemplateSubmissions: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    fetchSubmissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  useEffect(() => {
     applyFilters();
   }, [submissions, templateFilter, userFilter, languageFilter, statusFilter, classroomFilter, classroomMembers]);
 
@@ -113,8 +122,9 @@ const TemplateSubmissions: React.FC = () => {
   const fetchSubmissions = async () => {
     setLoading(true);
     try {
-      const response = await apiService.getAllSubmissions();
-      setSubmissions(response);
+      const response = await apiService.getAllSubmissions({ page, pageSize });
+      setSubmissions(response.submissions);
+      setTotalSubmissions(response.total);
     } catch (error) {
       console.error('Failed to fetch submissions:', error);
     } finally {
@@ -986,7 +996,9 @@ const TemplateSubmissions: React.FC = () => {
       {/* Submissions Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Submissions ({filteredSubmissions.length})</CardTitle>
+          <CardTitle>
+            Submissions ({totalSubmissions.toLocaleString()})
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
@@ -1147,6 +1159,33 @@ const TemplateSubmissions: React.FC = () => {
               ))
             )}
           </div>
+
+          {totalSubmissions > pageSize && (
+            <div className="flex items-center justify-between pt-4 mt-4 border-t">
+              <span className="text-sm text-muted-foreground">
+                {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalSubmissions)} of{' '}
+                {totalSubmissions.toLocaleString()}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page * pageSize >= totalSubmissions || loading}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
       </>

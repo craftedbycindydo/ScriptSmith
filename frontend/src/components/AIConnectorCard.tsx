@@ -5,17 +5,8 @@ import { Bot, Check, Copy } from 'lucide-react';
 import { config } from '@/config/env';
 import { useAuthStore } from '@/store/authStore';
 
-/**
- * Settings card for connecting Scripting Smith to Claude or ChatGPT over MCP.
- *
- * The connection is always started from the assistant's side — there is no
- * button here that can do it for you. What this card owes the user is the
- * exact URL, the steps for their assistant, and a straight account of what the
- * assistant will and will not be able to do once connected.
- */
+/** Settings card: the connector URL and the steps for each assistant. */
 
-// The API base carries an '/api' suffix in dev and none in production; the
-// connector endpoint sits at the root either way.
 const CONNECTOR_URL = `${config.apiBaseUrl.replace(/\/api\/?$/, '')}/mcp`;
 
 function ClaudeLogo({ className }: { className?: string }) {
@@ -70,7 +61,6 @@ export default function AIConnectorCard() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard blocked — the URL is on screen and selectable anyway.
     }
   };
 

@@ -1,13 +1,7 @@
 """Self-check for the MCP connector: `python -m app.mcp.selfcheck` from backend/.
 
-Covers what breaks silently: the JSON-RPC wire format Claude and ChatGPT speak,
-the 401 challenge that starts the OAuth flow, the answer boundary (a lab brief
-must never carry the test harness), and the role boundary (a student must not
-reach professor tools or the code runner).
-
-Runs against an in-memory SQLite database with a student, a second student and
-a professor, so the scoping assertions are real queries rather than a reading
-of the code.
+In-memory SQLite with two students and a professor, so the scoping assertions
+are real queries rather than a reading of the code.
 """
 
 import asyncio
@@ -89,14 +83,11 @@ def seed():
                        code="def reverse(items):\n    return items\n",
                        output="PASS handles the empty list\nFAIL reverses three items\n"
                               "  got: [1, 2, 3]\n  expected: [3, 2, 1]\n1/2 tests passed\n"),
-        # Bob works the same lab, so every scoping assertion below is about
-        # two real rows rather than one row and an empty table.
         CodeSubmission(id=101, user_id=BOB, template_id=10, language="python",
                        code="BOBS_PRIVATE_CODE = 1\n",
                        output="PASS reverses three items\nPASS handles the empty list\n"
                               "2/2 tests passed\n"),
-        # A scratch run in the editor, attached to no lab. Counting these as
-        # lab attempts is what made the two tools disagree.
+        # A scratch run, attached to no lab.
         CodeSubmission(id=102, user_id=ALICE, template_id=None, language="python",
                        code="print('scratch')\n", output="scratch\n", status="success"),
     ])
@@ -122,9 +113,7 @@ def check_scoping():
         assert "reverses three items" in plan["open_problem"]
         assert plan["next_move"] and "return" not in plan["next_move"]
 
-        # The contract has to ride along with every plan, not just live in the
-        # server instructions: a real session showed those being rationalised
-        # past. It must name the rename test, brevity and the options.
+        # Must name the rename test, brevity and the options.
         contract = " ".join(plan["reply_contract"]).lower()
         assert "renaming" in contract, contract
         assert "substitution" in contract, contract
@@ -162,8 +151,6 @@ def check_run_counts_agree():
 
         assert progress["lab_runs"] == per_lab, (progress["lab_runs"], per_lab)
         assert progress["scratch_runs"] == 1, progress
-        # The scratch run is real work, just not a lab attempt: it must be
-        # reported, not silently folded into the lab count or dropped.
         assert progress["lab_runs"] + progress["scratch_runs"] == 2
         assert "total_runs" not in progress, "the ambiguous field is back"
     finally:
@@ -202,8 +189,7 @@ def check_role_boundary():
     assert admin_names <= prof_tools
     assert "check_my_lab" in student_tools and "check_my_lab" in prof_tools
 
-    # Listing is presentation. Calling directly is the real test: every admin
-    # tool must refuse a student who names it anyway.
+    # Listing is presentation; calling directly is the real test.
     for name in sorted(admin_names):
         args = {"classroom_id": CS101, "student_id": BOB, "lab_id": 10,
                 "code": "print(1)", "language": "python"}
@@ -238,8 +224,6 @@ def check_bulk_submissions():
         assert rows[ALICE]["test_tally"] == {"passed": 1, "total": 2}
         assert rows[ALICE]["failing_tests"][0]["test"] == "reverses three items"
         assert rows[ALICE]["code_truncated"] is False
-
-        # Names ride with the ids so grading the wrong pair is visible, not silent.
         assert result["lab_name"] == "Reverse a list"
         assert result["classroom_name"] == "CS101"
         assert "Reverse a list" in result["confirm_before_grading"]
@@ -463,10 +447,7 @@ def check_sdk_server():
     assert len(listed) == 22, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
-    # Every elicited tool must expose the id the model can pass. Hiding it
-    # behind the resolver alone deadlocks the degrade path: a client that
-    # cannot be elicited gets told to "call again with the classroom" and has
-    # no parameter to put it in. Observed live before this was fixed.
+    # Each elicited tool must expose its id, or the degrade path deadlocks.
     by_name = {t.name: t for t in listed}
     for tool_name in ("get_classroom_gradebook", "get_classroom_report", "list_classroom_students"):
         properties = (by_name[tool_name].input_schema or {}).get("properties", {})
@@ -475,10 +456,7 @@ def check_sdk_server():
     assert set((by_name["run_code"].input_schema or {})["properties"]) == {
         "code", "language", "input_data"}
 
-    # A declared icon is what stops Claude falling back to the connector
-    # domain's favicon — Railway's logo, on a Railway-generated host. `sizes`
-    # must serialise as an array; mcp 1.15 emitted a bare string and strict
-    # clients rejected the whole initialize response.
+    # sizes must serialise as an array; mcp 1.15 emitted a bare string.
     import json as _json
 
     icon = _json.loads(server.ICONS[0].model_dump_json(by_alias=True, exclude_none=True))
@@ -490,8 +468,7 @@ def check_sdk_server():
     assert "Never write the solution" in server.INSTRUCTIONS
     assert "Do not guess which classroom" in server.INSTRUCTIONS
 
-    # The degrade path: a client that cannot be asked gets the options back so
-    # the model asks in chat, rather than the call failing.
+    # A client that cannot be asked gets the options back instead.
     class NoElicit:
         elicitation = None
 
@@ -529,9 +506,7 @@ def check_sdk_server():
     assert degraded["needs"] == "classroom_id"
     assert {c["classroom_id"] for c in degraded["options"]} == {CS101, 52}
 
-    # The OAuth flow keeps pending requests in Redis. There is none here, and
-    # an async client would bind to a loop TestClient closes between requests,
-    # so stand in a dict with the three operations the flow actually uses.
+    # No Redis here, and an async client would bind to a closed loop.
     class FakeRedis:
         def __init__(self):
             self.store = {}
@@ -562,8 +537,7 @@ def check_sdk_server():
     as_meta = client.get("/.well-known/oauth-authorization-server").json()
     assert as_meta["registration_endpoint"].endswith("/mcp/oauth/register")
 
-    # 401 directly, with no redirect in between: mounting the MCP app at /mcp
-    # would make Starlette 307 to /mcp/, and MCP clients do not follow that.
+    # 401 directly: a 307 to /mcp/ would not be followed by MCP clients.
     unauthorized = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -573,9 +547,7 @@ def check_sdk_server():
     assert unauthorized.status_code == 401, unauthorized.status_code
     assert "www-authenticate" in {k.lower() for k in unauthorized.headers}
 
-    # /authorize must land on our own consent page and never on an identity
-    # provider: this app has password accounts an IdP bounce would lock out,
-    # and someone already signed in should not be asked to log in twice.
+    # /authorize must land on our consent page, never an identity provider.
     registered = client.post("/mcp/oauth/register", json={
         "client_name": "probe", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
     }).json()
@@ -592,8 +564,7 @@ def check_sdk_server():
     for forbidden in ("oauth/v2/authorize", "accounts.google.com", "auth.scriptingsmith.com"):
         assert forbidden not in destination, destination
 
-    # Consent is authenticated by the app session, so an anonymous caller is
-    # refused rather than the request id being trusted as identity.
+    # Consent is authenticated by the app session, not the request id.
     request_id = destination.split("request=")[1]
     assert client.get(f"/mcp/oauth/request/{request_id}").status_code == 401
     assert client.post("/mcp/oauth/approve", json={"request_id": request_id}).status_code == 401

@@ -265,16 +265,33 @@ async def create_template(
             detail=f"Failed to create template: {str(e)}"
         )
 
-@router.get("/admin/templates", response_model=List[TemplateListResponse])
+class PaginatedSubmissionsResponse(BaseModel):
+    submissions: List[TemplateSubmissionResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class PaginatedTemplatesResponse(BaseModel):
+    templates: List[TemplateListResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/admin/templates", response_model=PaginatedTemplatesResponse)
 async def get_all_templates_admin(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all templates (Admin only)"""
+    """One page of templates, with the total (Admin only)."""
     try:
-        templates = TemplateService.get_all_templates(db, skip=skip, limit=limit)
+        total = TemplateService.count_all_templates(db)
+        templates = TemplateService.get_all_templates(
+            db, skip=(page - 1) * page_size, limit=page_size
+        )
         
         # Prepare response with creator usernames and classroom info
         result = []
@@ -285,11 +302,13 @@ async def get_all_templates_admin(
                 template.creator_username = "Unknown"
             
             result.append(_prepare_template_list_response(template, include_submission_code=True))
-        
-        return result
+
+        return PaginatedTemplatesResponse(
+            templates=result, total=total, page=page, page_size=page_size
+        )
     except Exception as e:
-        # Return empty list if anything goes wrong
-        return []
+        print(f"Error listing templates: {e}")
+        return PaginatedTemplatesResponse(templates=[], total=0, page=page, page_size=page_size)
 
 @router.get("/admin/templates/stats", response_model=TemplateStatsResponse)
 async def get_template_stats(
@@ -664,32 +683,32 @@ async def can_submit_template(
         )
 
 
-@router.get("/my-submissions", response_model=List[TemplateSubmissionResponse])
+@router.get("/my-submissions", response_model=PaginatedSubmissionsResponse)
 async def get_my_submissions(
     template_name: Optional[str] = Query(None, description="Filter by template name"),
     language: Optional[str] = Query(None, description="Filter by language"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get current user's template submissions only"""
+    """One page of the current user's submissions, with the total."""
     try:
+        filters = {
+            "user_id": current_user.id,
+            "status": status,
+            "language": language,
+            "template_name": template_name,
+        }
+        total = TemplateService.count_template_submissions(db=db, **filters)
         submissions = TemplateService.get_template_submissions(
-            db=db,
-            user_id=current_user.id,  # Only return current user's submissions
-            status=status,
-            language=language,
-            skip=skip,
-            limit=limit
+            db=db, skip=(page - 1) * page_size, limit=page_size, **filters
         )
-        
-        # Filter by template name if provided
-        if template_name:
-            submissions = [s for s in submissions if s.template_name and template_name.lower() in s.template_name.lower()]
-        
-        return submissions
+
+        return PaginatedSubmissionsResponse(
+            submissions=submissions, total=total, page=page, page_size=page_size
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -800,18 +819,18 @@ async def get_classroom_users(
         )
 
 
-@router.get("/admin/submissions", response_model=List[TemplateSubmissionResponse])
+@router.get("/admin/submissions", response_model=PaginatedSubmissionsResponse)
 async def get_all_submissions(
     template_name: Optional[str] = Query(None, description="Filter by template name"),
     user: Optional[str] = Query(None, description="Filter by username"),
     language: Optional[str] = Query(None, description="Filter by language"), 
     status: Optional[str] = Query(None, description="Filter by status"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user)
 ):
-    """Get all template submissions with filters (Admin only)"""
+    """One page of template submissions, with the total (Admin only)."""
     try:
         # Convert user filter to user_id if provided
         user_id = None
@@ -819,21 +838,21 @@ async def get_all_submissions(
             from app.models.user import User as UserModel
             user_obj = db.query(UserModel).filter(UserModel.username == user).first()
             user_id = user_obj.id if user_obj else -1  # Use -1 to return no results if user not found
-        
+
+        filters = {
+            "user_id": user_id,
+            "status": status,
+            "language": language,
+            "template_name": template_name,
+        }
+        total = TemplateService.count_template_submissions(db=db, **filters)
         submissions = TemplateService.get_template_submissions(
-            db=db,
-            user_id=user_id,
-            status=status,
-            language=language,
-            skip=skip,
-            limit=limit
+            db=db, skip=(page - 1) * page_size, limit=page_size, **filters
         )
-        
-        # Filter by template name if provided (since we can't easily do this in SQL with current structure)
-        if template_name:
-            submissions = [s for s in submissions if s.template_name and template_name.lower() in s.template_name.lower()]
-        
-        return submissions
+
+        return PaginatedSubmissionsResponse(
+            submissions=submissions, total=total, page=page, page_size=page_size
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

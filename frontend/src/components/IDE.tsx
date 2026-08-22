@@ -347,10 +347,10 @@ export default function IDE() {
     setLoadingMyWork(true);
     try {
       const [submissions, missed] = await Promise.all([
-        apiService.getUserSubmissions(),
+        apiService.getUserSubmissions({ pageSize: 100 }),
         apiService.getMissedTemplates(),
       ]);
-      setMySubmissions(Array.isArray(submissions) ? submissions : []);
+      setMySubmissions(submissions?.submissions ?? []);
       setMissedTemplates(Array.isArray(missed) ? missed : []);
     } catch (error) {
       console.error('Failed to load submissions:', error);

@@ -1,31 +1,14 @@
 """OAuth 2.1 for the MCP connector.
 
-The connector needs three things an MCP client can talk to, and this module is
-all three:
+Identity comes from the user's existing Scripting Smith session, never from an
+identity provider: this app has local password accounts a Zitadel bounce would
+lock out, and users should never see Zitadel.
 
-- a registration endpoint clients can call before any user exists (RFC 7591),
-- a consent screen, served by our own web app and authenticated by the user's
-  existing Scripting Smith session,
-- a token minted for this resource, so `aud` means something.
+    client -> /mcp/oauth/authorize -> FRONTEND/mcp/connect (consent, app session)
+           -> /mcp/oauth/approve   -> one-time code -> /mcp/oauth/token
 
-Identity comes from the app session and nothing else. This module never sends
-anyone to an identity provider: Scripting Smith has local email-and-password
-accounts as well as Zitadel ones, and a person already signed in to the web app
-should not have to sign in again to connect an assistant. How the app
-authenticates people is the app's own business, decided on its login page.
-
-The redirect chain:
-
-    client  -> /mcp/oauth/authorize     validate client, stash the request
-            -> FRONTEND/mcp/connect     consent, using the app session
-                                        (which sends them to the app's own
-                                        login first if they are signed out)
-            -> /mcp/oauth/approve       issue a one-time code
-            -> client                   which exchanges it at /mcp/oauth/token
-
-Cross-request state lives in Redis, keyed by opaque ids. The OAuth parameters
-never round-trip through the browser, so they cannot be tampered with between
-the authorize call and the token call.
+Pending requests and codes live in Redis, so OAuth parameters never round-trip
+through the browser.
 """
 
 import base64
@@ -161,7 +144,7 @@ async def register_client(request: Request, db: Session = Depends(get_db)):
 
 
 def _s256(verifier: str) -> str:
-    """The PKCE S256 transform, used to check the client's code_verifier."""
+    """PKCE S256 transform."""
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
@@ -171,23 +154,12 @@ def _s256(verifier: str) -> str:
 
 @router.get("/mcp/oauth/authorize")
 async def authorize(request: Request, db: Session = Depends(get_db)):
-    """Validate the client, then send the person to our consent page.
-
-    There is deliberately no identity-provider leg here. Who the user is comes
-    from their Scripting Smith session on the consent page, for two reasons:
-    this app still has local email-and-password accounts, which a bounce
-    through Zitadel would lock out entirely; and somebody already signed in to
-    Scripting Smith should not have to log in a second time to connect an
-    assistant. However the app authenticates people is the app's business —
-    the connector never sends anyone to an identity provider itself.
-    """
+    """Validate the client, then send the person to our consent page."""
     query = request.query_params
     client_id = query.get("client_id") or ""
     redirect_uri = query.get("redirect_uri") or ""
 
-    # An unknown client or an unregistered redirect_uri is answered with an
-    # error page, never a redirect: redirecting to an attacker-supplied URI is
-    # the open-redirect this check exists to prevent.
+    # Never redirect on an unknown client: that would be the open redirect.
     client = db.query(OAuthClient).filter(OAuthClient.client_id == client_id).first()
     if not client or redirect_uri not in (client.redirect_uris or []):
         raise HTTPException(status_code=400, detail="Unknown client_id or unregistered redirect_uri")
@@ -225,12 +197,7 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
 
 
 async def _pending(request_id: str, consume: bool) -> dict:
-    """Look up a pending connection request.
-
-    The request id names *which* connection is being approved; it is not
-    identity. The caller proves who they are with their own Scripting Smith
-    session, so a leaked id approves nothing on anyone else's behalf.
-    """
+    """The pending request. The id names the connection; the session names the user."""
     if not request_id:
         raise HTTPException(status_code=400, detail="Missing request id")
     key = f"mcp:authreq:{request_id}"
@@ -243,11 +210,7 @@ async def _pending(request_id: str, consume: bool) -> dict:
 
 @router.get("/mcp/oauth/request/{request_id}")
 async def get_request(request_id: str, current_user: User = Depends(get_current_user)):
-    """What the consent page shows: who is asking, and which account.
-
-    The account is whoever is signed in to Scripting Smith right now, however
-    they signed in — password or Zitadel, it makes no difference here.
-    """
+    """What the consent page shows: who is asking, and which account."""
     authreq = await _pending(request_id, consume=False)
     return {
         "client_name": authreq.get("client_name") or "An AI assistant",
@@ -294,11 +257,7 @@ def _token_error(error: str, description: str) -> JSONResponse:
 
 
 def _issue(user: User) -> dict:
-    """An MCP-scoped token pair. `scope` is what keeps it out of the web API.
-
-    app/routers/auth.py refuses any token carrying scope=mcp, so a connector
-    token cannot be replayed against the REST endpoints the browser uses.
-    """
+    """An MCP-scoped token pair; app/routers/auth.py refuses scope=mcp."""
     data = {"sub": user.email, "tv": user.token_version or 0, "scope": SCOPE}
     return {
         "access_token": SecurityService.create_access_token(data),
@@ -348,8 +307,6 @@ async def token(
         user = db.query(User).filter(User.email == payload.get("sub")).first()
         if not user or not user.is_active:
             return _token_error("invalid_grant", "Account unavailable")
-        # Same revocation lever the web app uses: bumping token_version kills
-        # every outstanding token for the account, connector tokens included.
         if payload.get("tv", 0) != (user.token_version or 0):
             return _token_error("invalid_grant", "Token has been revoked")
         return _issue(user)

@@ -1,25 +1,14 @@
-"""The tools an MCP client may call, all scoped to one student.
+"""The tools an MCP client may call, scoped to one caller.
 
-Two rules shape every function here.
+Two rules shape everything here.
 
-*Scope.* The student is `user_id`, taken from the verified Zitadel token and
-passed in by the endpoint. No tool takes a user, a classroom or a student name,
-so no prompt can widen the blast radius: the privacy boundary is a property of
-the signatures, not of an instruction the model may ignore.
+*Scope.* The caller is `user_id`, taken from the verified token. No student
+tool takes a user or classroom, so no prompt can widen the blast radius.
 
-*No answers.* The connector is a tutor, and a tutor that types the solution has
-taught nothing. So the tools refuse to be an answer key:
-
-- `get_lab_brief` returns the instructor's docstring and the names of the
-  tests. It never returns `Template.code_content`, which carries the harness
-  and its expected values.
-- `check_my_lab` runs the student's own saved code. It takes no code argument,
-  so it cannot be used to compile-and-check a solution the model wrote.
-- `get_teaching_plan` reports what to ask next, never what to say.
-
-That is a data boundary, and it is the only kind we can enforce: the model
-running the conversation is Claude's or ChatGPT's, not ours, so what it says is
-steered by the server instructions in `server.py` and nothing stronger.
+*No answers.* get_lab_brief returns the brief and test names, never the
+harness; check_my_lab takes no code argument, so it cannot verify a solution
+the model wrote. That data boundary is the only kind we can enforce — the
+model belongs to Claude, not to us.
 """
 
 import asyncio
@@ -52,21 +41,12 @@ _admin_service = AdminService(settings)
 
 
 # ── lab resolution ──────────────────────────────────────────────
-#
-# A chat has no "currently open editor tab", so every lab-scoped tool takes an
-# optional lab_id and otherwise falls back to whatever the student last ran.
-# Without that fallback the first turn of every conversation is the model
-# asking for an id the student has never seen.
+# A chat has no open editor tab, so lab_id is optional and falls back to the
+# last lab the student ran.
 
 
 def _visible_labs(db: Session, user_id: int) -> list:
-    """The labs this caller may open.
-
-    Teaching staff also see labs that are not released yet, on the same rule
-    the web app uses (routers/templates.py:536). Without it a professor could
-    not grade or preview a lab whose visible_from has not arrived, or one that
-    has since been hidden again — while a student still cannot see either.
-    """
+    """Labs this caller may open; staff also see unreleased ones."""
     return TemplateService.get_templates_for_user(
         db, user_id, include_hidden=require_admin(db, user_id) is not None
     )
@@ -122,11 +102,7 @@ def _current_code(db: Session, user_id: int, lab_id: Optional[int]):
     return None
 
 
-# Returned with every teaching plan. Observed failure this is answering: a
-# session where the model said "I am not going to write the code you submit",
-# then wrote the same program about animals and named the substitution
-# ("Animal -> Employee, speak -> work"). It had been told not to do exactly
-# that; the rule was simply too far back in the conversation to bind.
+# Shipped with every student tool result, close to where the model replies.
 REPLY_CONTRACT = [
     "Do not write code that becomes this lab by renaming things. If a reader could "
     "map your example onto the lab one identifier at a time, you have written the "
@@ -223,12 +199,7 @@ def get_my_last_run(db: Session, user_id: int, lab_id: Optional[int] = None):
 
 
 def get_my_attempt_history(db: Session, user_id: int, lab_id: Optional[int] = None):
-    """Every run on this lab, oldest first, without the source.
-
-    Returning the code for twenty runs would swamp the context window, and the
-    shape of the progression is what separates a failure they have been stuck
-    on since this morning from one they introduced two minutes ago.
-    """
+    """Every run on this lab, oldest first, without the source."""
     lab = _resolve_lab(db, user_id, lab_id)
     if lab is None:
         return _NO_LAB
@@ -357,10 +328,7 @@ def get_my_progress(db: Session, user_id: int):
     """The student's overall record across the platform."""
     submissions = db.query(TemplateSubmission).filter(TemplateSubmission.user_id == user_id).all()
 
-    # Runs split by whether they belong to a lab. A single "total runs" number
-    # counts scratch runs in the editor too, which made the tutor tell students
-    # they had attempted a lab far more times than they had - the count did not
-    # agree with list_my_labs, and the disagreement was invisible in the name.
+    # Split so the counts agree with list_my_labs; scratch runs are not attempts.
     lab_runs = db.query(CodeSubmission).filter(
         CodeSubmission.user_id == user_id, CodeSubmission.template_id.isnot(None)
     ).count()
@@ -412,12 +380,7 @@ def get_my_completed_labs(db: Session, user_id: int):
 
 
 async def check_my_lab(db: Session, user_id: int, lab_id: Optional[int] = None):
-    """Run the student's own saved code and report which tests pass.
-
-    Takes no code argument, and that is the point: the tool cannot be pointed
-    at a solution the model just wrote, so "does this work?" stays a question
-    the student answers by writing and saving code themselves.
-    """
+    """Run the student's own saved code. No code argument, deliberately."""
     lab = _resolve_lab(db, user_id, lab_id)
     if lab is None:
         return _NO_LAB
@@ -454,12 +417,7 @@ async def check_my_lab(db: Session, user_id: int, lab_id: Optional[int] = None):
 
 
 def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
-    """What to ask this student next — never what to tell them.
-
-    Personalisation the model cannot infer from one message: whether this is a
-    typo or a misconception, whether they have been grinding for an hour, and
-    whether this exact error is a habit rather than an accident.
-    """
+    """What to ask this student next, never what to tell them."""
     lab = _resolve_lab(db, user_id, lab_id)
     if lab is None:
         return _NO_LAB
@@ -520,15 +478,8 @@ def get_teaching_plan(db: Session, user_id: int, lab_id: Optional[int] = None):
 
 
 # ── professor tools ─────────────────────────────────────────────
-#
-# Everything below reads other people's work, so each function is gated twice:
-# the caller must hold admin rights, and the classroom or student must fall
-# inside the set this professor actually teaches. The second check is the one
-# that matters - "is an admin" is not "is this class's teacher".
-#
-# The gate is re-evaluated from the database on every call. It is never read
-# from a token claim and never inferred from the tool having been listed:
-# tools/list is filtered by role for the model's benefit, not as a control.
+# Gated twice: admin rights, and the classroom must be one they teach. Both
+# re-read from the database per call, never from a token claim.
 
 
 def require_admin(db: Session, user_id: int) -> Optional[User]:
@@ -542,12 +493,7 @@ def require_admin(db: Session, user_id: int) -> Optional[User]:
 
 
 def _taught_classroom_ids(db: Session, admin_user: User) -> list:
-    """Classrooms this professor teaches or created.
-
-    Same rule as AnalyticsService.get_student_analytics_for_admin, restated
-    here because the gradebook and roster tools need it before they call
-    anything that enforces it internally.
-    """
+    """Classrooms this professor teaches or created."""
     taught = db.query(Classroom.id).join(UserClassroom).filter(
         Classroom.is_active.is_(True),
         UserClassroom.user_id == admin_user.id,
@@ -636,11 +582,7 @@ def get_student_report(db: Session, user_id: int, student_id: int = None):
 
 
 def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: int = None):
-    """One student's submitted code and run outcome for one lab.
-
-    This is what grading needs: the artefact, not a summary. Scoped to the
-    professor's own classrooms, so it cannot be used to read across the school.
-    """
+    """One student's code and run outcome for one lab."""
     admin = require_admin(db, user_id)
     if not admin:
         return _NOT_ADMIN
@@ -675,10 +617,7 @@ def get_student_work(db: Session, user_id: int, student_id: int = None, lab_id: 
     return {
         "student_id": student_id,
         "lab_id": lab_id,
-        # Named at the point of use, because a description alone did not stop
-        # the model iterating this tool over a whole class. One call per
-        # student is a round trip per student; the bulk tool is three queries
-        # for any class size.
+        # At the point of use: the description alone did not stop the loop.
         "for_the_whole_class": (
             f"If you are grading more than this one student, stop and call "
             f"get_lab_submissions(classroom_id={enrolled.classroom_id}, lab_id={lab_id}) "
@@ -699,17 +638,9 @@ BULK_CODE_CHARS = 4_000
 
 
 def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab_id: int = None):
-    """Every student's work on one lab, for a whole classroom, in one call.
+    """Every student's work on one lab, in three queries whatever the class size.
 
-    Grading a class of thirty through get_student_work is thirty round trips,
-    and a hundred is a hundred; the model spends the turn on tool calls instead
-    of on the marking. This does the same work in three queries no matter how
-    big the class, and returns the same per-student shape.
-
-    Code is capped tighter than the single-student tool - a class of a hundred
-    at the full limit would not fit in a context window - and each row says
-    whether it was cut, so a grader knows to open the student individually
-    rather than mark from a truncated file.
+    Code is capped tighter than the single-student tool; rows say when it was cut.
     """
     admin = require_admin(db, user_id)
     if not admin:
@@ -731,7 +662,7 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
 
     student_ids = [row[0] for row in roster]
 
-    # Newest first, then keep the first seen per student: one pass, no N+1.
+    # Newest first, keep first seen per student: one pass, no N+1.
     submissions = {}
     for row in db.query(TemplateSubmission).filter(
         TemplateSubmission.user_id.in_(student_ids),
@@ -781,9 +712,6 @@ def get_lab_submissions(db: Session, user_id: int, classroom_id: int = None, lab
         "lab_name": lab.name if lab else None,
         "classroom_id": classroom_id,
         "classroom_name": classroom.name if classroom else None,
-        # Named so the grader states what it is about to mark. Getting the pair
-        # wrong means grading the wrong cohort, which is not recoverable by
-        # apologising afterwards.
         "confirm_before_grading": (
             f"You are about to grade '{lab.name if lab else lab_id}' for "
             f"'{classroom.name if classroom else classroom_id}'. Say this back to the "
@@ -826,15 +754,10 @@ MAX_BULK_RUNS = 60
 
 async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = None,
                               lab_id: int = None):
-    """Run every student's saved code for one lab, concurrently, in one call.
+    """Run every student's saved code for one lab, concurrently.
 
-    The alternative is the model calling run_code once per student: a round
-    trip each, with its own latency, for work the server can do in parallel.
-    Here the executions overlap behind a small semaphore - bounded so a class
-    of thirty does not arrive at the language services all at once.
-
-    Reports the tally per student, not a mark. Deciding what a passing tally is
-    worth is the instructor's job.
+    Bounded by a semaphore so a class does not hit the executors at once.
+    Reports tallies, not marks.
     """
     admin = require_admin(db, user_id)
     if not admin:
@@ -879,9 +802,7 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
 
     results = await asyncio.gather(*(run_one(row) for row in runnable))
 
-    # A lab with no harness runs fine and measures nothing. Saying so beats
-    # returning a column of null tallies and leaving the grader to work out
-    # whether the code failed or the lab simply has nothing to check.
+    # No harness means the code ran and nothing checked it; say so.
     has_tests = bool(extraction.extract_test_names(lab.code_content if lab else ""))
     note = None
     if not has_tests:
@@ -911,14 +832,7 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
 
 async def run_code(db: Session, user_id: int, code: str = None, language: str = None,
                    input_data: str = ""):
-    """Execute arbitrary code in the sandbox. Teaching staff only.
-
-    Students get `check_my_lab`, which runs only what they themselves saved.
-    This one takes code from the caller, so it is the one tool that could be
-    used to hand a student a verified answer - which is why it is gated on
-    admin rights, checked against the database on every call, and left out of
-    tools/list entirely for anyone else.
-    """
+    """Execute arbitrary code in the sandbox. Teaching staff only."""
     admin = require_admin(db, user_id)
     if not admin:
         return _NOT_ADMIN
@@ -1065,12 +979,7 @@ ADMIN_DEFINITIONS = [_definition(*t) for t in ADMIN_TOOLS]
 
 
 def definitions_for(user_id: int) -> list:
-    """tools/list, filtered by role.
-
-    A student never sees the professor tools, so the model cannot be talked
-    into calling one. That is presentation, not protection — every admin
-    function re-checks rights against the database when it runs.
-    """
+    """tools/list, filtered by role. Presentation only; require_admin protects."""
     db = SessionLocal()
     try:
         listing = list(STUDENT_DEFINITIONS)
@@ -1096,8 +1005,7 @@ async def call(name: str, arguments: dict, user_id: int) -> str:
     if not isinstance(arguments, dict):
         arguments = {}
 
-    # Only the arguments the tool declares are forwarded, so a client cannot
-    # reach a keyword the schema does not advertise.
+    # Only declared arguments are forwarded.
     kwargs = {}
     for key in schema["properties"]:
         if key not in arguments or arguments[key] is None:

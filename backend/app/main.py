@@ -50,11 +50,8 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown.
 
-    This used to be @app.on_event("startup"). It had to become a lifespan
-    because the MCP SDK requires the host application to run its session
-    manager, and FastAPI silently ignores on_event handlers as soon as a
-    lifespan is supplied - so leaving the old hook in place would have stopped
-    table creation, migrations and router loading from ever running.
+    A lifespan rather than on_event: the MCP SDK needs its session manager run
+    here, and FastAPI ignores on_event handlers once a lifespan is supplied.
     """
     await _startup()
 
@@ -307,12 +304,8 @@ async def _startup():
     # Load routers
     await load_routers()
 
-# Claude shows a connector's icon from its domain's favicon. An absent one is
-# why the connector rendered Railway's logo. Served as a real multi-size .ico
-# rather than a redirect to the web app's SVG: GakkoDeck's connector, which
-# does show its own mark, serves image/vnd.microsoft.icon directly, and a
-# favicon fetcher that will not follow a redirect or will not rasterise SVG
-# would land back on the default either way.
+# A real .ico, served directly: connector clients resolve a domain favicon and
+# may not follow redirects or rasterise SVG.
 @app.get("/favicon.ico", include_in_schema=False)
 @app.get("/favicon.svg", include_in_schema=False)
 async def favicon():
@@ -400,18 +393,14 @@ async def load_routers():
             import traceback
             traceback.print_exc()
     
-    # MCP connector. Root-level paths on purpose: /mcp is the connector URL
-    # clients are given, and RFC 9728 requires the metadata at
-    # /.well-known/oauth-protected-resource, neither of which lives under /api.
+    # MCP connector: root-level paths, not /api.
     try:
         from app.mcp import auth as mcp_auth, oauth as mcp_oauth, server as mcp_server
         if mcp_auth.enabled():
             app.include_router(mcp_auth.router)
             app.include_router(mcp_oauth.router)
-            # Mounted at the root, last: the MCP app carries its own /mcp
-            # route (mounting at /mcp would 307-redirect to /mcp/, which
-            # clients do not follow), and registering last means every route
-            # above still matches first - including /mcp/oauth/*.
+            # Root mount, last: the app carries its own /mcp path, and every
+            # route above still matches first, including /mcp/oauth/*.
             app.mount("/", mcp_server.build_app())
             loaded_routers.append("mcp")
             print("  ✅ mcp connector loaded")

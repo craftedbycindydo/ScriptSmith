@@ -1,27 +1,11 @@
 """The MCP endpoint, on the official SDK (mcp 2.0).
 
-Replaces a hand-rolled JSON-RPC handler. The reason for the swap is
-elicitation: a stateless POST-only server has no channel back to the client, so
-it can never ask a question mid-call — and asking is the point when a professor
-says "grade lab 2" and the model does not know which classroom they mean.
+A `Resolve(fn)` parameter is filled by our own function rather than the model,
+and that function may return `Elicit(...)` to ask the user. Resolvers pull the
+real classrooms first and only ask when genuinely ambiguous.
 
-How the asking works here. A tool parameter annotated with `Resolve(fn)` is
-filled by a function we write rather than by the model, and that function may
-return `Elicit(...)` to put a real question in front of the user. The SDK
-carries it over whatever the connection supports — a live `elicitation/create`
-on a legacy session, a multi-round-trip on 2026 clients — so one tool body
-serves both. The resolvers below pull the professor's actual classrooms first
-and only ask when there is genuine ambiguity; with one classroom they answer
-silently.
-
-Multi-worker safety: `RequestStateSecurity` seals the round-trip state with a
-shared key, so a resumed call can land on any worker. Without it the connector
-would need sticky routing, which Railway does not give us. The transport stays
-`stateless_http=True` for the same reason.
-
-The teaching contract lives in INSTRUCTIONS below and, more durably, in the
-data boundary in tools.py: no tool returns a worked solution, and the only
-tool that runs student-supplied code is gated on teaching staff.
+`RequestStateSecurity` seals round-trip state with a shared key so a resumed
+call can land on any worker; the transport stays stateless for the same reason.
 """
 
 import logging
@@ -159,16 +143,10 @@ def _is_staff(user_id: int) -> bool:
 
 
 async def hide_staff_tools(ctx, call_next):
-    """Keep the teaching-staff tools out of a student's tools/list.
+    """Hide staff tools from a student's tools/list.
 
-    Cosmetic, deliberately. The tools refuse a student on their own — twice,
-    at dispatch and inside each function — and that is what makes them safe.
-    This only stops a student being shown a `run_code` they cannot use and
-    being invited to ask for it.
-
-    Written against `Server.middleware`, which the SDK marks provisional. If
-    its signature changes the listing goes back to showing everything; nothing
-    about who may *call* what depends on this function.
+    Cosmetic: require_admin is what makes them safe. Server.middleware is
+    provisional, so a signature change only restores the wider listing.
     """
     result = await call_next(ctx)
     if ctx.method != "tools/list":
@@ -186,19 +164,10 @@ async def hide_staff_tools(ctx, call_next):
     )
 
 
-# The connector's authorization server is this backend (app/mcp/oauth.py),
-# which fronts Zitadel for the login. api_base_url has to be concrete here —
-# AuthSettings needs absolute URLs, unlike the request-host fallback elsewhere.
+# AuthSettings needs absolute URLs, so api_base_url must be concrete.
 _BASE = (settings.api_base_url or "http://localhost:8000").rstrip("/")
 
-# Claude shows a connector's icon next to every tool call. With none declared
-# it falls back to the favicon of the connector URL's domain — which for a
-# Railway-generated host is Railway's own logo, not ours. Declaring it here
-# fixes the branding without depending on a custom domain.
-#
-# (GakkoDeck leaves this unset because mcp 1.15.0 serialised Icon.sizes as a
-# string where the spec wants string[], and ChatGPT's strict client rejected
-# the initialize response. In mcp 2.0 sizes is list[str], so it is safe again.)
+# Declared so Claude does not fall back to the connector domain's favicon.
 ICONS = [
     Icon(
         src="https://scriptingsmith.com/scriptingsmith-logo.svg",
@@ -238,14 +207,10 @@ class LabChoice(BaseModel):
 
 
 def _can_ask(ctx: Context) -> bool:
-    """Whether this client can be shown a question at all.
+    """Whether this client can be asked at all.
 
-    Not every client can. A 2025-era client is asked over a live channel that
-    a stateless deployment does not have, and the SDK treats a client that
-    cannot be asked as a *failed call*, not a decline. So we check first and,
-    when the answer is no, return nothing — the tool then hands the model the
-    list of options and the model asks in chat instead. Either way the person
-    gets asked; only the widget changes.
+    A client that cannot be is a failed call, not a decline, so we degrade to
+    the model asking in chat instead.
     """
     try:
         capabilities = ctx.client_capabilities
@@ -271,13 +236,7 @@ def _my_labs(user_id: int) -> list:
 
 
 async def pick_classroom(ctx: Context) -> Any:
-    """Resolve the classroom, asking only when it is genuinely ambiguous.
-
-    Pulls the instructor's real classrooms first, so the question is answerable
-    rather than a bare "which one?". One classroom means there is nothing to
-    ask and it resolves silently; several means the model must not guess, and
-    picking wrong would grade the wrong cohort.
-    """
+    """Resolve the classroom, asking only when genuinely ambiguous."""
     user_id = caller_id()
     if user_id is None:
         return None
@@ -314,12 +273,7 @@ async def pick_lab(ctx: Context) -> Any:
 
 
 def _resolved(value: Any, field: str) -> Optional[int]:
-    """Unwrap whatever a resolver produced into an id, or None.
-
-    A resolver returns either a plain id (no question was needed) or an
-    elicitation result (the user was asked). Declining or cancelling is a real
-    answer — it means stop, not fall back to a guess.
-    """
+    """A resolver's id, or None. Declining means stop, not guess."""
     if isinstance(value, AcceptedElicitation):
         return getattr(value.data, field, None)
     if isinstance(value, (DeclinedElicitation, CancelledElicitation)):
@@ -328,7 +282,7 @@ def _resolved(value: Any, field: str) -> Optional[int]:
 
 
 def _ask_in_chat(kind: str, options: list) -> dict:
-    """The degrade path: hand the model the options so it asks in chat."""
+    """Hand the model the options so it asks in chat."""
     return {
         "needs": kind,
         "options": options,
@@ -343,10 +297,8 @@ _NO_CALLER = {"error": "Unauthorized"}
 
 
 # ── tool registration ───────────────────────────────────────────
-#
-# The bodies stay in tools.py, where they take (db, user_id, ...) and are
-# covered by the self-check. Registered here through thin wrappers whose own
-# signatures are what the model sees, so `db` is never a tool argument.
+# Bodies stay in tools.py; these wrappers are what the model sees, so `db` is
+# never a tool argument.
 
 
 def with_contract(result, user_id):
@@ -445,7 +397,6 @@ async def list_classroom_students(
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    # An id the caller passed wins; the resolver only fills the gap.
     classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
@@ -460,7 +411,6 @@ async def get_classroom_report(
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    # An id the caller passed wins; the resolver only fills the gap.
     classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
@@ -476,7 +426,6 @@ async def get_classroom_gradebook(
     user_id = caller_id()
     if user_id is None:
         return _NO_CALLER
-    # An id the caller passed wins; the resolver only fills the gap.
     classroom_id = classroom_id or _resolved(classroom, "classroom_id")
     if classroom_id is None:
         return _ask_in_chat("classroom_id", _my_classrooms(user_id))
@@ -608,11 +557,7 @@ def grade_a_lab(lab: str = "the lab I name") -> str:
 
 
 def build_app():
-    """The ASGI app mounted by main.py.
-
-    Stateless so any worker can serve any request; the round-trip state that
-    elicitation needs rides in a sealed token instead of a session.
-    """
+    """The ASGI app mounted by main.py."""
     from mcp.server.transport_security import TransportSecuritySettings
 
     host = (settings.api_base_url or "").replace("https://", "").replace("http://", "").strip("/")
@@ -620,9 +565,8 @@ def build_app():
         allowed_hosts=[host, f"{host}:*"] if host else ["*"],
         allowed_origins=["*"],
     )
-    # The endpoint keeps its full path and the app is mounted at the root, so
-    # POST /mcp is served directly. Mounting at "/mcp" instead would make
-    # Starlette 307-redirect /mcp to /mcp/, and MCP clients do not follow it.
+    # Mounted at the root with the full path: mounting at /mcp would 307 to
+    # /mcp/, which MCP clients do not follow.
     return mcp.streamable_http_app(
         streamable_http_path="/mcp",
         stateless_http=True,

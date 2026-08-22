@@ -247,6 +247,15 @@ class TemplateService:
             return []
     
     @staticmethod
+    def count_all_templates(db: Session) -> int:
+        """How many active templates exist."""
+        try:
+            return db.query(Template).filter(Template.is_active == True).count()
+        except Exception as e:
+            print(f"Error counting templates: {str(e)}")
+            return 0
+
+    @staticmethod
     def get_all_templates(db: Session, skip: int = 0, limit: int = 100) -> List[Template]:
         """Get all active templates with pagination (Admin only)"""
         try:
@@ -784,6 +793,50 @@ class TemplateService:
         ).first()
     
     @staticmethod
+    def _submissions_query(
+        db: Session,
+        template_id: int = None,
+        user_id: int = None,
+        status: str = None,
+        language: str = None,
+        template_name: str = None,
+    ):
+        """The filtered query, before any paging. Filters belong here so a
+        search covers every page, not just the one being fetched."""
+        query = db.query(TemplateSubmission)
+
+        if template_id is not None:
+            query = query.filter(TemplateSubmission.template_id == template_id)
+
+        if user_id is not None:
+            query = query.filter(TemplateSubmission.user_id == user_id)
+
+        if status:
+            query = query.filter(TemplateSubmission.status == status)
+
+        if language:
+            query = query.filter(TemplateSubmission.language == language)
+
+        if template_name:
+            query = query.filter(TemplateSubmission.template_name.ilike(f"%{template_name}%"))
+
+        return query
+
+    @staticmethod
+    def count_template_submissions(
+        db: Session,
+        template_id: int = None,
+        user_id: int = None,
+        status: str = None,
+        language: str = None,
+        template_name: str = None,
+    ) -> int:
+        """How many submissions match."""
+        return TemplateService._submissions_query(
+            db, template_id, user_id, status, language, template_name
+        ).count()
+
+    @staticmethod
     def get_template_submissions(
         db: Session, 
         template_id: int = None,
@@ -791,23 +844,13 @@ class TemplateService:
         status: str = None,
         language: str = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        template_name: str = None,
     ) -> List[TemplateSubmission]:
-        """Get submissions with filters (similar to executions)"""
-        query = db.query(TemplateSubmission)
-        
-        if template_id is not None:
-            query = query.filter(TemplateSubmission.template_id == template_id)
-        
-        if user_id is not None:
-            query = query.filter(TemplateSubmission.user_id == user_id)
-        
-        if status:
-            query = query.filter(TemplateSubmission.status == status)
-            
-        if language:
-            query = query.filter(TemplateSubmission.language == language)
-        
+        """One page of submissions, newest first."""
+        query = TemplateService._submissions_query(
+            db, template_id, user_id, status, language, template_name
+        )
         return query.order_by(desc(TemplateSubmission.submitted_at)).offset(skip).limit(limit).all()
     
     @staticmethod

@@ -613,10 +613,20 @@ export const apiService = {
     return response.data;
   },
 
-  async getAllTemplatesAdmin(skip: number = 0, limit: number = 100): Promise<TemplateListItem[]> {
-    const response = await api.get(`/admin/templates?skip=${skip}&limit=${limit}`);
+  /** One page of templates, with the total. */
+  async getAllTemplatesAdmin(options: { page?: number; pageSize?: number } = {}): Promise<{
+    templates: TemplateListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> {
+    const params = new URLSearchParams();
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+    const response = await api.get(`/admin/templates?${params.toString()}`);
     return response.data;
   },
+
 
   async getTemplateAdmin(templateId: number): Promise<Template> {
     const response = await api.get(`/admin/templates/${templateId}`);
@@ -709,22 +719,23 @@ export const apiService = {
     return response.data;
   },
 
-  async getAllSubmissions(
-    templateName?: string,
-    user?: string, 
-    language?: string,
-    status?: string,
-    skip: number = 0,
-    limit: number = 100
-  ): Promise<TemplateSubmission[]> {
+  /** One page of submissions, with the total. Named options, not positional. */
+  async getAllSubmissions(options: {
+    templateName?: string;
+    user?: string;
+    language?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<{ submissions: TemplateSubmission[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
-    if (templateName) params.append('template_name', templateName);
-    if (user) params.append('user', user);
-    if (language) params.append('language', language);
-    if (status) params.append('status', status);
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    
+    if (options.templateName) params.append('template_name', options.templateName);
+    if (options.user) params.append('user', options.user);
+    if (options.language) params.append('language', options.language);
+    if (options.status) params.append('status', options.status);
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+
     const response = await api.get(`/admin/submissions?${params.toString()}`);
     return response.data;
   },
@@ -747,20 +758,21 @@ export const apiService = {
   },
 
   // User submissions endpoints (for regular users to see their own submissions)
-  async getUserSubmissions(
-    templateName?: string,
-    language?: string,
-    status?: string,
-    skip: number = 0,
-    limit: number = 100
-  ): Promise<TemplateSubmission[]> {
+  /** One page of the signed-in user's submissions, with the total. */
+  async getUserSubmissions(options: {
+    templateName?: string;
+    language?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<{ submissions: TemplateSubmission[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
-    if (templateName) params.append('template_name', templateName);
-    if (language) params.append('language', language);
-    if (status) params.append('status', status);
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    
+    if (options.templateName) params.append('template_name', options.templateName);
+    if (options.language) params.append('language', options.language);
+    if (options.status) params.append('status', options.status);
+    params.append('page', String(options.page ?? 1));
+    params.append('page_size', String(options.pageSize ?? 50));
+
     const response = await api.get(`/my-submissions?${params.toString()}`);
     return response.data;
   },
@@ -1128,9 +1140,7 @@ api.interceptors.response.use(
   }
 );
 
-// Exported for callers that must hit a root-level endpoint with an absolute
-// URL (the MCP consent page): an absolute URL bypasses baseURL but still runs
-// the auth and token-refresh interceptors above.
+// Exported for callers needing an absolute URL to a root-level endpoint.
 export { api };
 
 export default apiService;

@@ -8,19 +8,11 @@ import { useAuthStore } from '../store/authStore';
 import { Loader2, Plug, XCircle } from 'lucide-react';
 
 /**
- * Consent screen for the MCP connector (Claude, ChatGPT).
- *
- * The backend sends the person here with an opaque ?request=<id>. That id says
- * *which* connection is being approved; it is not identity. Who is approving
- * comes from their Scripting Smith session, so a signed-out visitor is sent to
- * the app's own login first and comes straight back here. Whether they log in
- * with a password or with Google is the login page's business — the connector
- * never routes anyone to an identity provider itself.
+ * Consent screen for the MCP connector. The ?request=<id> names the connection;
+ * the app session names the user, so signed-out visitors go to /login and back.
  */
 
-// The API base is '/api'-suffixed in dev and bare in production; these OAuth
-// routes sit at the root either way. An absolute URL overrides axios' baseURL
-// while still running its auth and refresh interceptors.
+// Absolute URL: overrides baseURL, still runs the auth/refresh interceptors.
 const API_ORIGIN = config.apiBaseUrl.replace(/\/api\/?$/, '');
 
 interface ConnectRequest {
@@ -39,7 +31,7 @@ export default function MCPConnectPage() {
   const [status, setStatus] = useState<Status>('loading');
   const [details, setDetails] = useState<ConnectRequest | null>(null);
 
-  // Clickjacking guard: an approval button must never render inside a frame.
+  // Clickjacking guard.
   const framed = typeof window !== 'undefined' && window.top !== window.self;
 
   useEffect(() => {
