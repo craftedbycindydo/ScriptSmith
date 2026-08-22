@@ -212,7 +212,7 @@ def check_role_boundary():
     # Listing is presentation (check_tools_list_filtering); calling is the real
     # test, and it goes through the SDK so the wrappers are what is tested.
     pool = {"classroom_id": CS101, "student_id": BOB, "lab_id": 10,
-            "code": "print(1)", "language": "python"}
+            "code": "print(1)", "language": "python", "name": "Blocked lab"}
     server.caller_id = lambda: ALICE
     for name in sorted(server.STAFF_TOOLS):
         accepted = by_name[name].input_schema["properties"]
@@ -368,6 +368,43 @@ def check_run_lab():
     assert result["failing"] == ["reverses three items"]
 
 
+def check_create_lab():
+    """Staff create labs only where they teach; dates and exclusions round-trip in UTC."""
+    from app.services.template_service import TemplateService
+
+    server.caller_id = lambda: PROF
+    made = _call("create_lab", {
+        "classroom_id": CS101, "name": "Made over MCP", "code": LAB_CODE,
+        "visible_from": "2026-09-01T09:00:00-04:00",
+        "submission_deadline": "2026-09-08T23:59:00Z",
+        "exclusions": [{"student_id": BOB, "deadline": "2026-09-10T23:59:00Z"}],
+    })
+    assert made["visible_from"] == "2026-09-01T13:00:00Z", made
+    assert made["submission_deadline"] == "2026-09-08T23:59:00Z", made
+    assert made["exclusions"] == [{"user_id": BOB, "deadline": "2026-09-10T23:59:00Z", "username": "bob"}], made
+    assert made["submission_code"], made
+
+    assert _call("create_lab", {"classroom_id": OTHER_CLASS, "name": "x", "code": "print(1)"}) == tools._NOT_YOURS
+    assert "error" in _call("create_lab", {"classroom_id": CS101, "name": "x", "code": "print(1)",
+                                           "submission_deadline": "next tuesday"})
+    assert "error" in _call("create_lab", {"classroom_id": CS101, "name": "x", "code": "print(1)",
+                                           "exclusions": [{"student_id": 999, "deadline": "2026-09-10T23:59:00Z"}]})
+    server.caller_id = lambda: ALICE
+    blocked = _call("create_lab", {"classroom_id": CS101, "name": "x", "code": "print(1)"})
+    assert blocked["error"] == tools._NOT_ADMIN["error"], blocked
+
+    db = Session()
+    try:
+        lab = db.get(Template, made["lab_id"])
+        assert [c.id for c in lab.classrooms] == [CS101]
+        assert TemplateService.effective_deadline(lab, BOB).isoformat() == "2026-09-10T23:59:00+00:00"
+        assert TemplateService.effective_deadline(lab, ALICE).isoformat() == "2026-09-08T23:59:00+00:00"
+        assert made["lab_id"] in {lab["lab_id"] for lab in tools.list_my_labs(db, PROF)["labs"]}
+        assert made["lab_id"] not in {lab["lab_id"] for lab in tools.list_my_labs(db, ALICE)["labs"]}
+    finally:
+        db.close()
+
+
 def check_extraction():
     output = "PASS a\nFAIL b\n  got: 1\n  expected: 2\n1/2 tests passed\n"
     assert extraction.extract_test_outcomes(output) == {"passed": ["a"], "failed": ["b"]}
@@ -471,7 +508,7 @@ def check_sdk_server():
 
     listed = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in listed}
-    assert len(listed) == 22, sorted(names)
+    assert len(listed) == 23, sorted(names)
     assert {"check_my_lab", "get_teaching_plan", "run_code"} <= names
 
     # Each elicited tool must expose its id, or the degrade path deadlocks.
@@ -624,6 +661,7 @@ def main():
     check_bulk_runner()
     check_run_code_is_admin_only()
     check_run_lab()
+    check_create_lab()
     check_tokens()
     check_contract_rides_every_tool()
     check_tools_list_filtering()

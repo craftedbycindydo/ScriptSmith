@@ -208,6 +208,11 @@ class LabChoice(BaseModel):
     lab_id: int = Field(description="Which lab this is about")
 
 
+class Exclusion(BaseModel):
+    student_id: int = Field(description="A student in the classroom")
+    deadline: str = Field(description="That student's own deadline, ISO 8601 date-time")
+
+
 def _can_ask(ctx: Context) -> bool:
     """Whether this client can be asked at all.
 
@@ -384,6 +389,24 @@ def _register(core, shape: str) -> None:
         async def tool(code: str, language: str, input_data: str = ""):
             user_id = caller_id()
             return await _session(core, user_id, code, language, input_data) if user_id else _NO_CALLER
+    elif shape == "create_lab":
+        async def tool(
+            classroom_id: int,
+            name: str,
+            code: str,
+            language: str = "python",
+            description: str | None = None,
+            visible_from: str | None = None,
+            submission_deadline: str | None = None,
+            exclusions: list[Exclusion] | None = None,
+        ):
+            user_id = caller_id()
+            if user_id is None:
+                return _NO_CALLER
+            return await _session(
+                core, user_id, classroom_id, name, code, language, description,
+                visible_from, submission_deadline, [e.model_dump() for e in exclusions or []],
+            )
     else:
         raise ValueError(f"unknown shape {shape}")
 

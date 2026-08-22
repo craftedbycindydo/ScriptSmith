@@ -161,6 +161,8 @@ export default function TemplateManager({ onTemplateCreated }: TemplateManagerPr
 
 
   const handleStartCreating = () => {
+    // Already drafting a new template: keep it instead of silently wiping the form
+    if (isCreating) return;
     setEditingTemplate(defaultTemplate);
     setEditingId(null);
     setIsCreating(true);
