@@ -51,3 +51,4 @@ export function withLockedTail(studentCode: string, tail: string): string {
 export function endsWithLockedTail(value: string, tail: string): boolean {
   return value === tail || value.endsWith('\n' + tail);
 }
+

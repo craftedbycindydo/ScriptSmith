@@ -199,7 +199,8 @@ const TemplateSubmissions: React.FC = () => {
                 output: response.output,
                 error_message: response.error_message,
                 execution_time: response.execution_time,
-                status: response.status
+                status: response.status,
+                test_results: response.test_results
               }
             : sub
         ));
@@ -1102,7 +1103,7 @@ const TemplateSubmissions: React.FC = () => {
                             <div className="flex-1 overflow-hidden rounded-b-lg">
                               <CodeEditor
                                 language={submission.language || 'plaintext'}
-                                value={submission.submitted_code}
+                                value={submission.assembled_code || submission.submitted_code}
                                 onChange={() => {}} // Read-only
                                 readOnly={true}
                               />
@@ -1111,8 +1112,7 @@ const TemplateSubmissions: React.FC = () => {
 
                           {/* Output Panel */}
                           <div className="flex flex-col bg-background border rounded-lg shadow-sm">
-                            <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg flex items-center justify-between">
-                              <h4 className="text-sm font-medium">Output</h4>
+                            <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg flex items-center justify-end">
                               <Button
                                 onClick={() => handleRunCode(submission.id)}
                                 disabled={runningSubmissions.has(submission.id)}
@@ -1140,6 +1140,7 @@ const TemplateSubmissions: React.FC = () => {
                                 error={submission.error_message || ''}
                                 isLoading={false}
                                 executionTime={submission.execution_time || 0}
+                                testResults={submission.test_results || null}
                               />
                             </div>
                           </div>

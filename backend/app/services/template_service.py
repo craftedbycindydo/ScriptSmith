@@ -11,6 +11,7 @@ from sqlalchemy import func, and_, or_, desc
 from fastapi import HTTPException, status
 from app.models.template import Template, TemplateSubmission
 from app.models.template_draft import TemplateDraft
+from app.services import lab_harness
 from app.models.user import User
 from app.models.classroom import Classroom, UserClassroom
 
@@ -113,6 +114,19 @@ class TemplateService:
         return value.strip("\r\n")
 
     @staticmethod
+    def _validate_harness_language(language: Optional[str], test_harness: Optional[str]) -> None:
+        """No lab may carry locked tests in a language the server cannot grade.
+
+        Every authoring path routes through here (admin routes, uploads, MCP),
+        so a lab that exists is a lab whose runs the proof line can gate.
+        """
+        if not (test_harness or "").strip():
+            return
+        problem = lab_harness.harness_language_problem(language)
+        if problem:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
+
+    @staticmethod
     def _validate_visibility_window(
         visible_from: Optional[datetime],
         submission_deadline: Optional[datetime]
@@ -163,6 +177,7 @@ class TemplateService:
                 detail=f"Template '{name}' already exists for {language}"
             )
 
+        TemplateService._validate_harness_language(language, test_harness)
         TemplateService._validate_visibility_window(visible_from, submission_deadline)
 
         # Enrich exclusions with usernames if provided
@@ -444,6 +459,7 @@ class TemplateService:
         if code_content is not None:
             template.code_content = code_content
         if test_harness is not None:
+            TemplateService._validate_harness_language(template.language, test_harness)
             template.test_harness = TemplateService._clean_harness(test_harness)
         if submission_deadline is not None:
             template.submission_deadline = submission_deadline
@@ -693,7 +709,8 @@ class TemplateService:
         db.add(submission)
         db.commit()
         db.refresh(submission)
-        
+
+        submission.assembled_code = lab_harness.assemble(template, submitted_code)
         return submission
     
     @staticmethod
@@ -886,7 +903,13 @@ class TemplateService:
         query = TemplateService._submissions_query(
             db, template_id, user_id, status, language, template_name
         )
-        return query.order_by(desc(TemplateSubmission.submitted_at)).offset(skip).limit(limit).all()
+        submissions = query.order_by(desc(TemplateSubmission.submitted_at)).offset(skip).limit(limit).all()
+        for submission in submissions:
+            submission.assembled_code = (
+                lab_harness.assemble(submission.template, submission.submitted_code)
+                if submission.template else submission.submitted_code
+            )
+        return submissions
     
     @staticmethod
     def get_submissions_stats(db: Session, template_id: int = None) -> dict:

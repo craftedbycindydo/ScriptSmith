@@ -1,4 +1,5 @@
 import type { User } from '@/store/authStore';
+import type { TestReport } from '@/services/api';
 
 export type Classroom = NonNullable<User['classroom_context']>['classrooms'][number];
 
@@ -32,6 +33,7 @@ export interface TemplateExecution {
   status?: string;
   created_at: string;
   executed_at?: string;
+  test_results?: TestReport | null;
 }
 
 export interface ResetUsernameDialogState {

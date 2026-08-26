@@ -372,7 +372,7 @@ function UserSubmissions({
                             <div className="flex-1 overflow-hidden rounded-b-lg">
                               <CodeEditor
                                 language={submission.language || 'plaintext'}
-                                value={submission.submitted_code}
+                                value={submission.assembled_code || submission.submitted_code}
                                 onChange={() => {}} // Read-only
                                 readOnly={true}
                               />
@@ -381,15 +381,13 @@ function UserSubmissions({
 
                           {/* Output Panel */}
                           <div className="flex flex-col bg-background border rounded-lg shadow-sm">
-                            <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                              <h4 className="text-sm font-medium">Output</h4>
-                            </div>
-                            <div className="flex-1 overflow-hidden rounded-b-lg">
+                            <div className="flex-1 overflow-hidden rounded-lg">
                               <OutputConsole
                                 output={submission.output || ''}
                                 error={submission.error_message || ''}
                                 isLoading={false}
                                 executionTime={submission.execution_time || 0}
+                                testResults={submission.test_results || null}
                               />
                             </div>
                           </div>

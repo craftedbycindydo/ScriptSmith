@@ -242,6 +242,11 @@ async def _startup():
             # Lightweight column migration for scheduled template visibility
             DatabaseMigrationService.add_column_if_not_exists(db, "templates", "visible_from", "TIMESTAMP")
 
+            # Locked test harness per lab (null = the lab has no separate tests).
+            # Added before anything queries the Template model: the backfill
+            # below selects full Template rows, which include this column.
+            DatabaseMigrationService.add_column_if_not_exists(db, "templates", "test_harness", "TEXT")
+
             # In-class submission codes: add the column, then give every existing
             # template a code so the first-submission check applies to all labs
             DatabaseMigrationService.add_column_if_not_exists(db, "templates", "submission_code", "VARCHAR(4)")
@@ -249,9 +254,6 @@ async def _startup():
             backfilled = TemplateService.backfill_submission_codes(db)
             if backfilled:
                 print(f"🔑 Generated submission codes for {backfilled} template(s)")
-
-            # Locked test harness per lab (null = the lab has no separate tests)
-            DatabaseMigrationService.add_column_if_not_exists(db, "templates", "test_harness", "TEXT")
 
             if DatabaseMigrationService.is_migration_needed(db):
                 print("🚀 Running classroom migration...")

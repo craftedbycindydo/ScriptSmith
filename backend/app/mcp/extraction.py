@@ -73,6 +73,33 @@ def extract_test_outcomes(output: str):
     return {"passed": passed, "failed": failed}
 
 
+def extract_test_report(output: str):
+    """Every case in output order plus the tally, for display.
+
+    Same regexes the tutor and the grader read, so what the student sees named
+    as passed or failed is exactly what got graded. None when the run printed
+    neither a case line nor a tally, so non-test output stays plain output.
+    """
+    text = output or ""
+    events = [
+        (match.start(), {"test": match.group("name").strip(), "passed": True})
+        for match in PASS_LINE_RE.finditer(text)
+    ] + [
+        (match.start(), {
+            "test": match.group("name").strip(),
+            "passed": False,
+            "got": (match.group("got") or "").strip(),
+            "expected": (match.group("expected") or "").strip(),
+        })
+        for match in FAIL_BLOCK_RE.finditer(text)
+    ]
+    cases = [case for _, case in sorted(events, key=lambda event: event[0])]
+    tally = extract_pass_count(text)
+    if not cases and not tally:
+        return None
+    return {"cases": cases, "tally": tally}
+
+
 def teaching_mode(error_class: str) -> str:
     """Mechanical failures are explained plainly; everything else is Socratic."""
     return "mechanical" if error_class in MECHANICAL_ERRORS else "conceptual"

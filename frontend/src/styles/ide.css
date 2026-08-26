@@ -76,6 +76,41 @@
   border-color: transparent;
 }
 
+.console-tabs {
+  display: flex;
+  align-items: stretch;
+  min-height: 32px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.console-tab {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  opacity: 0.45;
+}
+
+.console-tab[data-active="true"] {
+  opacity: 1;
+  background: var(--color-card);
+}
+
+.ide-pane-dark .console-tab[data-active="true"] .pane-label {
+  color: var(--color-muted-foreground);
+}
+
+.console-tab + .console-tab {
+  border-left: 1px solid var(--color-border);
+}
+
+.ide-pane-dark .console-tabs,
+.ide-pane-dark .console-tab + .console-tab {
+  border-color: rgb(255 255 255 / 0.08);
+}
+
 /* ============================================================
    FORM STRIP — collapsible save/share/download rows under the
    toolbar. Content inside is a .panel.

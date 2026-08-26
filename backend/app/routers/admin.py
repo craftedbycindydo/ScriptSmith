@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, computed_field, validator
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, and_, or_, text
@@ -19,6 +19,8 @@ from app.models.collaboration import CollaborationSession, CollaborationParticip
 from app.models.template import Template
 from app.models.admin_settings import AdminSettings
 from app.models.classroom import Classroom, UserClassroom
+from app.mcp.extraction import extract_test_report
+from app.services import lab_harness
 from app.services.admin_service import AdminService
 from app.services.auth import AuthService
 from app.services.classroom_service import ClassroomService
@@ -1239,6 +1241,14 @@ class TemplateExecutionItem(BaseModel):
     status: Optional[str]
     created_at: str
     executed_at: Optional[str]
+
+    # Lab runs only: the parsed PASS/FAIL cases and tally from the output
+    @computed_field
+    @property
+    def test_results(self) -> Optional[Dict[str, Any]]:
+        if not self.template_id or not lab_harness.tests_ran(self.error_message):
+            return None
+        return extract_test_report(self.output or "")
 
 class TemplateExecutionResponse(BaseModel):
     executions: List[TemplateExecutionItem]
