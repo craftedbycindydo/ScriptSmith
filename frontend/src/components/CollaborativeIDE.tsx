@@ -595,17 +595,7 @@ export default function CollaborativeIDE() {
           }
           rightPanel={
             <div className="h-full flex flex-col bg-background border rounded-lg shadow-sm md:ml-2">
-              <div className="border-b px-4 py-2 bg-muted/30 rounded-t-lg">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium">Output</h3>
-                  {lastExecutedBy && (
-                    <span className="text-xs text-muted-foreground">
-                      by {lastExecutedBy}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex-1 overflow-hidden rounded-b-lg">
+              <div className="flex-1 overflow-hidden rounded-lg">
                 <OutputConsole
                   output={output}
                   error={executionError}

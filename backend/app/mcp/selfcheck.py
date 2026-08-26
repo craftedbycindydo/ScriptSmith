@@ -7,6 +7,7 @@ are real queries rather than a reading of the code.
 import asyncio
 import json
 import os
+import re
 
 os.environ.setdefault("API_BASE_URL", "https://api.example.invalid")
 
@@ -481,6 +482,24 @@ def check_locked_harness():
     assert timed_out["status"] == "timeout" and timed_out["error"].endswith("3/3 tests failed"), timed_out
     assert lab_harness.is_tests_failed("1/2 tests failed") and not lab_harness.is_tests_failed("TypeError: x")
 
+    # The proof line: a clean exit that never reached the harness cannot pass,
+    # with a hand-printed tally or without one, and the nonce never survives
+    # into the stored output.
+    db = Session()
+    try:
+        proof_lab = db.get(Template, 15)
+        run_code, run_nonce = lab_harness.assemble_for_run(proof_lab, "def double(n):\n    return n * 2\n")
+        assert run_nonce and run_code.rstrip().endswith(f'print("{run_nonce}")'), run_code[-60:]
+    finally:
+        db.close()
+    bailed = lab_harness.grade_run({"output": "", "error": "", "status": "success"}, run_nonce)
+    assert bailed["status"] == "error" and lab_harness.TESTS_NOT_RUN_MESSAGE in bailed["error"], bailed
+    forged = lab_harness.grade_run({"output": "PASS a\n2/2 tests passed\n", "error": "", "status": "success"}, run_nonce)
+    assert forged["status"] == "error" and not lab_harness.tests_ran(forged["error"]), forged
+    proven = lab_harness.grade_run({"output": f"PASS a\nPASS b\n2/2 tests passed\n{run_nonce}", "error": "", "status": "success"}, run_nonce)
+    assert proven["status"] == "success" and run_nonce not in proven["output"], proven
+    assert lab_harness.tests_ran(proven["error"]) and lab_harness.tests_ran(None)
+
     # A failing tally is not a crash, anywhere the tutor looks.
     assert tools._failure("1/2 tests failed") == (False, "Tests failed")
     assert tools._failure("TypeError: bad") == (True, "TypeError")
@@ -536,14 +555,19 @@ def check_locked_harness():
             expected_run = lab_harness.assemble(db.get(Template, 15), "def double(n):\n    return n\n")
         finally:
             db.close()
-        assert fake.ran[-1] == expected_run, fake.ran[-1]
+        # Every run is the assembled file plus the per-run proof line, nothing else.
+        def assert_proofed_run(ran_code):
+            assert ran_code.startswith(expected_run), ran_code
+            assert re.fullmatch(r'print\("[0-9a-f]{32}"\)\n?', ran_code[len(expected_run):]), ran_code[len(expected_run):]
+
+        assert_proofed_run(fake.ran[-1])
         assert "print('2/2 tests passed')" not in fake.ran[-1] and "sys.exit" in fake.ran[-1]
         assert mine["status"] == "error" and mine["crashed"] is False, mine
         assert mine["failing"] == ["doubles two"] and mine["tally"] == {"passed": 1, "total": 2}, mine
 
         bulk = asyncio.run(tools.run_lab_submissions(Session(), PROF, CS101, 15))
         assert bulk["lab_has_tests"] is True and bulk["ran"] == 1, bulk
-        assert fake.ran[-1] == expected_run, fake.ran[-1]
+        assert_proofed_run(fake.ran[-1])
         row = bulk["results"][0]
         assert row["status"] == "error" and row["crashed"] is False and row["failing"] == ["doubles two"], row
 
@@ -566,6 +590,24 @@ def check_locked_harness():
         db.close()
     split = _call("create_lab", {"classroom_id": CS101, "name": "Made from one file", "code": one_file})
     assert split["test_names"] == ["doubles two", "doubles zero"], split
+
+    # Locked tests exist only in languages the proof line can gate; nothing
+    # can author an ungradable lab, and one that slipped in refuses to run.
+    assert lab_harness.harness_language_problem("python") is None
+    assert lab_harness.harness_language_problem("PYTHON") is None
+    for ungraded in ("cpp", "java", "go", "rust"):
+        assert lab_harness.harness_language_problem(ungraded), ungraded
+    refused_lang = _call("create_lab", {"classroom_id": CS101, "name": "Cpp with tests",
+                                        "code": "int add(int a, int b);", "language": "cpp",
+                                        "test_harness": LOCKED_HARNESS})
+    assert "error" in refused_lang and "not supported for cpp" in refused_lang["error"], refused_lang
+    try:
+        lab_harness.assemble_for_run(
+            type("L", (), {"test_harness": LOCKED_HARNESS, "language": "cpp"})(), "int x;"
+        )
+        raise AssertionError("ungradable lab was allowed to run")
+    except lab_harness.UngradableLabError:
+        pass
 
     db = Session()
     try:

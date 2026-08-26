@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File
-from pydantic import BaseModel
-from typing import Optional, List, Dict
+from pydantic import BaseModel, computed_field
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -18,6 +18,7 @@ from app.models.code_submission import CodeSubmission
 from app.services.template_service import TemplateService
 from app.services.code_execution import code_execution_service
 from app.services import lab_harness
+from app.mcp.extraction import extract_test_report
 from app.services.user_template_service import UserTemplateService
 from app.services.admin_service import AdminService
 from app.core.config import settings
@@ -126,6 +127,9 @@ class TemplateSubmissionResponse(BaseModel):
     template_id: int
     user_id: int
     submitted_code: str
+    # The full file the server ran: the student's part with the lab's own
+    # harness appended (lab_harness.assemble), so reviews show what executed
+    assembled_code: Optional[str] = None
     submitted_at: datetime
     output: Optional[str] = None
     status: str = "pending"
@@ -135,7 +139,18 @@ class TemplateSubmissionResponse(BaseModel):
     error_message: Optional[str] = None
     submitted_by_username: Optional[str] = None
     template_name: Optional[str] = None
-    
+
+    # Every submission is a lab run, so its output carries the harness's own
+    # PASS/FAIL lines; parsed here (app.mcp.extraction) for every reader of
+    # this model - submit, my-submissions, the admin lists and the gradebook UI.
+    # A run whose harness never completed gets none: its case lines are fakes.
+    @computed_field
+    @property
+    def test_results(self) -> Optional[Dict[str, Any]]:
+        if not lab_harness.tests_ran(self.error_message):
+            return None
+        return extract_test_report(self.output or "")
+
     class Config:
         from_attributes = True
 
@@ -674,7 +689,10 @@ async def submit_template(
         )
         student_code = lab_harness.student_part(template, request.code_content)
         language = template.language or "python"
-        code_to_run = lab_harness.assemble(template, student_code)
+        try:
+            code_to_run, run_nonce = lab_harness.assemble_for_run(template, student_code)
+        except lab_harness.UngradableLabError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
         code_size_kb = len(code_to_run.encode("utf-8")) / 1024
         if code_size_kb > settings.max_code_size_kb:
@@ -694,7 +712,7 @@ async def submit_template(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="The code runner is unavailable right now. Please try again in a moment."
             )
-        result = lab_harness.grade_result(result)
+        result = lab_harness.grade_run(result, run_nonce)
 
         # The submission run is also the student's latest run, so the IDE
         # history and the MCP tutor see the same outcome the gradebook does
@@ -1122,6 +1140,13 @@ class RerunSubmissionResponse(BaseModel):
     execution_time: Optional[float] = None
     status: str
 
+    @computed_field
+    @property
+    def test_results(self) -> Optional[Dict[str, Any]]:
+        if not lab_harness.tests_ran(self.error_message):
+            return None
+        return extract_test_report(self.output or "")
+
 
 @router.post("/admin/submissions/{submission_id}/rerun", response_model=RerunSubmissionResponse)
 async def rerun_submission(
@@ -1162,10 +1187,12 @@ async def rerun_submission(
             all_classrooms_dict = {c.id: c for c in teacher_classrooms + created_classrooms}
             admin_classroom_ids = list(all_classrooms_dict.keys())
             
-            # Check if template is assigned to any of admin's accessible classrooms
+            # Check if template is assigned to any of admin's accessible classrooms.
+            # A template with no classrooms is globally accessible, same as the
+            # student-facing access check above.
             template_classrooms = [c.id for c in submission.template.classrooms]
-            
-            if not any(classroom_id in admin_classroom_ids for classroom_id in template_classrooms):
+
+            if template_classrooms and not any(classroom_id in admin_classroom_ids for classroom_id in template_classrooms):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied: You don't have access to this submission"
@@ -1175,15 +1202,19 @@ async def rerun_submission(
         # lab's current harness appended, graded by the same tally rule
         start_time = time.time()
 
+        try:
+            rerun_code, rerun_nonce = lab_harness.assemble_for_run(submission.template, submission.submitted_code)
+        except lab_harness.UngradableLabError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         execution_result = await code_execution_service.execute_code(
-            code=lab_harness.assemble(submission.template, submission.submitted_code),
+            code=rerun_code,
             language=submission.language or "python",
             input_data=""
         )
 
         end_time = time.time()
         actual_execution_time = round(end_time - start_time, 3)
-        execution_result = lab_harness.grade_result(execution_result)
+        execution_result = lab_harness.grade_run(execution_result, rerun_nonce)
 
         # Update the submission with new execution results
         submission.output = execution_result.get("output", "")

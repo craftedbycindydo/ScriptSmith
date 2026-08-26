@@ -15,6 +15,7 @@ from app.services.openai_service import openai_service
 from app.services.cache_service import cache_service
 from app.services import lab_harness
 from app.services.template_service import TemplateService
+from app.mcp.extraction import extract_test_report
 from sqlalchemy import desc
 
 router = APIRouter()
@@ -38,6 +39,9 @@ class CodeExecutionResponse(BaseModel):
     execution_time: float
     status: str  # "success", "error", "timeout"
     complexity: Optional[ComplexityAnalysis] = None
+    # Lab runs only: the per-case results and tally the harness printed,
+    # parsed server-side (app.mcp.extraction) so the UI never re-derives them
+    test_results: Optional[Dict[str, Any]] = None
 
 class CodeValidationRequest(BaseModel):
     code: str
@@ -98,18 +102,24 @@ async def execute_code(
     language = request.language
     student_code = request.code
     code_to_run = request.code
+    run_nonce = None
     if lab is not None and lab_harness.has_harness(lab):
         language = lab.language or request.language
         student_code = lab_harness.student_part(lab, request.code)
-        code_to_run = lab_harness.assemble(lab, student_code)
+        try:
+            code_to_run, run_nonce = lab_harness.assemble_for_run(lab, student_code)
+        except lab_harness.UngradableLabError as exc:
+            return CodeExecutionResponse(output="", error=str(exc), execution_time=0.0, status="error")
 
     # Check cache first to avoid redundant execution (skip cache for submissions to ensure fresh results)
     # Use exact input_data to ensure bit-perfect caching
     input_data = request.input_data if request.input_data is not None else ""
     cached_result = None
 
-    # Only use cache if this is not a submission - submissions need fresh execution
-    if not request.is_submission:
+    # Only use cache if this is not a submission - submissions need fresh
+    # execution. Runs with a proof nonce are unique per run, so caching them
+    # would only fill the cache with unreachable entries.
+    if not request.is_submission and run_nonce is None:
         cached_result = await cache_service.get_cached_result(
             code_to_run,
             language,
@@ -133,7 +143,8 @@ async def execute_code(
             error=cached_result.get("error", ""),
             execution_time=cached_result.get("execution_time", 0.0),
             status=cached_result.get("status", "error"),
-            complexity=complexity_analysis
+            complexity=complexity_analysis,
+            test_results=extract_test_report(cached_result.get("output", "")) if lab is not None else None
         )
     
     start_time = time.time()
@@ -146,7 +157,7 @@ async def execute_code(
             input_data=input_data
         )
         if lab is not None:
-            result = lab_harness.grade_result(result)
+            result = lab_harness.grade_run(result, run_nonce)
 
         execution_time = time.time() - start_time
         
@@ -199,7 +210,12 @@ async def execute_code(
             error=result["error"],
             execution_time=execution_time,
             status=result["status"],
-            complexity=complexity_analysis
+            complexity=complexity_analysis,
+            test_results=(
+                extract_test_report(result["output"])
+                if lab is not None and lab_harness.tests_ran(result.get("error"))
+                else None
+            )
         )
         
         # Cache the result synchronously to prevent race conditions.
@@ -207,6 +223,8 @@ async def execute_code(
         # transient, and a cached one would keep showing the error after recovery.
         if result.get("infrastructure_error"):
             print("⏭️  Not caching result - execution failed for infrastructure reasons")
+            return response
+        if run_nonce is not None:
             return response
 
         try:

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiService, type Language } from '../services/api';
+import { apiService, type Language, type TestReport } from '../services/api';
 
 interface ComplexityAnalysis {
   time_complexity: string;
@@ -18,6 +18,7 @@ interface CodeState {
   executionTime: number;
   selectedTemplateId: number | null;
   complexity: ComplexityAnalysis | null;
+  testResults: TestReport | null;
   setCode: (code: string) => void;
   setLanguage: (language: string) => void;
   setOutput: (output: string) => void;
@@ -26,7 +27,7 @@ interface CodeState {
   setExecutionTime: (time: number) => void;
   setComplexity: (complexity: ComplexityAnalysis | null) => void;
   // Output and error together, e.g. the server's own run of a submission
-  setResult: (result: { output: string; error: string; executionTime: number }) => void;
+  setResult: (result: { output: string; error: string; executionTime: number; testResults?: TestReport | null }) => void;
   clearOutput: () => void;
   loadLanguages: () => Promise<void>;
   executeCode: () => Promise<void>;
@@ -89,30 +90,33 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   executionTime: 0,
   selectedTemplateId: null,
   complexity: null,
+  testResults: null,
   setCode: (code) => set({ code }),
   setLanguage: async (language) => {
     try {
       // Load template from API
       const template = await apiService.getLanguageTemplate(language);
-      set({ 
-        language, 
+      set({
+        language,
         code: template.template || defaultCode[language] || defaultCode.python,
         output: '',
         error: '',
         executionTime: 0,
         selectedTemplateId: null,
-        complexity: null
+        complexity: null,
+        testResults: null
       });
     } catch (error) {
       // Fallback to local template
-      set({ 
-        language, 
+      set({
+        language,
         code: defaultCode[language] || defaultCode.python,
         output: '',
         error: '',
         executionTime: 0,
         selectedTemplateId: null,
-        complexity: null
+        complexity: null,
+        testResults: null
       });
     }
   },
@@ -121,8 +125,9 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setExecutionTime: (executionTime) => set({ executionTime }),
   setComplexity: (complexity) => set({ complexity }),
-  setResult: ({ output, error, executionTime }) => set({ output, error, executionTime }),
-  clearOutput: () => set({ output: '', error: '', executionTime: 0, complexity: null }),
+  setResult: ({ output, error, executionTime, testResults }) =>
+    set({ output, error, executionTime, testResults: testResults ?? null }),
+  clearOutput: () => set({ output: '', error: '', executionTime: 0, complexity: null, testResults: null }),
   
   loadLanguages: async () => {
     try {
@@ -148,8 +153,8 @@ export const useCodeStore = create<CodeState>((set, get) => ({
   executeCode: async () => {
     const { code, language, selectedTemplateId } = get();
     
-    set({ isLoading: true, output: '', error: '', executionTime: 0, complexity: null });
-    
+    set({ isLoading: true, output: '', error: '', executionTime: 0, complexity: null, testResults: null });
+
     try {
       const response = await apiService.executeCode({
         code,
@@ -157,20 +162,22 @@ export const useCodeStore = create<CodeState>((set, get) => ({
         input_data: '',
         template_id: selectedTemplateId || undefined
       });
-      
-      set({ 
+
+      set({
         output: response.output,
         error: response.error,
         executionTime: response.execution_time,
         complexity: response.complexity || null,
+        testResults: response.test_results || null,
         isLoading: false
       });
     } catch (error: any) {
-      set({ 
+      set({
         error: error.response?.data?.detail || error.message || 'Failed to execute code',
         output: '',
         executionTime: 0,
         complexity: null,
+        testResults: null,
         isLoading: false
       });
     }

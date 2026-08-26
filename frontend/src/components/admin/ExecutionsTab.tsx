@@ -255,15 +255,13 @@ export default function ExecutionsTab({
                               </div>
                             </div>
                             <div className="panel flex flex-col overflow-hidden">
-                              <div className="border-b border-border px-4 py-2">
-                                <span className="pane-label">Output</span>
-                              </div>
                               <div className="flex-1 overflow-hidden">
                                 <OutputConsole
                                   output={execution.output || ''}
                                   error={execution.error_message || ''}
                                   isLoading={false}
                                   executionTime={execution.execution_time || 0}
+                                  testResults={execution.test_results || null}
                                 />
                               </div>
                             </div>

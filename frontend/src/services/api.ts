@@ -34,12 +34,26 @@ export interface ComplexityAnalysis {
   available: boolean;
 }
 
+/** One PASS/FAIL line of a lab run, parsed server-side from the harness output. */
+export interface TestCaseResult {
+  test: string;
+  passed: boolean;
+  got?: string;
+  expected?: string;
+}
+
+export interface TestReport {
+  cases: TestCaseResult[];
+  tally: { passed: number; total: number } | null;
+}
+
 export interface CodeExecutionResponse {
   output: string;
   error: string;
   execution_time: number;
   status: string;
   complexity?: ComplexityAnalysis;
+  test_results?: TestReport | null;
 }
 
 export interface CodeValidationRequest {
@@ -225,6 +239,7 @@ export interface TemplateSubmission {
   template_id: number;
   user_id: number;
   submitted_code: string;
+  assembled_code?: string;
   submitted_at: string;
   output?: string;
   status: string;
@@ -234,6 +249,7 @@ export interface TemplateSubmission {
   error_message?: string;
   submitted_by_username?: string;
   template_name?: string;
+  test_results?: TestReport | null;
 }
 
 export interface MissedTemplate {

@@ -43,6 +43,7 @@ export default function IDE() {
     isLoading,
     executionTime,
     complexity,
+    testResults,
     setCode,
     setLanguage,
     loadLanguages,
@@ -582,6 +583,7 @@ export default function IDE() {
         output: submission.output || '',
         error: submission.error_message || '',
         executionTime: submission.execution_time || 0,
+        testResults: submission.test_results || null,
       });
       
       // Refresh template data to get updated submission status
@@ -1428,15 +1430,13 @@ export default function IDE() {
                 leftPanel={
                   <div className="ide-split-t">
                     <div className="panel ide-pane-dark h-full flex flex-col overflow-hidden">
-                      <div className="ide-pane-head">
-                        <span className="pane-label">Output</span>
-                      </div>
                       <div className="flex-1 overflow-hidden">
                         <OutputConsole
                           output={output}
                           error={error}
                           isLoading={isLoading}
                           executionTime={executionTime}
+                          testResults={testResults}
                         />
                       </div>
                     </div>
@@ -1759,35 +1759,30 @@ export default function IDE() {
           </div>
 
           <div className="flex-1 min-h-0 grid gap-4 md:grid-cols-2 mt-3">
-            <div className="flex flex-col min-h-0">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                Submitted code
+            <div className="panel flex flex-col min-h-0 overflow-hidden">
+              <div className="ide-pane-head">
+                <span className="pane-label">Submitted code</span>
               </div>
-              <pre className="flex-1 min-h-0 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
-                {reviewSubmission?.submitted_code || 'No code recorded'}
-              </pre>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <CodeEditor
+                  language={reviewSubmission?.language || 'python'}
+                  value={reviewSubmission?.assembled_code || reviewSubmission?.submitted_code || ''}
+                  onChange={() => {}}
+                  readOnly={true}
+                />
+              </div>
             </div>
 
-            <div className="flex flex-col min-h-0 gap-4">
-              <div className="flex flex-col min-h-0 flex-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                  Output
-                </div>
-                <pre className="flex-1 min-h-0 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
-                  {reviewSubmission?.output || 'No output'}
-                </pre>
+            <div className="panel ide-pane-dark flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <OutputConsole
+                  output={reviewSubmission?.output || ''}
+                  error={reviewSubmission?.error_message || ''}
+                  isLoading={false}
+                  executionTime={reviewSubmission?.execution_time || 0}
+                  testResults={reviewSubmission?.test_results || null}
+                />
               </div>
-
-              {reviewSubmission?.error_message && (
-                <div className="flex flex-col min-h-0 flex-1">
-                  <div className="text-xs font-medium uppercase tracking-wide text-red-600 mb-1">
-                    Error
-                  </div>
-                  <pre className="flex-1 min-h-0 overflow-auto rounded-md border border-red-300 p-3 text-xs whitespace-pre-wrap text-red-700">
-                    {reviewSubmission.error_message}
-                  </pre>
-                </div>
-              )}
             </div>
           </div>
         </DialogContent>

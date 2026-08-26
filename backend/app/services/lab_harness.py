@@ -18,6 +18,7 @@ the same record without help.
 """
 
 import re
+import secrets
 from typing import Optional, Tuple
 
 from app.mcp.extraction import extract_pass_count
@@ -101,6 +102,94 @@ def tests_source(template) -> str:
 def is_tests_failed(message: Optional[str]) -> bool:
     """Whether an error message is the harness reporting failures, not a crash."""
     return bool(TESTS_FAILED_RE.search(message or ""))
+
+
+# The student's code runs before the harness, so a clean exit placed at the end
+# of the student part (`sys.exit(0)`), with or without a hand-printed tally,
+# would otherwise record a success without a single test running. The proof
+# line closes that: a per-run random nonce printed after the harness, never
+# sent to the client and stripped from the stored output. A "success" without
+# the proof line means the harness never finished, and is graded as an error.
+#
+# This set IS the boundary of the harness feature: a language is gradable only
+# if the server can inject the proof line, and no lab may carry locked tests
+# in any other language - enforced at authoring (TemplateService) and again,
+# fail-closed, at every run (assemble_for_run raises instead of running ungated).
+NONCE_PRINTS = {
+    "python": 'print("{nonce}")',
+    "javascript": 'console.log("{nonce}")',
+    "typescript": 'console.log("{nonce}")',
+}
+
+GRADABLE_LANGUAGES = frozenset(NONCE_PRINTS)
+
+
+class UngradableLabError(Exception):
+    pass
+
+
+def harness_language_problem(language: Optional[str]) -> Optional[str]:
+    """Why locked tests cannot exist for this language; None when they can."""
+    lang = (language or "python").lower()
+    if lang in GRADABLE_LANGUAGES:
+        return None
+    supported = ", ".join(sorted(GRADABLE_LANGUAGES))
+    return (
+        f"Locked tests are not supported for {lang} labs: graded runs need the server's "
+        f"completion proof, which exists for {supported} only. Choose a supported "
+        "language, or create the lab without locked tests."
+    )
+
+
+def assemble_for_run(template, code: Optional[str]) -> Tuple[str, Optional[str]]:
+    """What actually runs for a lab, plus the per-run proof nonce (None only
+    when the lab has no harness). A harness in an ungradable language refuses
+    to run at all rather than running ungated."""
+    assembled = assemble(template, code)
+    if not has_harness(template):
+        return assembled, None
+    problem = harness_language_problem(template.language)
+    if problem:
+        raise UngradableLabError(problem)
+    print_stmt = NONCE_PRINTS[(template.language or "python").lower()]
+    nonce = secrets.token_hex(16)
+    return f"{assembled}{print_stmt.format(nonce=nonce)}\n", nonce
+
+
+TESTS_NOT_RUN_MESSAGE = "tests did not run: the code exited before the lab's tests finished"
+
+
+def tests_ran(error_message: Optional[str]) -> bool:
+    """Whether a recorded run's tests actually completed; case lines in the
+    output of a run that never reached its harness are student-printed fakes."""
+    return TESTS_NOT_RUN_MESSAGE not in (error_message or "")
+
+
+def grade_run(result: dict, nonce: Optional[str]) -> dict:
+    """Grade one lab run against server truth.
+
+    Strips the proof line from the output, applies the tally rule, and turns a
+    clean exit whose harness never reached its end into an error, so no student
+    part can fake a passing run by exiting before the tests.
+    """
+    if not nonce:
+        return grade_result(result)
+
+    output = result.get("output") or ""
+    lines = output.splitlines()
+    completed = any(line.strip() == nonce for line in lines)
+    if completed:
+        result = {**result, "output": "\n".join(line for line in lines if line.strip() != nonce)}
+
+    result = grade_result(result)
+    if not completed and result.get("status") == "success":
+        error = (result.get("error") or "").rstrip()
+        return {
+            **result,
+            "status": "error",
+            "error": f"{error}\n{TESTS_NOT_RUN_MESSAGE}" if error else TESTS_NOT_RUN_MESSAGE,
+        }
+    return result
 
 
 def grade_result(result: dict) -> dict:

@@ -429,14 +429,17 @@ async def check_my_lab(db: Session, user_id: int, lab_id: Optional[int] = None):
 
     try:
         # The lab's own harness is appended here, never taken from the student
+        check_code, check_nonce = lab_harness.assemble_for_run(lab, current["code"])
         result = await microservice_executor.execute_code(
-            code=lab_harness.assemble(lab, current["code"]), language=lab.language or "python"
+            code=check_code, language=lab.language or "python"
         )
+    except lab_harness.UngradableLabError as exc:
+        return {"error": str(exc)}
     except Exception as exc:
         logger.warning("mcp check_my_lab: execution failed: %s", exc)
         return {"error": "The code runner is unavailable right now."}
 
-    result = lab_harness.grade_result(result)
+    result = lab_harness.grade_run(result, check_nonce)
     output = result.get("output") or ""
     outcomes = extraction.extract_test_outcomes(output)
     failures = extraction.extract_failing_tests(output)
@@ -865,14 +868,17 @@ async def run_lab_submissions(db: Session, user_id: int, classroom_id: int = Non
     async def run_one(row):
         async with semaphore:
             try:
+                row_code, row_nonce = lab_harness.assemble_for_run(lab, row["code"])
                 result = await microservice_executor.execute_code(
-                    code=lab_harness.assemble(lab, row["code"]), language=language
+                    code=row_code, language=language
                 )
+            except lab_harness.UngradableLabError as exc:
+                return {"student_id": row["student_id"], "name": row["name"], "error": str(exc)}
             except Exception as exc:
                 logger.warning("mcp run_lab_submissions: %s failed: %s", row["student_id"], exc)
                 return {"student_id": row["student_id"], "name": row["name"],
                         "error": "run failed"}
-            result = lab_harness.grade_result(result)
+            result = lab_harness.grade_run(result, row_nonce)
             output = result.get("output") or ""
             outcomes = extraction.extract_test_outcomes(output)
             crashed, _ = _failure(result.get("error"))
